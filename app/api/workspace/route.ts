@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
     let rows: RowDataPacket[];
     try {
       rows = await query<RowDataPacket[]>(
-        `SELECT id, name, phone_number_id, phone_display, waba_id, verify_token, plan, is_active, access_token
+        `SELECT id, name, phone_number_id, phone_display, waba_id, verify_token, plan, is_active, access_token, profile_picture_url
          FROM workspaces WHERE id = ?`,
         [payload.workspaceId]
       );
@@ -40,10 +40,27 @@ export async function GET(req: NextRequest) {
         const metaData = await metaRes.json();
         if (metaData.display_phone_number) {
           ws.phone_display = metaData.display_phone_number;
-          // Save for next time
           await execute(
             'UPDATE workspaces SET phone_display = ? WHERE id = ?',
             [metaData.display_phone_number, ws.id]
+          ).catch(() => { /* ignore if column missing */ });
+        }
+      } catch { /* ignore — Meta API unavailable */ }
+    }
+
+    // Auto-fetch WhatsApp Business profile picture if missing
+    if (!ws.profile_picture_url && ws.phone_number_id && ws.access_token) {
+      try {
+        const picRes = await fetch(
+          `https://graph.facebook.com/v20.0/${ws.phone_number_id}/whatsapp_business_profile?fields=profile_picture_url&access_token=${ws.access_token}`
+        );
+        const picData = await picRes.json();
+        const picUrl = picData?.data?.[0]?.profile_picture_url;
+        if (picUrl) {
+          ws.profile_picture_url = picUrl;
+          await execute(
+            'UPDATE workspaces SET profile_picture_url = ? WHERE id = ?',
+            [picUrl, ws.id]
           ).catch(() => { /* ignore if column missing */ });
         }
       } catch { /* ignore — Meta API unavailable */ }

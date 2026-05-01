@@ -11,7 +11,7 @@ import toast from 'react-hot-toast';
 
 type Role = 'admin' | 'manager' | 'agent';
 
-interface Workspace { id: number; name: string; phone_number_id?: string; plan?: string; role?: string; }
+interface Workspace { id: number; name: string; phone_number_id?: string; plan?: string; role?: string; profile_picture_url?: string; }
 
 const ALL_NAV = [
   { label: 'Dashboard',  href: '/dashboard',   icon: LayoutDashboard, roles: ['admin','manager','agent'] },
@@ -176,8 +176,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             title={currentWs?.name || 'Projects'}
             className="flex flex-col items-center gap-1 group"
           >
-            <div className="w-8 h-8 rounded-lg bg-whatsapp-teal flex items-center justify-center text-white font-bold text-sm group-hover:opacity-80 transition-opacity">
-              {currentWs ? currentWs.name.charAt(0).toUpperCase() : '?'}
+            <div className="w-8 h-8 rounded-lg bg-whatsapp-teal flex items-center justify-center text-white font-bold text-sm group-hover:opacity-80 transition-opacity overflow-hidden">
+              {currentWs?.profile_picture_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={currentWs.profile_picture_url} alt={currentWs.name} className="w-full h-full object-cover" />
+              ) : (
+                currentWs ? currentWs.name.charAt(0).toUpperCase() : '?'
+              )}
             </div>
             <span className="text-[8px] text-white/60 leading-none max-w-[48px] truncate">
               {currentWs?.name || 'Project'}
@@ -196,8 +201,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       disabled={switching}
                       className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-gray-50 transition-colors ${ws.id === currentWs?.id ? 'bg-green-50' : ''}`}
                     >
-                      <div className="w-7 h-7 rounded-md bg-whatsapp-teal flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
-                        {ws.name.charAt(0).toUpperCase()}
+                      <div className="w-7 h-7 rounded-md bg-whatsapp-teal flex items-center justify-center text-white font-bold text-xs flex-shrink-0 overflow-hidden">
+                        {ws.profile_picture_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={ws.profile_picture_url} alt={ws.name} className="w-full h-full object-cover" />
+                        ) : (
+                          ws.name.charAt(0).toUpperCase()
+                        )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-800 truncate">{ws.name}</p>

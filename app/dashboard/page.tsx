@@ -19,6 +19,7 @@ interface Workspace {
   plan: string;
   is_active: number;
   verify_token: string;
+  profile_picture_url?: string;
 }
 
 interface Summary { 
@@ -316,8 +317,13 @@ export default function DashboardPage() {
             <div className="px-4 py-4 space-y-3">
               {/* Avatar + LIVE badge */}
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-xl bg-whatsapp-teal/10 border border-whatsapp-teal/20 flex items-center justify-center text-whatsapp-teal font-bold text-lg flex-shrink-0">
-                  {workspace?.name?.charAt(0)?.toUpperCase() || '?'}
+                <div className="w-11 h-11 rounded-xl bg-whatsapp-teal/10 border border-whatsapp-teal/20 flex items-center justify-center text-whatsapp-teal font-bold text-lg flex-shrink-0 overflow-hidden">
+                  {workspace?.profile_picture_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={workspace.profile_picture_url} alt={workspace.name} className="w-full h-full object-cover" />
+                  ) : (
+                    workspace?.name?.charAt(0)?.toUpperCase() || '?'
+                  )}
                 </div>
                 <div>
                   {isConnected ? (
