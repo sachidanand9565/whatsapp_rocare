@@ -201,16 +201,55 @@ export interface StatusUpdate {
   errors?:   object[];
 }
 
+export interface TemplateStatusUpdate {
+  event:            string;
+  templateId:       string;
+  templateName:     string;
+  templateLanguage: string;
+  previousCategory: string;
+  newCategory:      string;
+  reason:           string;
+}
+
 export function parseWebhookBody(body: Record<string, unknown>): {
   messages: IncomingMessage[];
   statuses: StatusUpdate[];
   phoneNumberId: string;
-  profileNames: Record<string, string>; // waId → display name from WhatsApp profile
+  wabaId: string;
+  profileNames: Record<string, string>;
+  templateStatusUpdates: TemplateStatusUpdate[];
 } {
-  const result = { messages: [] as IncomingMessage[], statuses: [] as StatusUpdate[], phoneNumberId: '', profileNames: {} as Record<string, string> };
+  const result = {
+    messages: [] as IncomingMessage[],
+    statuses: [] as StatusUpdate[],
+    phoneNumberId: '',
+    wabaId: '',
+    profileNames: {} as Record<string, string>,
+    templateStatusUpdates: [] as TemplateStatusUpdate[],
+  };
   try {
-    const entry     = (body.entry as Record<string, unknown>[])?.[0];
-    const change    = (entry?.changes as Record<string, unknown>[])?.[0];
+    const entry  = (body.entry as Record<string, unknown>[])?.[0];
+    result.wabaId = (entry?.id as string) ?? '';
+
+    const changes = (entry?.changes as Record<string, unknown>[]) ?? [];
+
+    // Template status update events (field = "message_template_status_update")
+    for (const change of changes) {
+      if (change.field === 'message_template_status_update') {
+        const v = change.value as Record<string, unknown>;
+        result.templateStatusUpdates.push({
+          event:            (v.event            as string) ?? '',
+          templateId:       String(v.message_template_id ?? ''),
+          templateName:     (v.message_template_name     as string) ?? '',
+          templateLanguage: (v.message_template_language as string) ?? '',
+          previousCategory: (v.previous_category         as string) ?? '',
+          newCategory:      (v.new_category              as string) ?? '',
+          reason:           (v.reason                    as string) ?? '',
+        });
+      }
+    }
+
+    const change    = changes[0];
     const value     = change?.value as Record<string, unknown>;
 
     result.phoneNumberId = (value?.metadata as Record<string, unknown>)?.phone_number_id as string ?? '';

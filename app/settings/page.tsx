@@ -5,7 +5,7 @@ import {
   Save, Eye, EyeOff, Copy, CheckCircle, AlertTriangle,
   Webhook, RefreshCw, Plus, Trash2, ToggleLeft, ToggleRight,
   Facebook, ChevronRight, X, Phone, Loader2, Key, RotateCcw, Zap,
-  MessageSquare, Image, FileText, Music, MapPin, MousePointerClick,
+  MessageSquare, Image, FileText, Music, MapPin, MousePointerClick, PauseCircle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -214,9 +214,16 @@ export default function SettingsPage() {
   const [showApiKey, setShowApiKey]   = useState(false);
   const [regenLoading, setRegenLoading] = useState(false);
 
+  // Campaign settings
+  const [autoPauseCampaigns, setAutoPauseCampaigns] = useState(true);
+  const [savingPause, setSavingPause] = useState(false);
+
   // Payload preview
   const [payloadTab, setPayloadTab] = useState<'text' | 'image' | 'audio' | 'document' | 'location' | 'button'>('text');
   const [workspaceId, setWorkspaceId] = useState<number | null>(null);
+
+  // Sidebar navigation
+  const [activeSection, setActiveSection] = useState<'auth' | 'developer' | 'campaigns'>('auth');
 
   const APP_ID    = process.env.NEXT_PUBLIC_FACEBOOK_APP_ID || '';
   const CONFIG_ID = process.env.NEXT_PUBLIC_FACEBOOK_CONFIG_ID || '';
@@ -272,6 +279,9 @@ export default function SettingsPage() {
     });
     loadHooks();
     apiFetch('/api/workspace/api-key').then((r) => setApiKey(r.data?.api_key || ''));
+    apiFetch('/api/campaign-settings').then((r) => {
+      if (r.data) setAutoPauseCampaigns(!!r.data.auto_pause_campaigns);
+    });
   }, []);
 
   function loadHooks() {
@@ -400,6 +410,24 @@ export default function SettingsPage() {
     }
   }
 
+  async function toggleAutoPause() {
+    const newVal = !autoPauseCampaigns;
+    setAutoPauseCampaigns(newVal);
+    setSavingPause(true);
+    try {
+      await apiFetch('/api/campaign-settings', {
+        method: 'PUT',
+        body: JSON.stringify({ auto_pause_campaigns: newVal ? 1 : 0 }),
+      });
+      toast.success(newVal ? 'Auto-pause enabled' : 'Auto-pause disabled');
+    } catch {
+      setAutoPauseCampaigns(!newVal);
+      toast.error('Failed to save setting');
+    } finally {
+      setSavingPause(false);
+    }
+  }
+
   async function testConnection() {
     if (!form.access_token || !form.waba_id) { toast.error('Enter credentials first'); return; }
     setTesting(true);
@@ -478,122 +506,214 @@ export default function SettingsPage() {
   const isConnected  = !!(form.access_token && form.phone_number_id && form.waba_id);
   const isConfigured = isConnected;
 
+  const navBtn = (id: string) =>
+    `w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left ${
+      activeSection === id
+        ? 'bg-teal-50 text-whatsapp-teal'
+        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+    }`;
+
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
+    <div className="flex -mx-4 lg:-mx-6 -mt-4 lg:-mt-6" style={{ minHeight: 'calc(100vh - 57px)' }}>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+      {/* ── Inner Settings Sidebar ── */}
+      <aside className="w-52 flex-shrink-0 border-r border-gray-200 bg-white overflow-y-auto">
+        <div className="p-4 pt-5">
+          <p className="text-xs font-bold text-gray-800 px-3 pb-4">Settings</p>
 
-        {/* ── LEFT COLUMN ── */}
-        <div className="space-y-6">
+          <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider px-3 pb-1">General</p>
+          <button onClick={() => setActiveSection('auth')} className={navBtn('auth')}>
+            <Key size={14} /> Auth &amp; WhatsApp
+          </button>
 
-          {/* Meta Facebook Connect */}
-          <div className="card space-y-4">
-            <div className="flex items-center gap-3 border-b border-gray-100 pb-3">
-              <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center">
-                <Facebook size={18} className="text-white" />
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <h2 className="font-semibold text-gray-900">Connect via Facebook</h2>
-                  {BSP_READY
-                    ? <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full flex items-center gap-1"><Zap size={10} />BSP</span>
-                    : <span className="text-[10px] font-bold bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">Pending BSP</span>
-                  }
-                </div>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  {BSP_READY
-                    ? 'One-click — user sets up business & WhatsApp inside Meta popup'
-                    : 'Full auto-setup will be enabled once BSP access is approved'}
-                </p>
-              </div>
-            </div>
+          <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider px-3 pt-4 pb-1">Developer</p>
+          <button onClick={() => setActiveSection('developer')} className={navBtn('developer')}>
+            <Webhook size={14} /> Webhooks &amp; API
+          </button>
 
-            {!APP_ID && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700">
-                <p className="font-semibold">Set <code className="bg-yellow-100 px-1 rounded">NEXT_PUBLIC_FACEBOOK_APP_ID</code> in your .env to enable this.</p>
-              </div>
-            )}
+          <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider px-3 pt-4 pb-1">Manage</p>
+          <button onClick={() => setActiveSection('campaigns')} className={navBtn('campaigns')}>
+            <PauseCircle size={14} /> Campaigns
+          </button>
+        </div>
+      </aside>
 
-            {!BSP_READY && APP_ID && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700 space-y-1">
-                <p className="font-semibold">Once BSP access is approved:</p>
-                <p>1. Go to Meta App Dashboard → WhatsApp → Embedded Signup → Create a Configuration</p>
-                <p>2. Set <code className="bg-blue-100 px-1 rounded">NEXT_PUBLIC_FACEBOOK_CONFIG_ID</code> = Configuration ID in your .env</p>
-                <p>3. Restart the server — full one-click setup will be ready</p>
-              </div>
-            )}
+      {/* ── Content Area ── */}
+      <div className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-6">
 
-            {isConnected ? (
-              <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-xl px-4 py-3">
-                <div className="flex items-center gap-3">
-                  <CheckCircle size={18} className="text-green-600" />
-                  <div>
-                    <p className="text-sm font-semibold text-green-800">WhatsApp Business Connected</p>
-                    <p className="text-xs text-gray-500 font-mono mt-0.5">
-                      WABA: {form.waba_id} · Phone ID: {form.phone_number_id}
+        {/* ─── AUTH SECTION ─── */}
+        {activeSection === 'auth' && (<>
+          <h2 className="text-lg font-bold text-gray-900">Auth &amp; WhatsApp</h2>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+
+            {/* ── LEFT: Meta connect + webhook URL ── */}
+            <div className="space-y-4">
+
+              {/* Meta Facebook Connect */}
+              <div className="card space-y-4">
+                <div className="flex items-center gap-3 border-b border-gray-100 pb-3">
+                  <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center">
+                    <Facebook size={18} className="text-white" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold text-gray-900">Connect via Facebook</h3>
+                      {BSP_READY
+                        ? <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full flex items-center gap-1"><Zap size={10} />BSP</span>
+                        : <span className="text-[10px] font-bold bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">Pending BSP</span>}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {BSP_READY ? 'One-click — user sets up business & WhatsApp inside Meta popup' : 'Full auto-setup will be enabled once BSP access is approved'}
                     </p>
                   </div>
                 </div>
-                {APP_ID && (
-                  <button
-                    onClick={loginWithFacebook}
-                    disabled={!fbLoaded || fbLoading || connecting}
-                    className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:opacity-50 flex items-center gap-1">
-                    {(fbLoading || connecting) && <Loader2 size={12} className="animate-spin" />}
-                    Reconnect
+
+                {!APP_ID && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700">
+                    <p className="font-semibold">Set <code className="bg-yellow-100 px-1 rounded">NEXT_PUBLIC_FACEBOOK_APP_ID</code> in your .env to enable this.</p>
+                  </div>
+                )}
+                {!BSP_READY && APP_ID && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700 space-y-1">
+                    <p className="font-semibold">Once BSP access is approved:</p>
+                    <p>1. Go to Meta App Dashboard → WhatsApp → Embedded Signup → Create a Configuration</p>
+                    <p>2. Set <code className="bg-blue-100 px-1 rounded">NEXT_PUBLIC_FACEBOOK_CONFIG_ID</code> = Configuration ID in your .env</p>
+                    <p>3. Restart the server — full one-click setup will be ready</p>
+                  </div>
+                )}
+
+                {isConnected ? (
+                  <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-xl px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <CheckCircle size={18} className="text-green-600" />
+                      <div>
+                        <p className="text-sm font-semibold text-green-800">WhatsApp Business Connected</p>
+                        <p className="text-xs text-gray-500 font-mono mt-0.5">WABA: {form.waba_id} · Phone ID: {form.phone_number_id}</p>
+                      </div>
+                    </div>
+                    {APP_ID && (
+                      <button onClick={loginWithFacebook} disabled={!fbLoaded || fbLoading || connecting}
+                        className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:opacity-50 flex items-center gap-1">
+                        {(fbLoading || connecting) && <Loader2 size={12} className="animate-spin" />}
+                        Reconnect
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <button onClick={loginWithFacebook} disabled={!APP_ID || !fbLoaded || fbLoading || connecting}
+                    className="w-full flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-50">
+                    {(fbLoading || connecting)
+                      ? <><Loader2 size={18} className="animate-spin" /> Connecting...</>
+                      : <><Facebook size={18} /> {BSP_READY ? 'Setup WhatsApp Business' : 'Connect via Facebook'}</>}
                   </button>
                 )}
+
+                <div className="text-xs text-gray-400 space-y-1">
+                  {BSP_READY ? (<>
+                    <p>✓ User creates or selects their business inside the Meta popup</p>
+                    <p>✓ Adds or selects a WhatsApp number — everything auto-detected</p>
+                    <p>✓ Webhook subscribed & templates imported automatically</p>
+                  </>) : (<>
+                    <p>✓ Login with Facebook → enter your WABA ID → phone numbers auto-detected</p>
+                    <p>✓ Webhook subscribed & templates imported automatically</p>
+                  </>)}
+                </div>
               </div>
-            ) : (
-              <button
-                onClick={loginWithFacebook}
-                disabled={!APP_ID || !fbLoaded || fbLoading || connecting}
-                className="w-full flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-50">
-                {(fbLoading || connecting)
-                  ? <><Loader2 size={18} className="animate-spin" /> Connecting...</>
-                  : <><Facebook size={18} /> {BSP_READY ? 'Setup WhatsApp Business' : 'Connect via Facebook'}</>}
-              </button>
-            )}
 
-            <div className="text-xs text-gray-400 space-y-1">
-              {BSP_READY ? (
-                <>
-                  <p>✓ User creates or selects their business inside the Meta popup</p>
-                  <p>✓ Adds or selects a WhatsApp number — everything auto-detected</p>
-                  <p>✓ Webhook subscribed & templates imported automatically</p>
-                </>
-              ) : (
-                <>
-                  <p>✓ Login with Facebook → enter your WABA ID → phone numbers auto-detected</p>
-                  <p>✓ Webhook subscribed & templates imported automatically</p>
-                </>
+              {/* Meta Webhook URL */}
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
+                <p className="font-semibold text-blue-800 text-sm">Your Webhook URL — Add this in Meta App Dashboard</p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 bg-white border border-blue-200 rounded-lg px-3 py-2 text-sm font-mono text-blue-900 break-all">{webhookUrl}</code>
+                  <button onClick={() => copyToClipboard(webhookUrl)} className="text-blue-600 hover:text-blue-800 p-2 flex-shrink-0">
+                    <Copy size={16} />
+                  </button>
+                </div>
+                <p className="text-xs text-blue-600">Meta App Dashboard → WhatsApp → Configuration → Webhook URL &amp; Verify Token</p>
+              </div>
+
+            </div>
+
+            {/* ── RIGHT: Manual credentials form ── */}
+            <div className="space-y-4">
+
+              {credSource === 'env' && (
+                <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 flex items-start gap-3">
+                  <AlertTriangle size={18} className="text-yellow-600 flex-shrink-0 mt-0.5" />
+                  <div className="text-sm">
+                    <p className="font-semibold text-yellow-800">Credentials loaded from .env file</p>
+                    <p className="text-yellow-700 mt-0.5">
+                      Credentials are in <code className="bg-yellow-100 px-1 rounded">.env.local</code> but not saved to DB.
+                      Click <strong>Save Settings</strong> below.
+                    </p>
+                  </div>
+                </div>
               )}
-            </div>
-          </div>
 
-          {/* Meta Webhook URL */}
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
-            <p className="font-semibold text-blue-800 text-sm">Your Webhook URL — Add this in Meta App Dashboard</p>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 bg-white border border-blue-200 rounded-lg px-3 py-2 text-sm font-mono text-blue-900 break-all">
-                {webhookUrl}
-              </code>
-              <button onClick={() => copyToClipboard(webhookUrl)} className="text-blue-600 hover:text-blue-800 p-2 flex-shrink-0">
-                <Copy size={16} />
-              </button>
+              <form onSubmit={save} className="card space-y-5">
+                <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+                  <h3 className="font-semibold text-gray-900">WhatsApp API Credentials <span className="text-xs font-normal text-gray-400">(manual)</span></h3>
+                  {isConfigured && (
+                    <button type="button" onClick={testConnection} disabled={testing}
+                      className="text-sm text-whatsapp-teal hover:text-whatsapp-dark font-medium flex items-center gap-1.5 disabled:opacity-50">
+                      {testing ? '⏳ Testing...' : '🔌 Test Connection'}
+                    </button>
+                  )}
+                </div>
+                <div>
+                  <label className="form-label">Business Name</label>
+                  <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input" placeholder="Acme Corp" />
+                </div>
+                <div>
+                  <label className="form-label">Phone Number ID *</label>
+                  <input value={form.phone_number_id} onChange={(e) => setForm({ ...form, phone_number_id: e.target.value })}
+                    className="input font-mono" placeholder="930245630177351" required />
+                </div>
+                <div>
+                  <label className="form-label">WABA ID *</label>
+                  <input value={form.waba_id} onChange={(e) => setForm({ ...form, waba_id: e.target.value })}
+                    className="input font-mono" placeholder="1736454720919400" required />
+                </div>
+                <div>
+                  <label className="form-label">Permanent Access Token *</label>
+                  <div className="relative">
+                    <input type={showToken ? 'text' : 'password'} value={form.access_token}
+                      onChange={(e) => setForm({ ...form, access_token: e.target.value })}
+                      className="input pr-10 font-mono text-xs" placeholder="EAAxxxxx..." required />
+                    <button type="button" onClick={() => setShowToken((s) => !s)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                      {showToken ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="form-label">Verify Token <span className="font-normal text-gray-400 text-xs">(copy to Meta webhook setup)</span></label>
+                  <div className="flex gap-2">
+                    <input value={form.verify_token} readOnly className="input font-mono bg-gray-50 flex-1" />
+                    <button type="button" onClick={() => copyToClipboard(form.verify_token)} className="btn-secondary px-3 flex-shrink-0"><Copy size={16} /></button>
+                  </div>
+                </div>
+                <button type="submit" disabled={saving} className="btn-primary flex items-center gap-2 w-full justify-center">
+                  <Save size={16} />{saving ? 'Saving...' : 'Save Settings'}
+                </button>
+              </form>
+
             </div>
-            <p className="text-xs text-blue-600">Meta App Dashboard → WhatsApp → Configuration → Webhook URL & Verify Token</p>
           </div>
- {/* Custom Chatbot Webhooks */}
+        </>)}
+
+        {/* ─── DEVELOPER SECTION ─── */}
+        {activeSection === 'developer' && (<>
+          <h2 className="text-lg font-bold text-gray-900">Webhooks &amp; API</h2>
+
+          {/* Custom Chatbot Webhooks */}
           <div className="card space-y-5">
             <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
               <Webhook size={18} className="text-whatsapp-teal" />
               <div>
-                <h2 className="font-semibold text-gray-900">Custom Chatbot Webhooks</h2>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  Every inbound message is forwarded to all active webhooks in parallel.
-                </p>
+                <h3 className="font-semibold text-gray-900">Custom Chatbot Webhooks</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Every inbound message is forwarded to all active webhooks in parallel.</p>
               </div>
             </div>
 
@@ -608,7 +728,6 @@ export default function SettingsPage() {
                 { key: 'location', label: 'Location', icon: <MapPin size={11} /> },
                 { key: 'button',   label: 'Button',   icon: <MousePointerClick size={11} /> },
               ] as const;
-
               const contentMap: Record<string, string> = {
                 text:     `"Hello! I need help."`,
                 image:    `"{\\"__type\\":\\"media\\",\\"media_id\\":\\"abc123\\",\\"mime_type\\":\\"image/jpeg\\",\\"caption\\":\\"Check this\\"}"`,
@@ -617,50 +736,27 @@ export default function SettingsPage() {
                 location: `"{\\"__type\\":\\"location\\",\\"latitude\\":28.6139,\\"longitude\\":77.2090,\\"name\\":\\"New Delhi\\"}"`,
                 button:   `"Buy Now"`,
               };
-
-              const payload = `{
-  "event": "message.received",
-  "workspace_id": ${wsId},
-  "contact": { "id": 42, "phone": "919876543210" },
-  "message": {
-    "wamid": "wamid.HBgMOTE5...",
-    "type": "${payloadTab}",
-    "content": ${contentMap[payloadTab]},
-    "timestamp": "${Math.floor(Date.now() / 1000)}",
-    "replied_to_wamid": null
-  }
-}`;
-
+              const payload = `{\n  "event": "message.received",\n  "workspace_id": ${wsId},\n  "contact": { "id": 42, "phone": "919876543210" },\n  "message": {\n    "wamid": "wamid.HBgMOTE5...",\n    "type": "${payloadTab}",\n    "content": ${contentMap[payloadTab]},\n    "timestamp": "${Math.floor(Date.now() / 1000)}",\n    "replied_to_wamid": null\n  }\n}`;
               return (
                 <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-600 space-y-2">
                   <div className="flex items-center justify-between">
                     <p className="font-semibold text-gray-700">Payload your server will receive:</p>
-                    <button
-                      onClick={() => copyToClipboard(payload)}
-                      className="flex items-center gap-1 text-gray-400 hover:text-whatsapp-teal transition-colors px-2 py-1 rounded-lg hover:bg-white"
-                      title="Copy payload">
+                    <button onClick={() => copyToClipboard(payload)}
+                      className="flex items-center gap-1 text-gray-400 hover:text-whatsapp-teal transition-colors px-2 py-1 rounded-lg hover:bg-white" title="Copy payload">
                       <Copy size={12} /> Copy
                     </button>
                   </div>
-
-                  {/* Message type tabs */}
                   <div className="flex flex-wrap gap-1">
                     {payloadTabs.map((t) => (
-                      <button
-                        key={t.key}
-                        onClick={() => setPayloadTab(t.key)}
+                      <button key={t.key} onClick={() => setPayloadTab(t.key)}
                         className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${
-                          payloadTab === t.key
-                            ? 'bg-whatsapp-green text-white'
-                            : 'bg-white border border-gray-200 text-gray-500 hover:border-whatsapp-green hover:text-whatsapp-teal'
+                          payloadTab === t.key ? 'bg-whatsapp-green text-white' : 'bg-white border border-gray-200 text-gray-500 hover:border-whatsapp-green hover:text-whatsapp-teal'
                         }`}>
                         {t.icon}{t.label}
                       </button>
                     ))}
                   </div>
-
                   <pre className="bg-gray-900 text-green-400 rounded p-2 overflow-x-auto leading-relaxed text-[11px]">{payload}</pre>
-
                   <p className="text-gray-500">
                     Reply: <code className="bg-gray-200 px-1 rounded">POST /api/send-message</code>
                     {' · '}Signature: <code className="bg-gray-200 px-1 rounded">X-Webhook-Signature: sha256=...</code>
@@ -673,8 +769,7 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 {hooks.map((hook) => (
                   <div key={hook.id}
-                    className={`flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors
-                      ${hook.is_active ? 'border-gray-200 bg-white' : 'border-gray-100 bg-gray-50 opacity-60'}`}>
+                    className={`flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors ${hook.is_active ? 'border-gray-200 bg-white' : 'border-gray-100 bg-gray-50 opacity-60'}`}>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-gray-800">{hook.name}</p>
                       <p className="text-xs text-gray-400 truncate font-mono">{hook.url}</p>
@@ -687,9 +782,7 @@ export default function SettingsPage() {
                       </button>
                       <button onClick={() => toggleHook(hook)} title={hook.is_active ? 'Disable' : 'Enable'}
                         className="p-1.5 rounded-lg text-gray-400 hover:text-whatsapp-teal hover:bg-green-50 transition-colors">
-                        {hook.is_active
-                          ? <ToggleRight size={18} className="text-whatsapp-green" />
-                          : <ToggleLeft size={18} />}
+                        {hook.is_active ? <ToggleRight size={18} className="text-whatsapp-green" /> : <ToggleLeft size={18} />}
                       </button>
                       <button onClick={() => deleteHook(hook.id)} title="Delete"
                         className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
@@ -700,9 +793,7 @@ export default function SettingsPage() {
                 ))}
               </div>
             )}
-            {hooks.length === 0 && (
-              <p className="text-center text-gray-400 text-sm py-2">No webhooks added yet</p>
-            )}
+            {hooks.length === 0 && <p className="text-center text-gray-400 text-sm py-2">No webhooks added yet</p>}
 
             <form onSubmit={addWebhook} className="border border-dashed border-gray-300 rounded-lg p-4 space-y-3 bg-gray-50">
               <p className="text-sm font-semibold text-gray-700 flex items-center gap-1.5"><Plus size={15} /> Add New Webhook</p>
@@ -726,117 +817,35 @@ export default function SettingsPage() {
               </button>
             </form>
           </div>
-        </div>
-
-        {/* ── RIGHT COLUMN ── */}
-        <div className="space-y-6">
-
-          {/* Credentials source banner */}
-          {credSource === 'env' && (
-            <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 flex items-start gap-3">
-              <AlertTriangle size={18} className="text-yellow-600 flex-shrink-0 mt-0.5" />
-              <div className="text-sm">
-                <p className="font-semibold text-yellow-800">Credentials loaded from .env file</p>
-                <p className="text-yellow-700 mt-0.5">
-                  Credentials are in <code className="bg-yellow-100 px-1 rounded">.env.local</code> but not saved to DB.
-                  Click <strong>Save Settings</strong> below.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Manual credentials form */}
-          <form onSubmit={save} className="card space-y-5">
-            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-              <h2 className="font-semibold text-gray-900">WhatsApp API Credentials <span className="text-xs font-normal text-gray-400">(manual)</span></h2>
-              {isConfigured && (
-                <button type="button" onClick={testConnection} disabled={testing}
-                  className="text-sm text-whatsapp-teal hover:text-whatsapp-dark font-medium flex items-center gap-1.5 disabled:opacity-50">
-                  {testing ? '⏳ Testing...' : '🔌 Test Connection'}
-                </button>
-              )}
-            </div>
-
-            <div>
-              <label className="form-label">Business Name</label>
-              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="input" placeholder="Acme Corp" />
-            </div>
-            <div>
-              <label className="form-label">Phone Number ID *</label>
-              <input value={form.phone_number_id} onChange={(e) => setForm({ ...form, phone_number_id: e.target.value })}
-                className="input font-mono" placeholder="930245630177351" required />
-            </div>
-            <div>
-              <label className="form-label">WABA ID *</label>
-              <input value={form.waba_id} onChange={(e) => setForm({ ...form, waba_id: e.target.value })}
-                className="input font-mono" placeholder="1736454720919400" required />
-            </div>
-            <div>
-              <label className="form-label">Permanent Access Token *</label>
-              <div className="relative">
-                <input type={showToken ? 'text' : 'password'} value={form.access_token}
-                  onChange={(e) => setForm({ ...form, access_token: e.target.value })}
-                  className="input pr-10 font-mono text-xs" placeholder="EAAxxxxx..." required />
-                <button type="button" onClick={() => setShowToken((s) => !s)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                  {showToken ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
-            </div>
-            <div>
-              <label className="form-label">Verify Token <span className="font-normal text-gray-400 text-xs">(copy to Meta webhook setup)</span></label>
-              <div className="flex gap-2">
-                <input value={form.verify_token} readOnly className="input font-mono bg-gray-50 flex-1" />
-                <button type="button" onClick={() => copyToClipboard(form.verify_token)}
-                  className="btn-secondary px-3 flex-shrink-0"><Copy size={16} /></button>
-              </div>
-            </div>
-            <button type="submit" disabled={saving}
-              className="btn-primary flex items-center gap-2 w-full justify-center">
-              <Save size={16} />{saving ? 'Saving...' : 'Save Settings'}
-            </button>
-          </form>
 
           {/* External Chatbot API Key */}
           <div className="card space-y-4">
             <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
               <Key size={18} className="text-purple-500" />
               <div>
-                <h2 className="font-semibold text-gray-900">External Chatbot API</h2>
+                <h3 className="font-semibold text-gray-900">External Chatbot API</h3>
                 <p className="text-xs text-gray-400 mt-0.5">Use this key to send messages from n8n, Make, or any custom bot</p>
               </div>
             </div>
 
-            {apiKey ? (
-              <>
-                <div>
-                  <label className="form-label">API Key</label>
-                  <div className="flex gap-2 mt-1">
-                    <input
-                      type={showApiKey ? 'text' : 'password'}
-                      value={apiKey}
-                      readOnly
-                      className="input font-mono text-xs flex-1 bg-gray-50"
-                    />
-                    <button onClick={() => setShowApiKey((s) => !s)}
-                      className="btn-secondary px-3 flex-shrink-0">
-                      {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
-                    </button>
-                    <button onClick={() => copyToClipboard(apiKey)}
-                      className="btn-secondary px-3 flex-shrink-0">
-                      <Copy size={15} />
-                    </button>
-                    <button onClick={regenApiKey} disabled={regenLoading}
-                      className="btn-secondary px-3 flex-shrink-0 text-red-500 hover:bg-red-50" title="Regenerate">
-                      <RotateCcw size={15} className={regenLoading ? 'animate-spin' : ''} />
-                    </button>
-                  </div>
+            {apiKey ? (<>
+              <div>
+                <label className="form-label">API Key</label>
+                <div className="flex gap-2 mt-1">
+                  <input type={showApiKey ? 'text' : 'password'} value={apiKey} readOnly className="input font-mono text-xs flex-1 bg-gray-50" />
+                  <button onClick={() => setShowApiKey((s) => !s)} className="btn-secondary px-3 flex-shrink-0">
+                    {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                  <button onClick={() => copyToClipboard(apiKey)} className="btn-secondary px-3 flex-shrink-0"><Copy size={15} /></button>
+                  <button onClick={regenApiKey} disabled={regenLoading}
+                    className="btn-secondary px-3 flex-shrink-0 text-red-500 hover:bg-red-50" title="Regenerate">
+                    <RotateCcw size={15} className={regenLoading ? 'animate-spin' : ''} />
+                  </button>
                 </div>
-
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-600 space-y-2">
-                  <p className="font-semibold text-gray-700">How to use (n8n / Make / custom):</p>
-                  <pre className="bg-gray-900 text-green-400 rounded p-2 overflow-x-auto leading-relaxed whitespace-pre-wrap">{`POST ${typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.com'}/api/external/send
+              </div>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-600 space-y-2">
+                <p className="font-semibold text-gray-700">How to use (n8n / Make / custom):</p>
+                <pre className="bg-gray-900 text-green-400 rounded p-2 overflow-x-auto leading-relaxed whitespace-pre-wrap">{`POST ${typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.com'}/api/external/send
 Headers:
   X-API-Key: ${showApiKey ? apiKey : '•'.repeat(20)}
   Content-Type: application/json
@@ -852,10 +861,9 @@ Body:
   "contact_id": 42,
   "message": "Hello from chatbot!"
 }`}</pre>
-                  <p className="text-gray-500">Response: <code className="bg-gray-200 px-1 rounded">{"{ success: true, message_id, wamid }"}</code></p>
-                </div>
-              </>
-            ) : (
+                <p className="text-gray-500">Response: <code className="bg-gray-200 px-1 rounded">{"{ success: true, message_id, wamid }"}</code></p>
+              </div>
+            </>) : (
               <div className="flex flex-col items-center gap-3 py-4">
                 <p className="text-sm text-gray-400 text-center">No API key yet.</p>
                 <button
@@ -868,22 +876,46 @@ Body:
                     } catch { toast.error('Failed to generate'); }
                     finally { setRegenLoading(false); }
                   }}
-                  disabled={regenLoading}
-                  className="btn-primary flex items-center gap-2 text-sm">
-                  {regenLoading
-                    ? <><Loader2 size={14} className="animate-spin" /> Generating...</>
-                    : <><Key size={14} /> Generate API Key</>}
+                  disabled={regenLoading} className="btn-primary flex items-center gap-2 text-sm">
+                  {regenLoading ? <><Loader2 size={14} className="animate-spin" /> Generating...</> : <><Key size={14} /> Generate API Key</>}
                 </button>
-               
               </div>
             )}
           </div>
+        </>)}
 
-        </div>
-        
+        {/* ─── CAMPAIGNS SECTION ─── */}
+        {activeSection === 'campaigns' && (<>
+          <h2 className="text-lg font-bold text-gray-900">Campaign Settings</h2>
+
+          <div className="card space-y-4">
+            <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+              <PauseCircle size={18} className="text-whatsapp-teal" />
+              <h3 className="font-semibold text-gray-900">Auto-Pause Settings</h3>
+            </div>
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-gray-800">
+                  Auto-Pause Campaigns on Template Category Change from Utility to Marketing
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Disable this to keep campaigns running even when Meta changes their template category from Utility to Marketing.
+                </p>
+              </div>
+              <button onClick={toggleAutoPause} disabled={savingPause}
+                className="flex-shrink-0 mt-0.5 disabled:opacity-50 transition-opacity"
+                title={autoPauseCampaigns ? 'Click to disable' : 'Click to enable'}>
+                {autoPauseCampaigns
+                  ? <ToggleRight size={36} className="text-whatsapp-teal" />
+                  : <ToggleLeft  size={36} className="text-gray-300" />}
+              </button>
+            </div>
+          </div>
+        </>)}
+
       </div>
 
-      {/* WABA ID Input Modal */}
+      {/* Modals */}
       {showWabaInput && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
@@ -894,40 +926,18 @@ Body:
               </div>
               <button onClick={() => setShowWabaInput(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
             </div>
-            <input
-              value={wabaInputId}
-              onChange={(e) => setWabaInputId(e.target.value)}
+            <input value={wabaInputId} onChange={(e) => setWabaInputId(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && fetchPhonesForWaba()}
-              className="input w-full font-mono mb-4"
-              placeholder="e.g. 1736454720919400"
-              autoFocus
-            />
-            <button
-              onClick={fetchPhonesForWaba}
-              disabled={!wabaInputId.trim() || fetchingPhones}
+              className="input w-full font-mono mb-4" placeholder="e.g. 1736454720919400" autoFocus />
+            <button onClick={fetchPhonesForWaba} disabled={!wabaInputId.trim() || fetchingPhones}
               className="btn-primary w-full flex items-center justify-center gap-2">
-              {fetchingPhones
-                ? <><Loader2 size={16} className="animate-spin" /> Fetching phones...</>
-                : <>Fetch Phone Numbers <ChevronRight size={16} /></>}
+              {fetchingPhones ? <><Loader2 size={16} className="animate-spin" /> Fetching phones...</> : <>Fetch Phone Numbers <ChevronRight size={16} /></>}
             </button>
           </div>
         </div>
       )}
-
-      {/* WABA + Phone Picker Modal */}
-      {wabas && (
-        <MetaConnectModal
-          wabas={wabas}
-          onConnect={handleConnect}
-          onClose={() => setWabas(null)}
-        />
-      )}
-      {connectResults && (
-        <ConnectResults
-          results={connectResults}
-          onClose={() => setConnectResults(null)}
-        />
-      )}
+      {wabas && <MetaConnectModal wabas={wabas} onConnect={handleConnect} onClose={() => setWabas(null)} />}
+      {connectResults && <ConnectResults results={connectResults} onClose={() => setConnectResults(null)} />}
     </div>
   );
 }

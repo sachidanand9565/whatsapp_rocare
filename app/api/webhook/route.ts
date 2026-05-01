@@ -4,7 +4,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { query, insert, execute } from '@/lib/db';
-import { parseWebhookBody, sendTextMessage, markAsRead } from '@/lib/whatsapp';
+import { parseWebhookBody, sendTextMessage, markAsRead, TemplateStatusUpdate } from '@/lib/whatsapp';
 import { normalizePhone, utcNow, unixToUtc } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { emitSSE } from '@/lib/sse';
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Identify workspace by phoneNumberId
-  const { messages, statuses, phoneNumberId, profileNames } = parseWebhookBody(body);
+  const { messages, statuses, phoneNumberId, wabaId, profileNames, templateStatusUpdates } = parseWebhookBody(body);
 
   let workspaceId: number | null = null;
   let workspaceAccessToken = '';
@@ -246,7 +246,55 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ---- Handle template category changes (UTILITY → MARKETING) ----
+  for (const tsu of templateStatusUpdates) {
+    if (
+      tsu.reason === 'CATEGORY_CHANGE' &&
+      tsu.previousCategory.toUpperCase() === 'UTILITY' &&
+      tsu.newCategory.toUpperCase() === 'MARKETING'
+    ) {
+      await handleTemplateCategoryChange(wabaId, tsu);
+    }
+  }
+
   return NextResponse.json({ received: true });
+}
+
+// ---- Auto-pause campaigns when template moves from UTILITY → MARKETING ----
+async function handleTemplateCategoryChange(
+  wabaId: string,
+  tsu: TemplateStatusUpdate
+) {
+  if (!wabaId) return;
+
+  const wsRows = await query<RowDataPacket[]>(
+    'SELECT id, auto_pause_campaigns FROM workspaces WHERE waba_id = ? AND is_active = 1 LIMIT 1',
+    [wabaId]
+  );
+  if (wsRows.length === 0) return;
+
+  const wsId      = wsRows[0].id as number;
+  const autoPause = wsRows[0].auto_pause_campaigns as number;
+
+  // Always sync the category in our templates table
+  await execute(
+    `UPDATE templates SET category = 'MARKETING'
+     WHERE workspace_id = ? AND (meta_template_id = ? OR name = ?)`,
+    [wsId, tsu.templateId, tsu.templateName]
+  );
+
+  if (!autoPause) return;
+
+  // Pause every running campaign that uses this template
+  await execute(
+    `UPDATE campaigns c
+     JOIN templates t ON t.id = c.template_id
+     SET c.status = 'paused'
+     WHERE c.workspace_id = ?
+       AND c.status = 'running'
+       AND (t.meta_template_id = ? OR t.name = ?)`,
+    [wsId, tsu.templateId, tsu.templateName]
+  );
 }
 
 // ---- Forward inbound message to custom webhook URL ----
