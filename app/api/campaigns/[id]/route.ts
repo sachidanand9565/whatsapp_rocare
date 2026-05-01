@@ -38,16 +38,16 @@ export async function GET(req: NextRequest, { params }: Params) {
     if (camps.length === 0) return apiError('Campaign not found', 404);
     const campaign = camps[0];
 
-    // ── Accurate counts from campaign_contacts ──────────────
+    // ── Accurate counts from messages table (every individual send) ──
     const countRows = await query<RowDataPacket[]>(
       `SELECT
         COALESCE(SUM(status IN ('sent','delivered','read')), 0) AS sent,
         COALESCE(SUM(status IN ('delivered','read')),        0) AS delivered,
         COALESCE(SUM(status = 'read'),                       0) AS \`read\`,
         COALESCE(SUM(status = 'failed'),                     0) AS failed,
-        COALESCE(SUM(status = 'pending'),                    0) AS pending
-       FROM campaign_contacts
-       WHERE campaign_id = ?`,
+        COALESCE(SUM(status = 'queued'),                     0) AS pending
+       FROM messages
+       WHERE campaign_id = ? AND direction = 'outbound'`,
       [campaignId]
     );
 
@@ -88,9 +88,8 @@ export async function GET(req: NextRequest, { params }: Params) {
        ORDER BY date ASC`,
       [campaignId, chartFrom, `${chartTo} 23:59:59`]
     );
-    // MySQL SUM() returns strings — convert to numbers for recharts
     const dailyNorm = daily.map(r => ({
-      date:      String(r.date).split('T')[0],   // keep YYYY-MM-DD
+      date:      String(r.date).split('T')[0],
       sent:      Number(r.sent      || 0),
       delivered: Number(r.delivered || 0),
       read:      Number(r.read      || 0),
@@ -104,10 +103,8 @@ export async function GET(req: NextRequest, { params }: Params) {
 
     if (!isRepliedFilter && status !== 'all') {
       if (status === 'sent') {
-        // Sent tab = all successfully dispatched (sent + delivered + read), never failed
         statusClause = `AND cc.status IN ('sent','delivered','read')`;
       } else if (status === 'delivered') {
-        // Delivered tab = delivered + read (progressive states)
         statusClause = `AND cc.status IN ('delivered','read')`;
       } else {
         statusClause = `AND cc.status = ?`;

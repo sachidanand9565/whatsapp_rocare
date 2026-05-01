@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
   try {
     const payload = requireAuth(req);
 
-    // Subquery: accurate per-status counts from campaign_contacts
+    // Subquery: accurate per-status counts from messages (every individual send)
     const statsSub = `
       LEFT JOIN (
         SELECT campaign_id,
@@ -20,7 +20,8 @@ export async function GET(req: NextRequest) {
           COALESCE(SUM(status IN ('delivered','read')),        0) AS cc_delivered,
           COALESCE(SUM(status = 'read'),                       0) AS cc_read,
           COALESCE(SUM(status = 'failed'),                     0) AS cc_failed
-        FROM campaign_contacts
+        FROM messages
+        WHERE direction = 'outbound'
         GROUP BY campaign_id
       ) cc_stats ON cc_stats.campaign_id = c.id`;
 
