@@ -46,6 +46,15 @@ export async function POST(req: NextRequest) {
       return apiError('access_token, waba_id and phone_number_id are required', 400);
     }
 
+    // ── 0. Check phone_number_id not already used by another workspace ──
+    const existing = await query<RowDataPacket[]>(
+      'SELECT id FROM workspaces WHERE phone_number_id = ? AND id != ? AND is_active = 1 LIMIT 1',
+      [phone_number_id, payload.workspaceId]
+    );
+    if (existing.length > 0) {
+      return apiError('This phone number is already connected to another workspace. Please use a different phone number.', 409);
+    }
+
     // ── 1. Save credentials to workspace ─────────────────────
     // Try with phone_display column first, fallback without it
     try {
