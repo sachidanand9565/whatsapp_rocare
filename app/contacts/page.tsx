@@ -221,11 +221,11 @@ function ContactModal({ contact, onClose, onSaved }: {
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
-        <div className="p-6 border-b border-gray-200">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col">
+        <div className="p-6 border-b border-gray-200 flex-shrink-0">
           <h2 className="font-bold text-lg">{contact ? 'Edit Contact' : 'Add Contact'}</h2>
         </div>
-        <form onSubmit={save} className="p-6 space-y-4">
+        <form onSubmit={save} className="p-6 space-y-4 overflow-y-auto">
           {[
             { label: 'Name', key: 'name', type: 'text', placeholder: 'John Doe' },
             { label: 'Phone *', key: 'phone', type: 'text', placeholder: '919876543210' },

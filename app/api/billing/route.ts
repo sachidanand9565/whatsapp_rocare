@@ -79,13 +79,9 @@ export async function GET(req: NextRequest) {
     const convUrl = `https://graph.facebook.com/${GV}/${waba_id}/conversation_analytics?${convParams}`;
 
     // 2. Message analytics (real-time sent/delivered/read)
+    // Uses field expansion syntax — required in v22.0+
     const msgUrl = phone_number_id
-      ? `https://graph.facebook.com/${GV}/${phone_number_id}/analytics?${new URLSearchParams({
-          start:       String(start),
-          end:         String(end),
-          granularity: 'DAY',
-          access_token,
-        })}`
+      ? `https://graph.facebook.com/${GV}/${phone_number_id}?fields=analytics.start(${start}).end(${end}).granularity(DAY)&access_token=${access_token}`
       : null;
 
     const [convRes, msgRes] = await Promise.all([
@@ -185,6 +181,7 @@ export async function GET(req: NextRequest) {
       },
       by_category: byCategory,
       daily: Object.values(byDay).sort((a, b) => a.date.localeCompare(b.date)),
+      _debug: { waba_id, phone_number_id, conv_raw: convRes, msg_raw: msgRes },
     });
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
