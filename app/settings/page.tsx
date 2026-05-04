@@ -309,7 +309,8 @@ export default function SettingsPage() {
 
         // Exchange code → long-lived token, then connect
         setConnecting(true);
-        apiFetch('/api/auth/meta/exchange', { method: 'POST', body: JSON.stringify({ code }) })
+        const redirectUri = window.location.origin + window.location.pathname;
+        apiFetch('/api/auth/meta/exchange', { method: 'POST', body: JSON.stringify({ code, redirect_uri: redirectUri }) })
           .then((r) => {
             const token = r.data?.access_token;
             if (!token) { toast.error('Token exchange failed'); return; }
