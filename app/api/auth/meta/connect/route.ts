@@ -81,29 +81,17 @@ export async function POST(req: NextRequest) {
 
     // ── 2. Subscribe Meta App webhook on the WABA ─────────────
     try {
-      const appId     = process.env.FACEBOOK_APP_ID || process.env.NEXT_PUBLIC_FACEBOOK_APP_ID || '';
-      const appSecret = process.env.FACEBOOK_APP_SECRET || '';
-
-      // Get app access token for subscription
-      let subToken = access_token;
-      if (appId && appSecret) {
-        const appTokenRes = await fetch(
-          `https://graph.facebook.com/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&grant_type=client_credentials`
-        );
-        const appTokenData = await appTokenRes.json();
-        if (appTokenData.access_token) subToken = appTokenData.access_token;
-      }
-
+      // Use user access token directly — it has admin access to the WABA from Embedded Signup
       const subRes = await fetch(
         `https://graph.facebook.com/${GV}/${waba_id}/subscribed_apps`,
         {
           method:  'POST',
           headers: {
-            Authorization:  `Bearer ${subToken}`,
+            Authorization:  `Bearer ${access_token}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            subscribed_fields: ['messages', 'message_deliveries', 'message_reads'],
+            subscribed_fields: ['messages'],
           }),
         }
       );
