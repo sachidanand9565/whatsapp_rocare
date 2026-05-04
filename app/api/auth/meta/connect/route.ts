@@ -5,10 +5,10 @@
  *  2. Subscribe Meta webhook for this WABA
  *  3. Import all templates from Meta into DB
  */
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 import { query, execute, insert } from '@/lib/db';
-import { apiError } from '@/lib/utils';
+import { apiSuccess, apiError } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 
 const GV = 'v20.0';
@@ -199,7 +199,7 @@ export async function POST(req: NextRequest) {
       results.push({ step: 'Template import', status: 'warn', detail: String(e) });
     }
 
-    return NextResponse.json({ success: true, results });
+    return apiSuccess({ results });
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
     console.error('[meta/connect]', err);

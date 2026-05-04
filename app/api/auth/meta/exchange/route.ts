@@ -2,9 +2,9 @@
  * POST /api/auth/meta/exchange
  * Exchange FB authorization code (from Embedded Signup) for a long-lived access token
  */
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
-import { apiError } from '@/lib/utils';
+import { apiSuccess, apiError } from '@/lib/utils';
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     const extendData = await extendRes.json();
     const finalToken = extendData.access_token || shortToken;
 
-    return NextResponse.json({ success: true, access_token: finalToken });
+    return apiSuccess({ access_token: finalToken });
   } catch (err) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
     return apiError('Token exchange failed', 500);
