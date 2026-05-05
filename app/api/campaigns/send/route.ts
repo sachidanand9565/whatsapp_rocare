@@ -123,12 +123,22 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Build template components ─────────────────────────────
-    const components: { type: string; parameters: { type: string; text: string }[] }[] = [];
+    const components: object[] = [];
     if (Object.keys(variables).length > 0) {
       const sortedKeys = Object.keys(variables).sort((a, b) => Number(a) - Number(b));
       components.push({
         type: 'body',
         parameters: sortedKeys.map((k) => ({ type: 'text', text: variables[k] })),
+      });
+    }
+    // Button payloads — e.g. ["accept_123", "reject_123"]
+    const buttonPayloads = rawBody.buttonPayloads as string[] | undefined;
+    if (Array.isArray(buttonPayloads) && buttonPayloads.length > 0) {
+      buttonPayloads.forEach((pl, idx) => {
+        components.push({
+          type: 'button', sub_type: 'quick_reply', index: String(idx),
+          parameters: [{ type: 'payload', payload: pl }],
+        });
       });
     }
 
