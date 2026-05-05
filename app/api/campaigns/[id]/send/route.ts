@@ -80,6 +80,7 @@ export async function POST(
       destination?:        string;
       templateParams?:     string[];
       paramsFallbackValue?: Record<string, string>;
+      buttonPayloads?:     string[];   // e.g. ["accept_123", "reject_123"]
       // Legacy style
       phone?:              string;
       variables?:          Record<string, string>;
@@ -131,12 +132,21 @@ export async function POST(
     }
 
     // ── Build template components ────────────────────────────
-    const components: { type: string; parameters: { type: string; text: string }[] }[] = [];
+    const components: object[] = [];
     if (variables && Object.keys(variables).length > 0) {
       const sortedKeys = Object.keys(variables).sort((a, b) => Number(a) - Number(b));
       components.push({
         type: 'body',
         parameters: sortedKeys.map((k) => ({ type: 'text', text: variables[k] })),
+      });
+    }
+    // Button payloads — pass lead_id per button e.g. ["accept_123", "reject_123"]
+    if (Array.isArray(body.buttonPayloads) && body.buttonPayloads.length > 0) {
+      body.buttonPayloads.forEach((pl, idx) => {
+        components.push({
+          type: 'button', sub_type: 'quick_reply', index: String(idx),
+          parameters: [{ type: 'payload', payload: pl }],
+        });
       });
     }
 

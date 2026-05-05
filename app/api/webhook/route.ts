@@ -179,6 +179,9 @@ export async function POST(req: NextRequest) {
           wamid:            msg.wamid,
           type:             msg.type,
           content,
+          ...(msg.type === 'button' && msg.button?.payload
+            ? { button_payload: msg.button.payload }
+            : {}),
           timestamp:        msg.timestamp,
           replied_to_wamid: msg.replied_to_wamid || null,
         },
