@@ -169,6 +169,11 @@ export async function POST(req: NextRequest) {
       markAsRead(workspaceAccessToken, phoneNumberId, msg.wamid).catch(() => {});
     }
 
+    // ---- CRM Integration: fire on template button reply ----
+    if (msg.type === 'button' && msg.button?.payload && msg.replied_to_wamid && workspaceId) {
+      fireCrmIntegration(workspaceId, msg.replied_to_wamid, msg.button, contactId, phone).catch(() => {});
+    }
+
     // ---- Forward to all active custom chatbot webhooks (non-blocking) ----
     if (activeWebhooks.length > 0) {
       const fwdPayload = {
@@ -321,6 +326,60 @@ function forwardToCustomWebhook(
   // Fire-and-forget — never block inbound processing
   fetch(url, { method: 'POST', headers, body })
     .catch(() => { /* ignore errors */ });
+}
+
+// ---- Fire CRM integration on template button reply ----
+async function fireCrmIntegration(
+  workspaceId: number,
+  repliedToWamid: string,
+  button: { text: string; payload: string },
+  contactId: number,
+  phone: string
+) {
+  // Find original message template_name from replied wamid
+  const msgRows = await query<RowDataPacket[]>(
+    'SELECT content FROM messages WHERE wamid = ? AND workspace_id = ? LIMIT 1',
+    [repliedToWamid, workspaceId]
+  );
+  if (msgRows.length === 0) return;
+
+  let templateName = '';
+  try {
+    const parsed = JSON.parse(msgRows[0].content as string);
+    templateName = parsed?.template_name || '';
+  } catch { return; }
+  if (!templateName) return;
+
+  // Get active CRM integrations for this template
+  const crms = await query<RowDataPacket[]>(
+    'SELECT * FROM crm_integrations WHERE workspace_id = ? AND template_name = ? AND is_active = 1',
+    [workspaceId, templateName]
+  );
+  if (crms.length === 0) return;
+
+  const crmPayload = JSON.stringify({
+    event:          'template_button_reply',
+    template_name:  templateName,
+    button_text:    button.text,
+    button_payload: button.payload,
+    contact:        { id: contactId, phone },
+    workspace_id:   workspaceId,
+  });
+
+  for (const crm of crms) {
+    try {
+      let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (crm.api_headers) {
+        try { headers = { ...headers, ...JSON.parse(crm.api_headers as string) }; } catch { /* ignore bad JSON */ }
+      }
+      const method = (crm.api_method as string) || 'POST';
+      fetch(crm.api_url as string, {
+        method,
+        headers,
+        body: method === 'GET' ? undefined : crmPayload,
+      }).catch(() => {});
+    } catch { /* ignore */ }
+  }
 }
 
 // ---- Chatbot rule matching ----

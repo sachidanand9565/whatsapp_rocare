@@ -6,6 +6,7 @@ import {
   Webhook, RefreshCw, Plus, Trash2, ToggleLeft, ToggleRight,
   Facebook, ChevronRight, X, Phone, Loader2, Key, RotateCcw, Zap,
   MessageSquare, Image, FileText, Music, MapPin, MousePointerClick, PauseCircle,
+  Database, Globe,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -26,6 +27,16 @@ interface CWHook {
   url:       string;
   secret:    string | null;
   is_active: number;
+}
+
+interface CRMIntegration {
+  id:            number;
+  name:          string;
+  template_name: string;
+  api_url:       string;
+  api_method:    'POST' | 'GET';
+  api_headers:   string | null;
+  is_active:     number;
 }
 
 interface WABAOption {
@@ -223,7 +234,14 @@ export default function SettingsPage() {
   const [workspaceId, setWorkspaceId] = useState<number | null>(null);
 
   // Sidebar navigation
-  const [activeSection, setActiveSection] = useState<'auth' | 'developer' | 'campaigns'>('auth');
+  const [activeSection, setActiveSection] = useState<'auth' | 'developer' | 'campaigns' | 'crm'>('auth');
+
+  // CRM integrations
+  const [crmList, setCrmList]         = useState<CRMIntegration[]>([]);
+  const [crmTemplates, setCrmTemplates] = useState<string[]>([]);
+  const [crmForm, setCrmForm]         = useState({ name: '', template_name: '', api_url: '', api_method: 'POST', api_headers: '' });
+  const [crmAdding, setCrmAdding]     = useState(false);
+  const [showCrmHeaders, setShowCrmHeaders] = useState(false);
 
   const APP_ID    = process.env.NEXT_PUBLIC_FACEBOOK_APP_ID || '';
   const CONFIG_ID = process.env.NEXT_PUBLIC_FACEBOOK_CONFIG_ID || '';
@@ -278,14 +296,62 @@ export default function SettingsPage() {
       }
     });
     loadHooks();
+    loadCrm();
     apiFetch('/api/workspace/api-key').then((r) => setApiKey(r.data?.api_key || ''));
     apiFetch('/api/campaign-settings').then((r) => {
       if (r.data) setAutoPauseCampaigns(!!r.data.auto_pause_campaigns);
     });
+    // Load template names for CRM dropdown
+    apiFetch('/api/templates').then((r) => {
+      const names: string[] = Array.from(new Set((r.data || []).map((t: { name: string }) => t.name)));
+      setCrmTemplates(names);
+    }).catch(() => {});
   }, []);
 
   function loadHooks() {
     apiFetch('/api/webhooks').then((r) => setHooks(r.data || []));
+  }
+
+  function loadCrm() {
+    apiFetch('/api/crm').then((r) => setCrmList(r.data || [])).catch(() => {});
+  }
+
+  async function addCrm(e: React.FormEvent) {
+    e.preventDefault();
+    if (!crmForm.name || !crmForm.template_name || !crmForm.api_url) return;
+    setCrmAdding(true);
+    try {
+      await apiFetch('/api/crm', {
+        method: 'POST',
+        body: JSON.stringify({
+          name:          crmForm.name,
+          template_name: crmForm.template_name,
+          api_url:       crmForm.api_url,
+          api_method:    crmForm.api_method,
+          api_headers:   crmForm.api_headers || null,
+        }),
+      });
+      setCrmForm({ name: '', template_name: '', api_url: '', api_method: 'POST', api_headers: '' });
+      loadCrm();
+      toast.success('CRM integration added successfully!');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    } finally { setCrmAdding(false); }
+  }
+
+  async function deleteCrm(id: number) {
+    if (!confirm('Delete this CRM integration?')) return;
+    await apiFetch(`/api/crm/${id}`, { method: 'DELETE' });
+    setCrmList((l) => l.filter((x) => x.id !== id));
+    toast.success('Deleted');
+  }
+
+  async function toggleCrm(item: CRMIntegration) {
+    await apiFetch(`/api/crm/${item.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ is_active: item.is_active ? 0 : 1 }),
+    });
+    setCrmList((l) => l.map((x) => x.id === item.id ? { ...x, is_active: item.is_active ? 0 : 1 } : x));
   }
 
   // ── BSP Embedded Signup (when CONFIG_ID is set) ──────────────
@@ -295,7 +361,6 @@ export default function SettingsPage() {
     setFbLoading(true);
 
     if (BSP_READY) {
-      // Full Embedded Signup — user sets up business + WABA + phone inside Meta popup
       window.FB.login((res) => {
         setFbLoading(false);
         const code = res.authResponse?.code;
@@ -307,7 +372,6 @@ export default function SettingsPage() {
           return;
         }
 
-        // Exchange code → long-lived token, then connect
         setConnecting(true);
         apiFetch('/api/auth/meta/exchange', { method: 'POST', body: JSON.stringify({ code }) })
           .then((r) => {
@@ -325,7 +389,6 @@ export default function SettingsPage() {
         extras: { setup: {}, featureType: '', sessionInfoVersion: '3' },
       });
     } else {
-      // Fallback (no BSP access yet) — FB login → manual WABA ID entry
       window.FB.login((res) => {
         setFbLoading(false);
         if (!res.authResponse?.accessToken) { toast.error('Facebook login cancelled or failed'); return; }
@@ -338,7 +401,6 @@ export default function SettingsPage() {
     }
   }
 
-  // Fallback: fetch phones for manually entered WABA ID
   async function fetchPhonesForWaba() {
     if (!wabaInputId.trim() || !fbToken) return;
     setFetchingPhones(true);
@@ -357,7 +419,6 @@ export default function SettingsPage() {
     }
   }
 
-  // Step 2: Connect with obtained credentials
   async function handleConnect(waba_id: string, phone_number_id: string, business_name: string, display_phone_number?: string, token?: string) {
     setWabas(null);
     setConnecting(true);
@@ -368,7 +429,6 @@ export default function SettingsPage() {
         body: JSON.stringify({ access_token: useToken, waba_id, phone_number_id, business_name, display_phone_number }),
       });
       setConnectResults(r.data?.results || []);
-      // Refresh workspace form
       apiFetch('/api/workspace').then((wr) => {
         if (wr.data) {
           setForm({
@@ -534,6 +594,9 @@ export default function SettingsPage() {
           <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider px-3 pt-4 pb-1">Manage</p>
           <button onClick={() => setActiveSection('campaigns')} className={navBtn('campaigns')}>
             <PauseCircle size={14} /> Campaigns
+          </button>
+          <button onClick={() => setActiveSection('crm')} className={navBtn('crm')}>
+            <Database size={14} /> CRM
           </button>
         </div>
       </aside>
@@ -913,7 +976,143 @@ Body:
           </div>
         </>)}
 
-      </div>
+        {/* ─── CRM SECTION ─── */}
+        {activeSection === 'crm' && (<>
+          <h2 className="text-lg font-bold text-gray-900">CRM Integration</h2>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+
+            {/* Add new form */}
+            <div className="card space-y-4">
+              <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+                <Database size={18} className="text-whatsapp-teal" />
+                <div>
+                  <h3 className="font-semibold text-gray-900">Add New CRM Integration</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Automatically calls your CRM API when a template button is replied to</p>
+                </div>
+              </div>
+
+              <form onSubmit={addCrm} className="space-y-3">
+                <div>
+                  <label className="form-label">Integration Name *</label>
+                  <input value={crmForm.name}
+                    onChange={(e) => setCrmForm({ ...crmForm, name: e.target.value })}
+                    className="input" placeholder="e.g. Lead Assignment Action" required />
+                </div>
+
+                <div>
+                  <label className="form-label">Template *</label>
+                  {crmTemplates.length > 0 ? (
+                    <select value={crmForm.template_name}
+                      onChange={(e) => setCrmForm({ ...crmForm, template_name: e.target.value })}
+                      className="input" required>
+                      <option value="">-- Select a template --</option>
+                      {crmTemplates.map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input value={crmForm.template_name}
+                      onChange={(e) => setCrmForm({ ...crmForm, template_name: e.target.value })}
+                      className="input font-mono" placeholder="e.g. lead_assignment_action" required />
+                  )}
+                </div>
+
+                <div>
+                  <label className="form-label">CRM API URL *</label>
+                  <div className="flex gap-2">
+                    <select value={crmForm.api_method}
+                      onChange={(e) => setCrmForm({ ...crmForm, api_method: e.target.value })}
+                      className="input w-24 flex-shrink-0">
+                      <option>POST</option>
+                      <option>GET</option>
+                    </select>
+                    <input value={crmForm.api_url}
+                      onChange={(e) => setCrmForm({ ...crmForm, api_url: e.target.value })}
+                      className="input flex-1 font-mono text-xs min-w-0" placeholder="https://yourcrm.com/api/lead-action" required />
+                  </div>
+                </div>
+
+                <div>
+                  <button type="button" onClick={() => setShowCrmHeaders((s) => !s)}
+                    className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1">
+                    <Globe size={12} /> Custom Headers (optional) {showCrmHeaders ? '▲' : '▼'}
+                  </button>
+                  {showCrmHeaders && (
+                    <textarea value={crmForm.api_headers}
+                      onChange={(e) => setCrmForm({ ...crmForm, api_headers: e.target.value })}
+                      className="input mt-2 font-mono text-xs h-20 resize-none"
+                      placeholder={'{"X-API-Key": "abc", "Authorization": "Bearer token"}'} />
+                  )}
+                </div>
+
+                {/* Data preview */}
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 overflow-hidden">
+                  <p className="text-xs font-semibold text-gray-700 mb-1.5">Your CRM will receive this data:</p>
+                  <pre className="bg-gray-900 text-green-400 rounded p-2 text-[10px] overflow-x-auto leading-relaxed whitespace-pre-wrap break-all">{`{
+  "event":          "template_button_reply",
+  "template_name":  "${crmForm.template_name || 'lead_assignment_action'}",
+  "button_text":    "Accept",
+  "button_payload": "123",
+  "contact":        { "id": 42, "phone": "919876543210" },
+  "workspace_id":   1
+}`}</pre>
+                </div>
+
+                <button type="submit" disabled={crmAdding}
+                  className="btn-primary flex items-center gap-2 w-full justify-center">
+                  <Plus size={16} />{crmAdding ? 'Adding...' : 'Add Integration'}
+                </button>
+              </form>
+            </div>
+
+            {/* Active integrations list */}
+            <div className="card space-y-3">
+              <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+                <Globe size={18} className="text-whatsapp-teal" />
+                <div>
+                  <h3 className="font-semibold text-gray-900">Active CRM Integrations</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">{crmList.length} integration{crmList.length !== 1 ? 's' : ''} configured</p>
+                </div>
+              </div>
+
+              {crmList.length === 0 && (
+                <p className="text-center text-gray-400 text-sm py-6">No CRM integrations configured yet</p>
+              )}
+
+              {crmList.map((item) => (
+                <div key={item.id}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors ${
+                    item.is_active ? 'border-gray-200 bg-white' : 'border-gray-100 bg-gray-50 opacity-60'
+                  }`}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-semibold text-gray-800">{item.name}</p>
+                      <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">{item.api_method}</span>
+                      <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-mono">{item.template_name}</span>
+                    </div>
+                    <p className="text-xs text-gray-400 truncate font-mono mt-1">{item.api_url}</p>
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button onClick={() => toggleCrm(item)} title={item.is_active ? 'Disable' : 'Enable'}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-whatsapp-teal hover:bg-green-50 transition-colors">
+                      {item.is_active
+                        ? <ToggleRight size={20} className="text-whatsapp-green" />
+                        : <ToggleLeft size={20} />}
+                    </button>
+                    <button onClick={() => deleteCrm(item.id)} title="Delete"
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+          </div>{/* end grid */}
+        </>)}
+
+      </div>{/* ── END Content Area ── */}
 
       {/* Modals */}
       {showWabaInput && (
