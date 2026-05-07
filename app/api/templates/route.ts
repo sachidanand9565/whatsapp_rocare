@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
     const {
       name, language, category,
       header_type, header_content,
+      media_handle = '',  // Meta media handle for IMAGE / VIDEO / DOCUMENT headers
       body_text, footer_text,
       buttons = [],
       variables = [],
@@ -78,40 +79,48 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // ── Build components (validate first) ───────────────────
+    if (['IMAGE', 'VIDEO', 'DOCUMENT'].includes(header_type) && !media_handle) {
+      await execute('UPDATE templates SET status = ? WHERE id = ?', ['REJECTED', id]);
+      return NextResponse.json({
+        success: false, meta_submitted: false, local_id: id,
+        error: `${header_type} header requires a file upload. Please upload a file first.`,
+      }, { status: 422 });
+    }
+
+    let components: object[];
     try {
-      const components = buildMetaComponents({
-        header_type,
-        header_content,
-        body_text,
-        footer_text,
-        buttons,
-        var_samples,
+      components = buildMetaComponents({
+        header_type, header_content, media_handle, body_text, footer_text, buttons, var_samples,
       });
+    } catch (validationErr) {
+      await execute('UPDATE templates SET status = ? WHERE id = ?', ['REJECTED', id]);
+      return NextResponse.json({
+        success: false, meta_submitted: false, local_id: id,
+        error: validationErr instanceof Error ? validationErr.message : 'Validation failed',
+      }, { status: 422 });
+    }
 
-      const metaPayload = {
-        name,
-        language:   language || 'en',
-        category:   category || 'UTILITY',
-        components,
-      };
+    const metaPayload = {
+      name,
+      language: language || 'en',
+      category: category || 'UTILITY',
+      components,
+    };
 
-      console.log('[Meta Template Submit]', JSON.stringify(metaPayload, null, 2));
+    console.log('[Meta Template Submit]', JSON.stringify(metaPayload, null, 2));
 
+    // ── Submit to Meta ────────────────────────────────────
+    try {
       const metaRes = await axios.post(
-        `https://graph.facebook.com/v19.0/${wabaId}/message_templates`,
+        `https://graph.facebook.com/v20.0/${wabaId}/message_templates`,
         metaPayload,
-        {
-          headers: {
-            Authorization:  `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-        }
+        { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
       );
 
       const metaData = metaRes.data as { id: string; status: string };
       console.log('[Meta Template Response]', metaData);
 
-      // Update DB with Meta ID and status
       await execute(
         'UPDATE templates SET meta_template_id = ?, status = ? WHERE id = ?',
         [metaData.id, metaData.status || 'PENDING', id]
@@ -120,25 +129,41 @@ export async function POST(req: NextRequest) {
       return apiSuccess({ id, meta_submitted: true, meta_id: metaData.id, status: metaData.status }, 201);
 
     } catch (metaErr: unknown) {
-      // Meta submission failed — log error, template still saved locally
       let metaError = 'Meta API error';
+      let metaDetails = '';
       if (axios.isAxiosError(metaErr)) {
-        const errData = metaErr.response?.data as Record<string, unknown> | undefined;
-        const fbError = (errData?.error as Record<string, unknown>) || {};
-        metaError = (fbError.message as string) || metaErr.message;
+        const errData   = metaErr.response?.data as Record<string, unknown> | undefined;
+        const fbError   = (errData?.error as Record<string, unknown>) || {};
+        const userMsg   = fbError.error_user_msg    as string | undefined;
+        const userTitle = fbError.error_user_title  as string | undefined;
+        const code      = fbError.code              as number | undefined;
+        const subcode   = fbError.error_subcode     as number | undefined;
+        const errDataField = fbError.error_data     as string | undefined;
+        metaError = userTitle || (fbError.message as string) || metaErr.message;
+
+        // Friendly hints for known error codes
+        let hint = '';
+        if (code === 1)   hint = 'Try a different template name (even previously rejected templates occupy the name on Meta). Also check: WABA permissions, access token scopes (needs whatsapp_business_management), and that you are not mixing Quick Reply + CTA buttons.';
+        if (code === 100) hint = 'Invalid parameter — check template name (only lowercase letters, numbers, underscores allowed) and body variables.';
+        if (code === 190) hint = 'Access token expired or invalid. Please reconnect via Facebook in Settings.';
+
+        metaDetails = [
+          hint                && `Hint: ${hint}`,
+          userMsg             && `Details: ${userMsg}`,
+          errDataField        && `Error data: ${errDataField}`,
+          code                && `Code: ${code}`,
+          subcode             && `Subcode: ${subcode}`,
+        ].filter(Boolean).join(' | ');
         console.error('[Meta Template Error]', JSON.stringify(errData, null, 2));
+        console.error('[Meta Payload Sent]',   JSON.stringify(metaPayload, null, 2));
       } else if (metaErr instanceof Error) {
         metaError = metaErr.message;
       }
 
-      // Mark as failed in DB
       await execute('UPDATE templates SET status = ? WHERE id = ?', ['REJECTED', id]);
-
       return NextResponse.json({
-        success:       false,
-        meta_submitted: false,
-        local_id:      id,
-        error:         `Meta API Error: ${metaError}`,
+        success: false, meta_submitted: false, local_id: id,
+        error: `Meta: ${metaError}${metaDetails ? ` — ${metaDetails}` : ''}`,
       }, { status: 422 });
     }
 
@@ -153,26 +178,28 @@ export async function POST(req: NextRequest) {
 function buildMetaComponents(opts: {
   header_type:    string;
   header_content: string;
+  media_handle:   string;
   body_text:      string;
   footer_text:    string;
   buttons:        { type: string; text: string; url?: string; url_type?: string; phone?: string }[];
   var_samples:    Record<string, string>;
 }) {
-  const { header_type, header_content, body_text, footer_text, buttons, var_samples } = opts;
+  const { header_type, header_content, media_handle, body_text, footer_text, buttons, var_samples } = opts;
   const components: object[] = [];
 
   // ── HEADER component ──────────────────────────────────────
-  if (header_type && header_type !== 'NONE' && header_content) {
+  if (header_type && header_type !== 'NONE') {
     if (header_type === 'TEXT') {
-      components.push({ type: 'HEADER', format: 'TEXT', text: header_content });
+      if (header_content) {
+        components.push({ type: 'HEADER', format: 'TEXT', text: header_content });
+      }
     } else {
-      // IMAGE / DOCUMENT / VIDEO
+      // IMAGE / VIDEO / DOCUMENT — all use header_handle from Meta's Resumable Upload API.
+      // header_url only supports JPG/PNG/MP4 and is unreliable; header_handle works for all types.
       components.push({
         type:    'HEADER',
         format:  header_type,
-        example: {
-          header_url: [header_content],
-        },
+        example: { header_handle: [media_handle] },
       });
     }
   }

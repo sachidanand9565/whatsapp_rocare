@@ -560,11 +560,14 @@ function TemplateModal({
       footer_text:    initialData.footer_text     || '',
     };
   });
-  const [varSamples, setVarSamples] = useState<Record<string, string>>({});
-  const [buttons, setButtons]       = useState<Button[]>(() =>
+  const [varSamples, setVarSamples]   = useState<Record<string, string>>({});
+  const [buttons, setButtons]         = useState<Button[]>(() =>
     initialData ? parseJsonColumn<Button[]>(initialData.buttons, []) : []
   );
-  const [saving, setSaving]         = useState(false);
+  const [mediaHandle, setMediaHandle]     = useState('');
+  const [mediaFileName, setMediaFileName] = useState('');
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [saving, setSaving]           = useState(false);
 
   const detectedVars = useMemo(() => extractVariables(form.body_text), [form.body_text]);
 
@@ -581,10 +584,12 @@ function TemplateModal({
 
   function addQuickReply() {
     if (quickReplies.length >= 3) { toast.error('Max 3 quick reply buttons'); return; }
+    if (ctaButtons.length > 0) { toast.error('Cannot mix Quick Reply with URL/Phone buttons — Meta does not allow this'); return; }
     setButtons([...buttons, { type: 'QUICK_REPLY', text: '' }]);
   }
   function addCTA(type: 'URL' | 'PHONE_NUMBER') {
     if (ctaButtons.length >= 2) { toast.error('Max 2 CTA buttons'); return; }
+    if (quickReplies.length > 0) { toast.error('Cannot mix URL/Phone with Quick Reply buttons — Meta does not allow this'); return; }
     setButtons([...buttons, { type, text: '', url: '', url_type: 'static', phone: '' }]);
   }
   function updateButton(i: number, patch: Partial<Button>) {
@@ -592,6 +597,33 @@ function TemplateModal({
   }
   function removeButton(i: number) {
     setButtons((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  async function handleMediaUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingMedia(true);
+    setMediaHandle('');
+    setMediaFileName('');
+    try {
+      const token = localStorage.getItem('token');
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/templates/upload-media', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || 'Upload failed', { duration: 7000 }); return; }
+      setMediaHandle(data.data.handle);
+      setMediaFileName(file.name);
+      toast.success('File uploaded to Meta successfully');
+    } catch {
+      toast.error('Upload failed');
+    } finally {
+      setUploadingMedia(false);
+    }
   }
 
   const previewBody = useMemo(() => {
@@ -606,8 +638,12 @@ function TemplateModal({
     e.preventDefault();
     if (!form.name)      { toast.error('Template name required'); return; }
     if (!form.body_text) { toast.error('Body text required'); return; }
-    if (form.header_type !== 'NONE' && !form.header_content) {
-      toast.error('Header content required'); return;
+    if (form.header_type === 'TEXT' && !form.header_content) {
+      toast.error('Header text is required'); return;
+    }
+    if (['IMAGE', 'VIDEO', 'DOCUMENT'].includes(form.header_type) && !mediaHandle) {
+      const label = form.header_type === 'IMAGE' ? 'an image' : form.header_type === 'VIDEO' ? 'a video' : 'a PDF';
+      toast.error(`Please upload ${label} for the ${form.header_type} header`); return;
     }
     setSaving(true);
     try {
@@ -615,7 +651,7 @@ function TemplateModal({
       const res = await fetch('/api/templates', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ...form, buttons, variables: detectedVars, var_samples: varSamples }),
+        body: JSON.stringify({ ...form, media_handle: mediaHandle, buttons, variables: detectedVars, var_samples: varSamples }),
       });
       const data = await res.json();
       if (res.status === 422) {
@@ -705,7 +741,7 @@ function TemplateModal({
               <div className="flex gap-2 flex-wrap">
                 {HEADER_TYPE_OPTIONS.map((opt) => (
                   <button key={opt.value} type="button"
-                    onClick={() => setForm({ ...form, header_type: opt.value as TemplateForm['header_type'], header_content: '' })}
+                    onClick={() => { setForm({ ...form, header_type: opt.value as TemplateForm['header_type'], header_content: '' }); setMediaHandle(''); setMediaFileName(''); }}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-all
                       ${form.header_type === opt.value
                         ? 'bg-whatsapp-green text-white border-whatsapp-green'
@@ -719,15 +755,41 @@ function TemplateModal({
                   onChange={(e) => setForm({ ...form, header_content: e.target.value })}
                   className="input" placeholder="Header text (max 60 chars)" maxLength={60} required />
               )}
-              {['IMAGE', 'DOCUMENT', 'VIDEO'].includes(form.header_type) && (
-                <div>
-                  <input value={form.header_content}
-                    onChange={(e) => setForm({ ...form, header_content: e.target.value })}
-                    className="input" placeholder="https://example.com/file.jpg" type="url" required />
-                  <p className="text-xs text-gray-400 mt-1">
-                    {form.header_type === 'IMAGE' && 'JPG/PNG, max 5MB'}
-                    {form.header_type === 'DOCUMENT' && 'PDF, max 100MB'}
-                    {form.header_type === 'VIDEO' && 'MP4, max 16MB'}
+              {['IMAGE', 'VIDEO', 'DOCUMENT'].includes(form.header_type) && (
+                <div className="space-y-2">
+                  <label className="block">
+                    <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-dashed cursor-pointer transition-colors
+                      ${mediaHandle ? 'border-green-400 bg-green-50' : 'border-gray-300 hover:border-whatsapp-green hover:bg-green-50'}`}>
+                      {form.header_type === 'IMAGE'    && <Image    size={20} className={mediaHandle ? 'text-green-600' : 'text-gray-400'} />}
+                      {form.header_type === 'VIDEO'    && <Video    size={20} className={mediaHandle ? 'text-green-600' : 'text-gray-400'} />}
+                      {form.header_type === 'DOCUMENT' && <FileText size={20} className={mediaHandle ? 'text-green-600' : 'text-gray-400'} />}
+                      <div className="flex-1 min-w-0">
+                        {uploadingMedia
+                          ? <p className="text-sm text-gray-500">Uploading to Meta...</p>
+                          : mediaHandle
+                          ? <p className="text-sm font-medium text-green-700 truncate">{mediaFileName}</p>
+                          : <p className="text-sm text-gray-500">
+                              {form.header_type === 'IMAGE'    && 'Click to upload image (JPG/PNG, max 5 MB)'}
+                              {form.header_type === 'VIDEO'    && 'Click to upload video (MP4, max 16 MB)'}
+                              {form.header_type === 'DOCUMENT' && 'Click to upload PDF (max 10 MB)'}
+                            </p>}
+                      </div>
+                      {uploadingMedia && (
+                        <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                      )}
+                      {mediaHandle && <CheckCircle size={16} className="text-green-600 flex-shrink-0" />}
+                    </div>
+                    <input type="file" className="sr-only"
+                      accept={
+                        form.header_type === 'IMAGE'    ? '.jpg,.jpeg,.png,image/jpeg,image/png' :
+                        form.header_type === 'VIDEO'    ? '.mp4,video/mp4' :
+                        '.pdf,application/pdf'
+                      }
+                      onChange={handleMediaUpload}
+                      disabled={uploadingMedia} />
+                  </label>
+                  <p className="text-xs text-gray-400">
+                    File is uploaded to Meta for template review. Meta requires actual files (not URLs) for media headers.
                   </p>
                 </div>
               )}
@@ -906,7 +968,7 @@ function TemplateModal({
               {[
                 { label: 'Template name',     ok: form.name.length > 0 },
                 { label: 'Body text',         ok: form.body_text.length > 0 },
-                { label: 'Header content',    ok: form.header_type === 'NONE' || form.header_content.length > 0 },
+                { label: 'Header content',    ok: form.header_type === 'NONE' || (['IMAGE','VIDEO','DOCUMENT'].includes(form.header_type) ? !!mediaHandle : form.header_content.length > 0) },
                 { label: 'Variable samples',  ok: detectedVars.length === 0 || detectedVars.every((v) => varSamples[v]) },
                 { label: 'Button labels',     ok: buttons.length === 0 || buttons.every((b) => b.text) },
               ].map(({ label, ok }) => (

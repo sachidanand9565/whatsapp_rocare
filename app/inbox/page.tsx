@@ -593,13 +593,12 @@ export default function InboxPage() {
     }).finally(() => setContactsLoading(false));
   }, []);
 
-  // Load all intervened contacts for admin/manager (bypasses inbox assignment restriction)
+  // Load intervened contacts — for admin/manager: all agents' chats; for agent: their own assigned
   const loadIntervenedContacts = useCallback(() => {
-    if (currentUserRole !== 'admin' && currentUserRole !== 'manager') return;
     apiFetch('/api/contacts?chatStatus=intervened&limit=500').then((r) => {
       setIntervenedContacts(r.data?.data || []);
     });
-  }, [currentUserRole]);
+  }, []);
 
   useEffect(() => {
     loadContacts();
@@ -928,6 +927,7 @@ export default function InboxPage() {
 
   // Shared intervened sub-filter — used for badge count, dropdown count, and contact list
   function matchesIntervenedFilter(c: Contact, fil: typeof intervenedFilter): boolean {
+    if (currentUserRole === 'agent') return true; // agents see only their own (API already filters)
     if (fil === 'any') return true;
     if (fil === 'me') return (
       (currentUserId != null && c.assigned_agent_id === currentUserId) ||
@@ -964,9 +964,7 @@ export default function InboxPage() {
           {(['all', 'requested', 'intervened'] as const).map((t) => {
             const requestedCount   = filtered.filter((c) => (c.chat_status === 'open' || !c.chat_status) && Number(c.inbound_count) > 0).length;
             const isAdminOrManager = currentUserRole === 'admin' || currentUserRole === 'manager';
-            const intervenedSource = isAdminOrManager
-              ? intervenedContacts.filter((c) => (c.name || c.phone).toLowerCase().includes(search.toLowerCase()))
-              : filtered.filter((c) => c.chat_status === 'intervened');
+            const intervenedSource = intervenedContacts.filter((c) => (c.name || c.phone).toLowerCase().includes(search.toLowerCase()));
             // Badge shows count matching the current active sub-filter
             const intervenedCount  = intervenedSource.filter((c) => matchesIntervenedFilter(c, intervenedFilter)).length;
             const label =
@@ -1099,9 +1097,7 @@ export default function InboxPage() {
             </div>
           )}
           {!contactsLoading && (() => {
-            const isAdminOrManager = currentUserRole === 'admin' || currentUserRole === 'manager';
-            // For admin/manager intervened tab: use the dedicated intervenedContacts list
-            const source = (tab === 'intervened' && isAdminOrManager)
+            const source = (tab === 'intervened')
               ? intervenedContacts.filter((c) => (c.name || c.phone).toLowerCase().includes(search.toLowerCase()))
               : filtered;
             if (source.length === 0 && tab !== 'all' && tab !== 'requested') {
@@ -1110,8 +1106,7 @@ export default function InboxPage() {
             return null;
           })()}
           {!contactsLoading && (() => {
-            const isAdminOrManager = currentUserRole === 'admin' || currentUserRole === 'manager';
-            const source = (tab === 'intervened' && isAdminOrManager)
+            const source = (tab === 'intervened')
               ? intervenedContacts.filter((c) => (c.name || c.phone).toLowerCase().includes(search.toLowerCase()))
               : filtered;
             return source;

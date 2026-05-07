@@ -107,10 +107,13 @@ export async function GET(req: NextRequest) {
         )
         AND (assigned_agent_id IS NULL OR assigned_agent_id = ${payload.userId})`;
     } else if (chatStatus === 'intervened') {
-      // All intervened contacts — used by admin/manager intervened tab.
-      // agentFilterMain already handles agent-level visibility (empty for admin/manager).
       sql      += " AND c.chat_status = 'intervened'";
       countSql += " AND chat_status = 'intervened'";
+      // Agents must only see chats explicitly transferred TO them (not the general unassigned pool)
+      if (payload.role === 'agent') {
+        sql      += ` AND c.assigned_agent_id = ${payload.userId}`;
+        countSql += ` AND assigned_agent_id = ${payload.userId}`;
+      }
     } else if (chatStatus === 'history') {
       // Contacts with no inbound message in last 24h (exact inverse of inbox)
       sql += ` AND NOT EXISTS (
