@@ -2,7 +2,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { apiFetch } from '@/hooks/useApi';
 import MediaLibrary, { type MediaItem as MLItem } from '@/app/components/MediaLibrary';
-import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2 } from 'lucide-react';
+import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Contact, Message } from '@/types';
 
@@ -558,6 +558,13 @@ export default function InboxPage() {
     } catch { return null; }
   })();
 
+  // Campaign filter
+  const [campaignFilter, setCampaignFilter]         = useState<number | null>(null);
+  const [campaigns, setCampaigns]                   = useState<{ id: number; name: string }[]>([]);
+  const [showCampaignDrop, setShowCampaignDrop]     = useState(false);
+  const campaignFilterRef                            = useRef<number | null>(null);
+  const campaignDropRef                              = useRef<HTMLDivElement>(null);
+
   // Separate contacts list for admin/manager intervened tab (includes all agents' transferred chats)
   const [intervenedContacts, setIntervenedContacts] = useState<Contact[]>([]);
 
@@ -571,7 +578,11 @@ export default function InboxPage() {
 
   const loadContacts = useCallback(() => {
     setContactsLoading(true);
-    apiFetch('/api/contacts?limit=200&chatStatus=inbox').then((r) => {
+    const cid = campaignFilterRef.current;
+    const url = cid
+      ? `/api/contacts?limit=200&chatStatus=inbox&campaignId=${cid}`
+      : '/api/contacts?limit=200&chatStatus=inbox';
+    apiFetch(url).then((r) => {
       const list: Contact[] = r.data?.data || [];
       setContacts(list);
       setUnreadCounts(prev => {
@@ -598,6 +609,23 @@ export default function InboxPage() {
     apiFetch('/api/contacts?chatStatus=intervened&limit=500').then((r) => {
       setIntervenedContacts(r.data?.data || []);
     });
+  }, []);
+
+  useEffect(() => {
+    apiFetch('/api/campaigns').then((r) => {
+      setCampaigns((r.data || []).map((c: { id: number; name: string }) => ({ id: c.id, name: c.name })));
+    });
+  }, []);
+
+  // Close campaign dropdown on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (campaignDropRef.current && !campaignDropRef.current.contains(e.target as Node)) {
+        setShowCampaignDrop(false);
+      }
+    }
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, []);
 
   useEffect(() => {
@@ -950,13 +978,82 @@ export default function InboxPage() {
 
       {/* ── Left: Contact List ──────────────────────────────── */}
       <div className="w-72 border-r border-gray-200 flex flex-col flex-shrink-0">
-        {/* Search */}
-        <div className="p-3 border-b border-gray-100">
-          <div className="relative">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input value={search} onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search contacts..." className="input pl-9 text-sm py-2" />
+        {/* Search + Campaign Filter */}
+        <div className="p-3 border-b border-gray-100 space-y-2">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input value={search} onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search contacts..." className="input pl-9 text-sm py-2 w-full" />
+            </div>
+            {/* Campaign filter icon */}
+            <div className="relative" ref={campaignDropRef}>
+              <button
+                onClick={() => setShowCampaignDrop((p) => !p)}
+                title="Filter by campaign"
+                className={`flex items-center justify-center w-9 h-9 rounded-lg border transition-colors flex-shrink-0
+                  ${campaignFilter
+                    ? 'bg-whatsapp-green border-whatsapp-green text-white'
+                    : 'bg-white border-gray-300 text-gray-500 hover:border-whatsapp-green hover:text-whatsapp-green'}`}>
+                <Filter size={15} />
+              </button>
+
+              {showCampaignDrop && (
+                <div className="absolute right-0 top-11 w-60 bg-white border border-gray-200 rounded-xl shadow-lg z-30 overflow-hidden">
+                  <div className="px-3 py-2 border-b border-gray-100">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Filter by Campaign</p>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {/* Clear option */}
+                    <button
+                      onClick={() => {
+                        campaignFilterRef.current = null;
+                        setCampaignFilter(null);
+                        setShowCampaignDrop(false);
+                        loadContacts();
+                      }}
+                      className={`w-full text-left px-4 py-2.5 text-sm transition-colors flex items-center gap-2
+                        ${!campaignFilter ? 'bg-green-50 text-whatsapp-green font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}>
+                      <X size={13} className="opacity-60" /> All Contacts
+                    </button>
+                    {campaigns.length === 0 && (
+                      <p className="text-xs text-gray-400 text-center py-4">No campaigns found</p>
+                    )}
+                    {campaigns.map((c) => (
+                      <button key={c.id}
+                        onClick={() => {
+                          campaignFilterRef.current = c.id;
+                          setCampaignFilter(c.id);
+                          setShowCampaignDrop(false);
+                          loadContacts();
+                        }}
+                        className={`w-full text-left px-4 py-2.5 text-sm transition-colors truncate
+                          ${campaignFilter === c.id ? 'bg-green-50 text-whatsapp-green font-semibold' : 'text-gray-700 hover:bg-gray-50'}`}>
+                        {c.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* Active filter badge */}
+          {campaignFilter && (
+            <div className="flex items-center gap-1.5 bg-green-50 border border-green-200 rounded-lg px-2.5 py-1">
+              <Filter size={11} className="text-whatsapp-green flex-shrink-0" />
+              <span className="text-xs text-green-800 font-medium truncate flex-1">
+                {campaigns.find((c) => c.id === campaignFilter)?.name}
+              </span>
+              <button onClick={() => {
+                campaignFilterRef.current = null;
+                setCampaignFilter(null);
+                loadContacts();
+              }} className="text-green-600 hover:text-red-500 flex-shrink-0">
+                <X size={12} />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Tabs */}

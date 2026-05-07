@@ -130,6 +130,13 @@ export async function GET(req: NextRequest) {
         )`;
     }
 
+    const campaignId = sp.get('campaignId') || '';
+    if (campaignId) {
+      sql      += ` AND c.id IN (SELECT contact_id FROM campaign_contacts WHERE campaign_id = ?)`;
+      countSql += ` AND id IN (SELECT contact_id FROM campaign_contacts WHERE campaign_id = ?)`;
+      params.push(Number(campaignId));
+    }
+
     sql += ' ORDER BY last_message_at DESC, c.created_at DESC LIMIT ? OFFSET ?';
     const listParams  = [...params, limit, offset];
     const countParams = params;
