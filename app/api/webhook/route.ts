@@ -250,6 +250,11 @@ export async function POST(req: NextRequest) {
             [campId]
           );
         }
+
+        // Fire failed-message webhooks configured for this campaign
+        if (status.status === 'failed') {
+          fireFailedWebhooks(workspaceId!, campId, contactId, msgRows[0].id as number).catch(() => {});
+        }
       }
     }
   }
@@ -326,6 +331,52 @@ function forwardToCustomWebhook(
   // Fire-and-forget — never block inbound processing
   fetch(url, { method: 'POST', headers, body })
     .catch(() => { /* ignore errors */ });
+}
+
+// ---- Fire failed-message webhooks for campaign ----
+async function fireFailedWebhooks(
+  workspaceId: number,
+  campaignId:  number,
+  contactId:   number,
+  messageId:   number,
+) {
+  const hooks = await query<RowDataPacket[]>(
+    `SELECT fw.api_url, fw.api_method, fw.api_headers, c.name AS campaign_name,
+            co.phone
+     FROM failed_msg_webhooks fw
+     JOIN campaigns c  ON c.id  = fw.campaign_id
+     JOIN contacts  co ON co.id = ?
+     WHERE fw.campaign_id = ? AND fw.workspace_id = ? AND fw.is_active = 1`,
+    [contactId, campaignId, workspaceId]
+  );
+  if (hooks.length === 0) return;
+
+  const payload = JSON.stringify({
+    event:         'campaign_message_failed',
+    campaign_id:   campaignId,
+    campaign_name: hooks[0].campaign_name as string,
+    phone:         hooks[0].phone as string,
+    contact_id:    contactId,
+    message_id:    messageId,
+    status:        'failed',
+    workspace_id:  workspaceId,
+    failed_at:     new Date().toISOString(),
+  });
+
+  for (const hook of hooks) {
+    try {
+      let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (hook.api_headers) {
+        try { headers = { ...headers, ...JSON.parse(hook.api_headers as string) }; } catch { /* ignore */ }
+      }
+      const method = (hook.api_method as string) || 'POST';
+      fetch(hook.api_url as string, {
+        method,
+        headers,
+        body: method === 'GET' ? undefined : payload,
+      }).catch(() => {});
+    } catch { /* ignore */ }
+  }
 }
 
 // ---- Fire CRM integration on template button reply ----

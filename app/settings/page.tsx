@@ -39,6 +39,22 @@ interface CRMIntegration {
   is_active:     number;
 }
 
+interface FailedWebhook {
+  id:            number;
+  name:          string;
+  campaign_id:   number;
+  campaign_name: string;
+  api_url:       string;
+  api_method:    'POST' | 'GET';
+  api_headers:   string | null;
+  is_active:     number;
+}
+
+interface Campaign {
+  id:   number;
+  name: string;
+}
+
 interface WABAOption {
   id:            string;
   name:          string;
@@ -243,6 +259,13 @@ export default function SettingsPage() {
   const [crmAdding, setCrmAdding]     = useState(false);
   const [showCrmHeaders, setShowCrmHeaders] = useState(false);
 
+  // Failed message webhooks
+  const [fwList, setFwList]           = useState<FailedWebhook[]>([]);
+  const [fwCampaigns, setFwCampaigns] = useState<Campaign[]>([]);
+  const [fwForm, setFwForm]           = useState({ name: '', campaign_id: '', api_url: '', api_method: 'POST', api_headers: '' });
+  const [fwAdding, setFwAdding]       = useState(false);
+  const [showFwHeaders, setShowFwHeaders] = useState(false);
+
   const APP_ID    = process.env.NEXT_PUBLIC_FACEBOOK_APP_ID || '';
   const CONFIG_ID = process.env.NEXT_PUBLIC_FACEBOOK_CONFIG_ID || '';
   const BSP_READY = !!(APP_ID && CONFIG_ID);
@@ -297,6 +320,7 @@ export default function SettingsPage() {
     });
     loadHooks();
     loadCrm();
+    loadFw();
     apiFetch('/api/workspace/api-key').then((r) => setApiKey(r.data?.api_key || ''));
     apiFetch('/api/campaign-settings').then((r) => {
       if (r.data) setAutoPauseCampaigns(!!r.data.auto_pause_campaigns);
@@ -314,6 +338,48 @@ export default function SettingsPage() {
 
   function loadCrm() {
     apiFetch('/api/crm').then((r) => setCrmList(r.data || [])).catch(() => {});
+  }
+
+  function loadFw() {
+    apiFetch('/api/failed-webhooks').then((r) => setFwList(r.data || [])).catch(() => {});
+    apiFetch('/api/campaigns').then((r) => setFwCampaigns((r.data || []).map((c: Campaign) => ({ id: c.id, name: c.name })))).catch(() => {});
+  }
+
+  async function addFw(e: React.FormEvent) {
+    e.preventDefault();
+    if (!fwForm.name || !fwForm.campaign_id || !fwForm.api_url) return;
+    setFwAdding(true);
+    try {
+      await apiFetch('/api/failed-webhooks', {
+        method: 'POST',
+        body: JSON.stringify({
+          name:        fwForm.name,
+          campaign_id: Number(fwForm.campaign_id),
+          api_url:     fwForm.api_url,
+          api_method:  fwForm.api_method,
+          api_headers: fwForm.api_headers || null,
+        }),
+      });
+      setFwForm({ name: '', campaign_id: '', api_url: '', api_method: 'POST', api_headers: '' });
+      loadFw();
+      toast.success('Failed message webhook added!');
+    } catch { toast.error('Failed to add webhook'); }
+    finally   { setFwAdding(false); }
+  }
+
+  async function toggleFw(item: FailedWebhook) {
+    await apiFetch(`/api/failed-webhooks/${item.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ is_active: item.is_active ? 0 : 1 }),
+    }).catch(() => {});
+    loadFw();
+  }
+
+  async function deleteFw(id: number) {
+    if (!confirm('Delete this webhook?')) return;
+    await apiFetch(`/api/failed-webhooks/${id}`, { method: 'DELETE' }).catch(() => {});
+    loadFw();
+    toast.success('Webhook deleted');
   }
 
   async function addCrm(e: React.FormEvent) {
@@ -1110,6 +1176,142 @@ Body:
             </div>
 
           </div>{/* end grid */}
+
+          {/* ─── Failed Message Webhook ─── */}
+          <h2 className="text-lg font-bold text-gray-900 mt-6">Failed Message Webhook</h2>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+
+            {/* Add form */}
+            <div className="card space-y-4">
+              <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+                <Zap size={18} className="text-red-500" />
+                <div>
+                  <h3 className="font-semibold text-gray-900">Add Failed Message Webhook</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Fires an API call when a campaign message fails to deliver</p>
+                </div>
+              </div>
+
+              <form onSubmit={addFw} className="space-y-3">
+                <div>
+                  <label className="form-label">Webhook Name *</label>
+                  <input value={fwForm.name}
+                    onChange={(e) => setFwForm({ ...fwForm, name: e.target.value })}
+                    className="input" placeholder="e.g. Failed Orders Campaign" required />
+                </div>
+
+                <div>
+                  <label className="form-label">Campaign *</label>
+                  <select value={fwForm.campaign_id}
+                    onChange={(e) => setFwForm({ ...fwForm, campaign_id: e.target.value })}
+                    className="input" required>
+                    <option value="">-- Select a campaign --</option>
+                    {fwCampaigns.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  {fwCampaigns.length === 0 && (
+                    <p className="text-xs text-gray-400 mt-1">No campaigns found. Create a campaign first.</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="form-label">Webhook URL *</label>
+                  <div className="flex gap-2">
+                    <select value={fwForm.api_method}
+                      onChange={(e) => setFwForm({ ...fwForm, api_method: e.target.value })}
+                      className="input w-24 flex-shrink-0">
+                      <option>POST</option>
+                      <option>GET</option>
+                    </select>
+                    <input value={fwForm.api_url}
+                      onChange={(e) => setFwForm({ ...fwForm, api_url: e.target.value })}
+                      className="input flex-1 font-mono text-xs min-w-0"
+                      placeholder="https://yourapi.com/webhook/failed" required />
+                  </div>
+                </div>
+
+                <div>
+                  <button type="button" onClick={() => setShowFwHeaders((s) => !s)}
+                    className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1">
+                    <Globe size={12} /> Custom Headers (optional) {showFwHeaders ? '▲' : '▼'}
+                  </button>
+                  {showFwHeaders && (
+                    <textarea value={fwForm.api_headers}
+                      onChange={(e) => setFwForm({ ...fwForm, api_headers: e.target.value })}
+                      className="input mt-2 font-mono text-xs h-20 resize-none"
+                      placeholder={'{"X-API-Key": "abc", "Authorization": "Bearer token"}'} />
+                  )}
+                </div>
+
+                {/* Data preview */}
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 overflow-hidden">
+                  <p className="text-xs font-semibold text-gray-700 mb-1.5">Your API will receive this data:</p>
+                  <pre className="bg-gray-900 text-green-400 rounded p-2 text-[10px] overflow-x-auto leading-relaxed whitespace-pre-wrap break-all">{`{
+  "event":         "campaign_message_failed",
+  "campaign_id":   ${fwForm.campaign_id || 1},
+  "campaign_name": "${fwCampaigns.find((c) => String(c.id) === fwForm.campaign_id)?.name || 'Summer Sale'}",
+  "phone":         "919876543210",
+  "contact_id":    42,
+  "message_id":    101,
+  "status":        "failed",
+  "workspace_id":  1,
+  "failed_at":     "2024-01-15T10:30:00.000Z"
+}`}</pre>
+                </div>
+
+                <button type="submit" disabled={fwAdding}
+                  className="btn-primary flex items-center gap-2 w-full justify-center">
+                  <Plus size={16} />{fwAdding ? 'Adding...' : 'Add Webhook'}
+                </button>
+              </form>
+            </div>
+
+            {/* Active webhooks list */}
+            <div className="card space-y-3">
+              <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+                <Globe size={18} className="text-red-400" />
+                <div>
+                  <h3 className="font-semibold text-gray-900">Active Failed Webhooks</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">{fwList.length} webhook{fwList.length !== 1 ? 's' : ''} configured</p>
+                </div>
+              </div>
+
+              {fwList.length === 0 && (
+                <p className="text-center text-gray-400 text-sm py-6">No failed message webhooks configured yet</p>
+              )}
+
+              {fwList.map((item) => (
+                <div key={item.id}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors ${
+                    item.is_active ? 'border-gray-200 bg-white' : 'border-gray-100 bg-gray-50 opacity-60'
+                  }`}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-semibold text-gray-800">{item.name}</p>
+                      <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">{item.api_method}</span>
+                      <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-medium">{item.campaign_name}</span>
+                    </div>
+                    <p className="text-xs text-gray-400 truncate font-mono mt-1">{item.api_url}</p>
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button onClick={() => toggleFw(item)} title={item.is_active ? 'Disable' : 'Enable'}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-whatsapp-teal hover:bg-green-50 transition-colors">
+                      {item.is_active
+                        ? <ToggleRight size={20} className="text-whatsapp-green" />
+                        : <ToggleLeft size={20} />}
+                    </button>
+                    <button onClick={() => deleteFw(item.id)} title="Delete"
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+          </div>{/* end failed webhook grid */}
+
         </>)}
 
       </div>{/* ── END Content Area ── */}
