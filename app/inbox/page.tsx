@@ -949,8 +949,9 @@ export default function InboxPage() {
     }
   }
 
+  const s = search.toLowerCase();
   const filtered = contacts.filter((c) =>
-    (c.name || c.phone).toLowerCase().includes(search.toLowerCase())
+    (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)
   );
 
   // Shared intervened sub-filter — used for badge count, dropdown count, and contact list
@@ -1061,7 +1062,7 @@ export default function InboxPage() {
           {(['all', 'requested', 'intervened'] as const).map((t) => {
             const requestedCount   = filtered.filter((c) => (c.chat_status === 'open' || !c.chat_status) && Number(c.inbound_count) > 0).length;
             const isAdminOrManager = currentUserRole === 'admin' || currentUserRole === 'manager';
-            const intervenedSource = intervenedContacts.filter((c) => (c.name || c.phone).toLowerCase().includes(search.toLowerCase()));
+            const intervenedSource = intervenedContacts.filter((c) => ((c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)));
             // Badge shows count matching the current active sub-filter
             const intervenedCount  = intervenedSource.filter((c) => matchesIntervenedFilter(c, intervenedFilter)).length;
             const label =
@@ -1103,7 +1104,7 @@ export default function InboxPage() {
 
               // Count from intervenedContacts using the shared filter helper
               const filterCount = intervenedContacts
-                .filter((c) => (c.name || c.phone).toLowerCase().includes(search.toLowerCase()))
+                .filter((c) => ((c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)))
                 .filter((c) => matchesIntervenedFilter(c, intervenedFilter)).length;
 
               return (
@@ -1195,7 +1196,7 @@ export default function InboxPage() {
           )}
           {!contactsLoading && (() => {
             const source = (tab === 'intervened')
-              ? intervenedContacts.filter((c) => (c.name || c.phone).toLowerCase().includes(search.toLowerCase()))
+              ? intervenedContacts.filter((c) => ((c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)))
               : filtered;
             if (source.length === 0 && tab !== 'all' && tab !== 'requested') {
               return <p className="text-center text-gray-400 text-xs py-10">No contacts</p>;
@@ -1204,7 +1205,7 @@ export default function InboxPage() {
           })()}
           {!contactsLoading && (() => {
             const source = (tab === 'intervened')
-              ? intervenedContacts.filter((c) => (c.name || c.phone).toLowerCase().includes(search.toLowerCase()))
+              ? intervenedContacts.filter((c) => ((c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)))
               : filtered;
             return source;
           })()
