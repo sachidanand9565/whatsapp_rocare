@@ -144,13 +144,14 @@ export async function sendTypingIndicator(
   to:            string
 ) {
   const client = createWAClient(accessToken);
-  await client.post(`/${phoneNumberId}/messages`, {
+  const { data } = await client.post(`/${phoneNumberId}/messages`, {
     messaging_product: 'whatsapp',
     recipient_type:    'individual',
     to,
     type:              'typing',
     typing:            { status: 'typing_on' },
   });
+  return data;
 }
 
 // ---- Mark message as read ----

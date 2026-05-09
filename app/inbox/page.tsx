@@ -540,9 +540,6 @@ export default function InboxPage() {
   }
   const bottomRef                           = useRef<HTMLDivElement>(null);
   const chatRef                             = useRef<HTMLDivElement>(null);
-  // Typing indicator: fire at most once every 20s per contact (WhatsApp shows it for 25s)
-  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastTypingSent = useRef<number>(0);
 
   // Intervened filter state
   const [intervenedFilter, setIntervenedFilter]         = useState<'me' | 'any' | 'other' | number>('me');
@@ -737,7 +734,6 @@ export default function InboxPage() {
   );
 
   function selectContact(c: Contact) {
-    lastTypingSent.current = 0; // reset so first keystroke fires typing for new contact
     setSelected(c);
     setUnreadCounts(prev => {
       const next = { ...prev, [c.id]: 0 };
@@ -1675,13 +1671,6 @@ export default function InboxPage() {
                       onChange={(e) => {
                         setText(e.target.value);
                         // Send typing indicator at most once every 20s (WhatsApp shows it for 25s)
-                        if (selected && e.target.value.length > 0) {
-                          const now = Date.now();
-                          if (now - lastTypingSent.current > 20_000) {
-                            lastTypingSent.current = now;
-                            apiFetch('/api/typing', { method: 'POST', body: JSON.stringify({ contactId: selected.id }) }).catch(() => {});
-                          }
-                        }
                       }}
                       onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
                       placeholder='Type "/" for quick replies…'
