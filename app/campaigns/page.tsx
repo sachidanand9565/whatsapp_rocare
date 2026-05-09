@@ -1,8 +1,8 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/hooks/useApi';
-import { Plus, Play, Radio, Zap, GitBranch, ShoppingBag, ChevronRight, Trash2, UserPlus, X } from 'lucide-react';
+import { Plus, Play, Radio, Zap, GitBranch, ShoppingBag, ChevronRight, Trash2, UserPlus, X, Search, ChevronDown } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Campaign, Template, Contact, User } from '@/types';
 
@@ -372,16 +372,31 @@ function AssignAgentModal({ campaign, onClose }: { campaign: Campaign; onClose: 
 
 // ---- Campaign Creation Modal ----
 function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [templates, setTemplates]     = useState<Template[]>([]);
-  const [contacts, setContacts]       = useState<Contact[]>([]);
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  const [createdId, setCreatedId]     = useState<number | null>(null);
-  const [form, setForm]               = useState({
+  const [templates, setTemplates]       = useState<Template[]>([]);
+  const [contacts, setContacts]         = useState<Contact[]>([]);
+  const [selectedIds, setSelectedIds]   = useState<number[]>([]);
+  const [createdId, setCreatedId]       = useState<number | null>(null);
+  const [templateCategory, setTemplateCategory] = useState<string>('ALL');
+  const [templateSearch, setTemplateSearch]     = useState<string>('');
+  const [templateDropOpen, setTemplateDropOpen] = useState(false);
+  const templateDropRef                         = useRef<HTMLDivElement>(null);
+  const [form, setForm]                 = useState({
     name: '', template_id: '', scheduled_at: '', campaign_type: 'broadcast',
   });
   const [saving, setSaving] = useState(false);
 
   const isApi = form.campaign_type === 'api';
+
+  // Close template dropdown on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (templateDropRef.current && !templateDropRef.current.contains(e.target as Node)) {
+        setTemplateDropOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   useEffect(() => {
     apiFetch('/api/templates').then((r) => setTemplates(r.data?.filter((t: Template) => t.status === 'APPROVED') || []));
@@ -511,14 +526,97 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Template * (Approved only)</label>
-            <select value={form.template_id} onChange={(e) => setForm({ ...form, template_id: e.target.value })}
-              className="input" required>
-              <option value="">Select template</option>
-              {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+            {/* Select2-style combobox */}
+            <div className="relative" ref={templateDropRef}>
+              {/* Trigger */}
+              <button type="button"
+                onClick={() => setTemplateDropOpen((v) => !v)}
+                className="input w-full flex items-center justify-between text-left">
+                <span className={form.template_id ? 'text-gray-900' : 'text-gray-400'}>
+                  {form.template_id
+                    ? templates.find((t) => String(t.id) === form.template_id)?.name
+                    : 'Select template…'}
+                </span>
+                <ChevronDown size={15} className={`text-gray-400 flex-shrink-0 transition-transform ${templateDropOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {/* Dropdown panel */}
+              {templateDropOpen && (
+                <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+                  {/* Search box inside dropdown */}
+                  <div className="p-2 border-b border-gray-100 flex items-center gap-2">
+                    <Search size={14} className="text-gray-400 flex-shrink-0" />
+                    <input
+                      autoFocus
+                      type="text"
+                      value={templateSearch}
+                      onChange={(e) => setTemplateSearch(e.target.value)}
+                      placeholder="Search template…"
+                      className="flex-1 text-sm outline-none bg-transparent"
+                    />
+                    {templateSearch && (
+                      <button type="button" onClick={() => setTemplateSearch('')}>
+                        <X size={13} className="text-gray-400 hover:text-gray-600" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Category pills inside dropdown */}
+                  <div className="flex gap-1.5 px-2 py-1.5 border-b border-gray-100 flex-wrap">
+                    {(['ALL', 'UTILITY', 'MARKETING', 'AUTHENTICATION'] as const).map((cat) => (
+                      <button key={cat} type="button"
+                        onClick={() => setTemplateCategory(cat)}
+                        className={`px-2 py-0.5 rounded-md text-xs font-semibold border transition-colors
+                          ${templateCategory === cat
+                            ? 'bg-whatsapp-green text-white border-whatsapp-green'
+                            : 'bg-white text-gray-500 border-gray-200 hover:border-whatsapp-green'}`}>
+                        {cat === 'ALL' ? 'All' : cat.charAt(0) + cat.slice(1).toLowerCase()}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Filtered list */}
+                  <ul className="max-h-52 overflow-y-auto">
+                    {templates
+                      .filter((t) =>
+                        (templateCategory === 'ALL' || t.category === templateCategory) &&
+                        t.name.toLowerCase().includes(templateSearch.toLowerCase())
+                      )
+                      .map((t) => (
+                        <li key={t.id}>
+                          <button type="button"
+                            onClick={() => {
+                              setForm({ ...form, template_id: String(t.id) });
+                              setTemplateDropOpen(false);
+                              setTemplateSearch('');
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center justify-between gap-2
+                              ${String(t.id) === form.template_id ? 'bg-green-50 text-whatsapp-green font-semibold' : 'text-gray-700'}`}>
+                            <span className="truncate">{t.name}</span>
+                            <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0
+                              ${t.category === 'MARKETING' ? 'bg-orange-100 text-orange-600' :
+                                t.category === 'AUTHENTICATION' ? 'bg-purple-100 text-purple-600' :
+                                'bg-blue-100 text-blue-600'}`}>
+                              {t.category.charAt(0) + t.category.slice(1).toLowerCase()}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    {templates.filter((t) =>
+                      (templateCategory === 'ALL' || t.category === templateCategory) &&
+                      t.name.toLowerCase().includes(templateSearch.toLowerCase())
+                    ).length === 0 && (
+                      <li className="px-3 py-4 text-sm text-gray-400 text-center">No templates found</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+            </div>
             {templates.length === 0 && (
               <p className="text-xs text-red-500 mt-1">No approved templates. Create and get a template approved first.</p>
             )}
+            {/* Hidden required input for form validation */}
+            <input type="text" required value={form.template_id} onChange={() => {}} className="sr-only" />
           </div>
 
           {/* API type: show info box instead of contacts/schedule */}
