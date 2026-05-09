@@ -21,9 +21,9 @@ export function apiError(message: string, status = 400) {
 }
 
 // ---- Pagination helper ----
-export function getPagination(searchParams: URLSearchParams) {
+export function getPagination(searchParams: URLSearchParams, maxLimit = 100) {
   const page  = Math.max(1, Number(searchParams.get('page') || 1));
-  const limit = Math.min(100, Math.max(1, Number(searchParams.get('limit') || 20)));
+  const limit = Math.min(maxLimit, Math.max(1, Number(searchParams.get('limit') || 20)));
   const offset = (page - 1) * limit;
   return { page, limit, offset };
 }

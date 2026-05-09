@@ -4,7 +4,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { query, insert, execute } from '@/lib/db';
-import { parseWebhookBody, sendTextMessage, markAsRead, TemplateStatusUpdate } from '@/lib/whatsapp';
+import { parseWebhookBody, sendTextMessage, markAsRead, sendTypingIndicator, TemplateStatusUpdate } from '@/lib/whatsapp';
 import { normalizePhone, utcNow, unixToUtc } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { emitSSE } from '@/lib/sse';
@@ -164,9 +164,17 @@ export async function POST(req: NextRequest) {
     // Notify connected inbox clients instantly via SSE
     emitSSE({ type: 'new_message', workspaceId, contactId, direction: 'inbound' });
 
-    // Auto read receipt — only when chatbot webhook is active (bot will reply, not a human agent)
-    if (activeWebhooks.length > 0 && workspaceAccessToken && phoneNumberId && msg.wamid) {
-      markAsRead(workspaceAccessToken, phoneNumberId, msg.wamid).catch(() => {});
+    // Auto read receipt + typing indicator when a bot will reply (custom webhook or chatbot rules)
+    if (workspaceAccessToken && phoneNumberId && msg.wamid) {
+      const hasChatbotRules = await query<RowDataPacket[]>(
+        'SELECT 1 FROM chatbot_rules WHERE workspace_id = ? AND is_active = 1 LIMIT 1',
+        [workspaceId]
+      );
+      const botWillReply = activeWebhooks.length > 0 || hasChatbotRules.length > 0;
+      if (botWillReply) {
+        markAsRead(workspaceAccessToken, phoneNumberId, msg.wamid).catch(() => {});
+        sendTypingIndicator(workspaceAccessToken, phoneNumberId, phone).catch(() => {});
+      }
     }
 
     // ---- CRM Integration: fire on template button reply ----
@@ -470,6 +478,8 @@ async function processChatbot(
     }
 
     if (matched && rule.response_type === 'text' && rule.response_text) {
+      // Show typing indicator before sending the bot reply
+      sendTypingIndicator(rule.access_token as string, phoneNumberId, phone).catch(() => {});
       const result = await sendTextMessage(
         rule.access_token as string, phoneNumberId, phone, rule.response_text as string
       );

@@ -224,7 +224,20 @@ function buildMetaComponents(opts: {
 
   // ── BUTTONS component ─────────────────────────────────────
   if (buttons && buttons.length > 0) {
-    const metaButtons: object[] = buttons.map((btn) => {
+    const hasPhone = buttons.some((b) => b.type === 'PHONE_NUMBER');
+    const hasQR    = buttons.some((b) => b.type === 'QUICK_REPLY');
+    // Meta rule: PHONE_NUMBER cannot mix with Quick Reply; URL can.
+    if (hasPhone && hasQR) {
+      throw new Error('Call button cannot be mixed with Quick Reply buttons — use URL button instead.');
+    }
+
+    // CTA buttons must come before Quick Reply buttons when mixed.
+    const sorted = [
+      ...buttons.filter((b) => b.type !== 'QUICK_REPLY'),
+      ...buttons.filter((b) => b.type === 'QUICK_REPLY'),
+    ];
+
+    const metaButtons: object[] = sorted.map((btn) => {
       if (btn.type === 'QUICK_REPLY') {
         return { type: 'QUICK_REPLY', text: btn.text };
       }

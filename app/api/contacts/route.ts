@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
   try {
     const payload = requireAuth(req);
     const sp      = new URL(req.url).searchParams;
-    const { limit, offset, page } = getPagination(sp);
+    const { limit, offset, page } = getPagination(sp, 500);
     const search     = sp.get('search') || '';
     const status     = sp.get('status') || '';
     const chatStatus = sp.get('chatStatus') || '';
@@ -132,9 +132,18 @@ export async function GET(req: NextRequest) {
 
     const campaignId = sp.get('campaignId') || '';
     if (campaignId) {
-      sql      += ` AND c.id IN (SELECT contact_id FROM campaign_contacts WHERE campaign_id = ?)`;
-      countSql += ` AND id IN (SELECT contact_id FROM campaign_contacts WHERE campaign_id = ?)`;
-      params.push(Number(campaignId));
+      const cid = Number(campaignId);
+      sql      += ` AND c.id IN (
+        SELECT contact_id FROM campaign_contacts WHERE campaign_id = ?
+        UNION
+        SELECT contact_id FROM messages WHERE campaign_id = ? AND direction = 'outbound'
+      )`;
+      countSql += ` AND id IN (
+        SELECT contact_id FROM campaign_contacts WHERE campaign_id = ?
+        UNION
+        SELECT contact_id FROM messages WHERE campaign_id = ? AND direction = 'outbound'
+      )`;
+      params.push(cid, cid);
     }
 
     sql += ' ORDER BY last_message_at DESC, c.created_at DESC LIMIT ? OFFSET ?';

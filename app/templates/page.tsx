@@ -579,18 +579,29 @@ function TemplateModal({
     });
   }, [detectedVars]);
 
-  const quickReplies = buttons.filter((b) => b.type === 'QUICK_REPLY');
-  const ctaButtons   = buttons.filter((b) => b.type !== 'QUICK_REPLY');
+  const quickReplies  = buttons.filter((b) => b.type === 'QUICK_REPLY');
+  const ctaButtons    = buttons.filter((b) => b.type !== 'QUICK_REPLY');
+  const hasPhoneBtn   = buttons.some((b) => b.type === 'PHONE_NUMBER');
 
+  // Meta mixing rules:
+  //   URL   + Quick Reply = ✅ allowed (CTA must come first)
+  //   PHONE + Quick Reply = ❌ not allowed
   function addQuickReply() {
-    if (quickReplies.length >= 3) { toast.error('Max 3 quick reply buttons'); return; }
-    if (ctaButtons.length > 0) { toast.error('Cannot mix Quick Reply with URL/Phone buttons — Meta does not allow this'); return; }
-    setButtons([...buttons, { type: 'QUICK_REPLY', text: '' }]);
+    if (quickReplies.length >= 3) return;
+    if (hasPhoneBtn) { toast.error('Cannot mix Call button with Quick Reply — use URL button instead'); return; }
+    const ctas = buttons.filter((b) => b.type !== 'QUICK_REPLY');
+    const qrs  = buttons.filter((b) => b.type === 'QUICK_REPLY');
+    setButtons([...ctas, ...qrs, { type: 'QUICK_REPLY', text: '' }]);
   }
   function addCTA(type: 'URL' | 'PHONE_NUMBER') {
-    if (ctaButtons.length >= 2) { toast.error('Max 2 CTA buttons'); return; }
-    if (quickReplies.length > 0) { toast.error('Cannot mix URL/Phone with Quick Reply buttons — Meta does not allow this'); return; }
-    setButtons([...buttons, { type, text: '', url: '', url_type: 'static', phone: '' }]);
+    if (ctaButtons.length >= 2) return;
+    if (type === 'PHONE_NUMBER' && quickReplies.length > 0) {
+      toast.error('Cannot mix Call button with Quick Reply — remove Quick Reply buttons first');
+      return;
+    }
+    const ctas = buttons.filter((b) => b.type !== 'QUICK_REPLY');
+    const qrs  = buttons.filter((b) => b.type === 'QUICK_REPLY');
+    setButtons([...ctas, { type, text: '', url: '', url_type: 'static', phone: '' }, ...qrs]);
   }
   function updateButton(i: number, patch: Partial<Button>) {
     setButtons((prev) => prev.map((b, idx) => idx === i ? { ...b, ...patch } : b));
@@ -851,7 +862,7 @@ function TemplateModal({
             <div className="border border-gray-200 rounded-xl p-4 space-y-4">
               <div>
                 <label className="text-sm font-semibold text-gray-800">Buttons <span className="text-gray-400 font-normal">(optional)</span></label>
-                <p className="text-xs text-gray-500 mt-0.5">Max 3 Quick Replies OR 2 CTA buttons</p>
+                <p className="text-xs text-gray-500 mt-0.5">URL + Quick Reply ✓ &nbsp;|&nbsp; Call + Quick Reply ✗ &nbsp;|&nbsp; Max 2 CTA, max 3 Quick Reply</p>
               </div>
               {buttons.map((btn, i) => (
                 <div key={i} className={`rounded-xl border p-3 space-y-2
@@ -896,18 +907,27 @@ function TemplateModal({
                 </div>
               ))}
               <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={addQuickReply}
-                  className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border-2 border-dashed border-teal-300 text-teal-600 hover:bg-teal-50 font-medium">
-                  <MessageSquare size={13} /> + Quick Reply
-                </button>
-                <button type="button" onClick={() => addCTA('URL')}
-                  className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border-2 border-dashed border-blue-300 text-blue-600 hover:bg-blue-50 font-medium">
-                  <Link2 size={13} /> + Visit Website
-                </button>
-                <button type="button" onClick={() => addCTA('PHONE_NUMBER')}
-                  className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border-2 border-dashed border-green-300 text-green-600 hover:bg-green-50 font-medium">
-                  <Phone size={13} /> + Call Number
-                </button>
+                {/* Quick Reply: hide if phone button exists */}
+                {quickReplies.length < 3 && !hasPhoneBtn && (
+                  <button type="button" onClick={addQuickReply}
+                    className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border-2 border-dashed border-teal-300 text-teal-600 hover:bg-teal-50 font-medium">
+                    <MessageSquare size={13} /> + Quick Reply
+                  </button>
+                )}
+                {/* URL: always available (can mix with Quick Reply) */}
+                {ctaButtons.length < 2 && (
+                  <button type="button" onClick={() => addCTA('URL')}
+                    className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border-2 border-dashed border-blue-300 text-blue-600 hover:bg-blue-50 font-medium">
+                    <Link2 size={13} /> + Visit Website
+                  </button>
+                )}
+                {/* Call: hide if Quick Reply buttons exist */}
+                {ctaButtons.length < 2 && quickReplies.length === 0 && (
+                  <button type="button" onClick={() => addCTA('PHONE_NUMBER')}
+                    className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border-2 border-dashed border-green-300 text-green-600 hover:bg-green-50 font-medium">
+                    <Phone size={13} /> + Call Number
+                  </button>
+                )}
               </div>
             </div>
 

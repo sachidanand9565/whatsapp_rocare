@@ -540,6 +540,9 @@ export default function InboxPage() {
   }
   const bottomRef                           = useRef<HTMLDivElement>(null);
   const chatRef                             = useRef<HTMLDivElement>(null);
+  // Typing indicator: fire at most once every 20s per contact (WhatsApp shows it for 25s)
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTypingSent = useRef<number>(0);
 
   // Intervened filter state
   const [intervenedFilter, setIntervenedFilter]         = useState<'me' | 'any' | 'other' | number>('me');
@@ -576,19 +579,20 @@ export default function InboxPage() {
     localStorage.setItem('unreadCounts', JSON.stringify(counts));
   };
 
-  const loadContacts = useCallback(() => {
+  const loadContacts = useCallback((campaignId?: number) => {
     setContactsLoading(true);
-    apiFetch('/api/contacts?limit=200&chatStatus=inbox').then((r) => {
+    const qs = campaignId
+      ? `limit=500&chatStatus=inbox&campaignId=${campaignId}`
+      : `limit=500&chatStatus=inbox`;
+    apiFetch(`/api/contacts?${qs}`).then((r) => {
       const list: Contact[] = r.data?.data || [];
       setContacts(list);
       setUnreadCounts(prev => {
         const next = { ...prev };
         list.forEach((c) => {
           if (selectedRef.current?.id === c.id) {
-            next[c.id] = 0; // Always 0 for the currently open chat
+            next[c.id] = 0;
           } else {
-            // dbCount is now server-authoritative (based on last_read_at in DB)
-            // Use it directly — works across all devices and browsers
             const dbCount = Number(c.unread_count) || 0;
             const local   = prev[c.id] ?? 0;
             next[c.id] = Math.max(local, dbCount);
@@ -624,10 +628,16 @@ export default function InboxPage() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  const campaignFilterRef = useRef<number | undefined>(undefined);
+  useEffect(() => { campaignFilterRef.current = campaignFilter ?? undefined; }, [campaignFilter]);
+
   useEffect(() => {
     loadContacts();
     loadIntervenedContacts();
-    const iv = setInterval(() => { loadContacts(); loadIntervenedContacts(); }, 60_000);
+    const iv = setInterval(() => {
+      loadContacts(campaignFilterRef.current);
+      loadIntervenedContacts();
+    }, 60_000);
     return () => clearInterval(iv);
   }, [loadContacts, loadIntervenedContacts]);
 
@@ -727,6 +737,7 @@ export default function InboxPage() {
   );
 
   function selectContact(c: Contact) {
+    lastTypingSent.current = 0; // reset so first keystroke fires typing for new contact
     setSelected(c);
     setUnreadCounts(prev => {
       const next = { ...prev, [c.id]: 0 };
@@ -946,10 +957,9 @@ export default function InboxPage() {
   }
 
   const s = search.toLowerCase();
-  const filtered = contacts.filter((c) => {
-    if (campaignContactIds && !campaignContactIds.has(c.id)) return false;
-    return (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s);
-  });
+  const filtered = contacts.filter((c) =>
+    (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)
+  );
 
   // Shared intervened sub-filter — used for badge count, dropdown count, and contact list
   function matchesIntervenedFilter(c: Contact, fil: typeof intervenedFilter): boolean {
@@ -1008,6 +1018,7 @@ export default function InboxPage() {
                         setCampaignFilter(null);
                         setCampaignContactIds(null);
                         setShowCampaignDrop(false);
+                        loadContacts();
                       }}
                       className={`w-full text-left px-4 py-2.5 text-sm transition-colors flex items-center gap-2
                         ${!campaignFilter ? 'bg-green-50 text-whatsapp-green font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}>
@@ -1021,8 +1032,14 @@ export default function InboxPage() {
                         onClick={() => {
                           setCampaignFilter(c.id);
                           setShowCampaignDrop(false);
+                          // Server-side: reload inbox filtered by campaign
+                          loadContacts(c.id);
+                          // Fetch IDs for Intervened tab (separate list)
                           apiFetch(`/api/campaigns/${c.id}/contacts`).then((r) => {
-                            setCampaignContactIds(new Set<number>((r.data?.contact_ids || []) as number[]));
+                            const ids = ((r.data?.contact_ids || []) as unknown[]).map(Number);
+                            
+                            
+                            setCampaignContactIds(new Set<number>(ids));
                           });
                         }}
                         className={`w-full text-left px-4 py-2.5 text-sm transition-colors truncate
@@ -1046,6 +1063,7 @@ export default function InboxPage() {
               <button onClick={() => {
                 setCampaignFilter(null);
                 setCampaignContactIds(null);
+                loadContacts();
               }} className="text-green-600 hover:text-red-500 flex-shrink-0">
                 <X size={12} />
               </button>
@@ -1056,13 +1074,15 @@ export default function InboxPage() {
         {/* Tabs */}
         <div className="flex border-b border-gray-100">
           {(['all', 'requested', 'intervened'] as const).map((t) => {
-            const requestedCount   = filtered.filter((c) => (c.chat_status === 'open' || !c.chat_status) && Number(c.inbound_count) > 0).length;
+            const requestedCount   = filtered.filter((c) => c.chat_status === 'open' && Number(c.inbound_count) > 0).length;
             const isAdminOrManager = currentUserRole === 'admin' || currentUserRole === 'manager';
-            const intervenedSource = intervenedContacts.filter((c) => ((c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)));
+            const intervenedSource = intervenedContacts
+              .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
+              .filter((c) => ((c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)));
             // Badge shows count matching the current active sub-filter
             const intervenedCount  = intervenedSource.filter((c) => matchesIntervenedFilter(c, intervenedFilter)).length;
             const label =
-              t === 'all' ? `All (${contacts.length})` :
+              t === 'all' ? `All (${filtered.length})` :
               t === 'requested' ? (
                 <span className="flex items-center gap-1">
                   Requested
@@ -1098,8 +1118,9 @@ export default function InboxPage() {
                 intervenedFilter === 'other' ? 'Intervened By Other' :
                 selectedAgent ? `Intervened By ${selectedAgent.name}` : 'Intervened By Agent';
 
-              // Count from intervenedContacts using the shared filter helper
+              // Count from intervenedContacts using the shared filter helper (respects campaign filter)
               const filterCount = intervenedContacts
+                .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
                 .filter((c) => ((c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)))
                 .filter((c) => matchesIntervenedFilter(c, intervenedFilter)).length;
 
@@ -1123,7 +1144,9 @@ export default function InboxPage() {
                     { key: 'any'   as const, label: 'Intervened By Any' },
                     { key: 'other' as const, label: 'Intervened By Other' },
                   ]).map((opt) => {
-                    const cnt = intervenedContacts.filter((c) => matchesIntervenedFilter(c, opt.key)).length;
+                    const cnt = intervenedContacts
+                      .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
+                      .filter((c) => matchesIntervenedFilter(c, opt.key)).length;
                     return (
                       <button key={opt.key}
                         onClick={() => { setIntervenedFilter(opt.key); setShowIntervenedFilter(false); }}
@@ -1143,10 +1166,12 @@ export default function InboxPage() {
                       <Loader2 size={14} className="animate-spin text-gray-400" />
                     </div>
                   ) : filterAgents.map((a) => {
-                    const agentCount = intervenedContacts.filter((c) =>
-                      c.assigned_agent_id === a.id ||
-                      (!c.assigned_agent_id && c.intervened_by === a.name)
-                    ).length;
+                    const agentCount = intervenedContacts
+                      .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
+                      .filter((c) =>
+                        c.assigned_agent_id === a.id ||
+                        (!c.assigned_agent_id && c.intervened_by === a.name)
+                      ).length;
                     return (
                       <button key={a.id}
                         onClick={() => { setIntervenedFilter(a.id); setShowIntervenedFilter(false); }}
@@ -1192,7 +1217,9 @@ export default function InboxPage() {
           )}
           {!contactsLoading && (() => {
             const source = (tab === 'intervened')
-              ? intervenedContacts.filter((c) => ((c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)))
+              ? intervenedContacts
+                  .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
+                  .filter((c) => ((c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)))
               : filtered;
             if (source.length === 0 && tab !== 'all' && tab !== 'requested') {
               return <p className="text-center text-gray-400 text-xs py-10">No contacts</p>;
@@ -1201,7 +1228,9 @@ export default function InboxPage() {
           })()}
           {!contactsLoading && (() => {
             const source = (tab === 'intervened')
-              ? intervenedContacts.filter((c) => ((c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)))
+              ? intervenedContacts
+                  .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
+                  .filter((c) => ((c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)))
               : filtered;
             return source;
           })()
@@ -1643,7 +1672,17 @@ export default function InboxPage() {
                     <textarea
                       ref={inputRef}
                       value={text}
-                      onChange={(e) => setText(e.target.value)}
+                      onChange={(e) => {
+                        setText(e.target.value);
+                        // Send typing indicator at most once every 20s (WhatsApp shows it for 25s)
+                        if (selected && e.target.value.length > 0) {
+                          const now = Date.now();
+                          if (now - lastTypingSent.current > 20_000) {
+                            lastTypingSent.current = now;
+                            apiFetch('/api/typing', { method: 'POST', body: JSON.stringify({ contactId: selected.id }) }).catch(() => {});
+                          }
+                        }
+                      }}
                       onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
                       placeholder='Type "/" for quick replies…'
                       rows={2}

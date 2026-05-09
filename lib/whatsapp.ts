@@ -5,7 +5,7 @@
  */
 import axios, { AxiosInstance } from 'axios';
 
-const API_VERSION = 'v19.0';
+const API_VERSION = 'v23.0';
 const BASE_URL    = `https://graph.facebook.com/${API_VERSION}`;
 
 // ---- Create axios instance for a specific workspace ----
@@ -135,6 +135,22 @@ export async function uploadMedia(
   }
   if (!json.id) throw new Error('No media_id returned from WhatsApp');
   return json.id;
+}
+
+// ---- Send typing indicator (typing_on) ----
+export async function sendTypingIndicator(
+  accessToken:   string,
+  phoneNumberId: string,
+  to:            string
+) {
+  const client = createWAClient(accessToken);
+  await client.post(`/${phoneNumberId}/messages`, {
+    messaging_product: 'whatsapp',
+    recipient_type:    'individual',
+    to,
+    type:              'typing',
+    typing:            { status: 'typing_on' },
+  });
 }
 
 // ---- Mark message as read ----
