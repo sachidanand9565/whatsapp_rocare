@@ -560,9 +560,9 @@ export default function InboxPage() {
 
   // Campaign filter
   const [campaignFilter, setCampaignFilter]         = useState<number | null>(null);
+  const [campaignContactIds, setCampaignContactIds] = useState<Set<number> | null>(null);
   const [campaigns, setCampaigns]                   = useState<{ id: number; name: string }[]>([]);
   const [showCampaignDrop, setShowCampaignDrop]     = useState(false);
-  const campaignFilterRef                            = useRef<number | null>(null);
   const campaignDropRef                              = useRef<HTMLDivElement>(null);
 
   // Separate contacts list for admin/manager intervened tab (includes all agents' transferred chats)
@@ -578,11 +578,7 @@ export default function InboxPage() {
 
   const loadContacts = useCallback(() => {
     setContactsLoading(true);
-    const cid = campaignFilterRef.current;
-    const url = cid
-      ? `/api/contacts?limit=200&chatStatus=inbox&campaignId=${cid}`
-      : '/api/contacts?limit=200&chatStatus=inbox';
-    apiFetch(url).then((r) => {
+    apiFetch('/api/contacts?limit=200&chatStatus=inbox').then((r) => {
       const list: Contact[] = r.data?.data || [];
       setContacts(list);
       setUnreadCounts(prev => {
@@ -950,9 +946,10 @@ export default function InboxPage() {
   }
 
   const s = search.toLowerCase();
-  const filtered = contacts.filter((c) =>
-    (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)
-  );
+  const filtered = contacts.filter((c) => {
+    if (campaignContactIds && !campaignContactIds.has(c.id)) return false;
+    return (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s);
+  });
 
   // Shared intervened sub-filter — used for badge count, dropdown count, and contact list
   function matchesIntervenedFilter(c: Contact, fil: typeof intervenedFilter): boolean {
@@ -1008,10 +1005,9 @@ export default function InboxPage() {
                     {/* Clear option */}
                     <button
                       onClick={() => {
-                        campaignFilterRef.current = null;
                         setCampaignFilter(null);
+                        setCampaignContactIds(null);
                         setShowCampaignDrop(false);
-                        loadContacts();
                       }}
                       className={`w-full text-left px-4 py-2.5 text-sm transition-colors flex items-center gap-2
                         ${!campaignFilter ? 'bg-green-50 text-whatsapp-green font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}>
@@ -1023,10 +1019,11 @@ export default function InboxPage() {
                     {campaigns.map((c) => (
                       <button key={c.id}
                         onClick={() => {
-                          campaignFilterRef.current = c.id;
                           setCampaignFilter(c.id);
                           setShowCampaignDrop(false);
-                          loadContacts();
+                          apiFetch(`/api/campaigns/${c.id}/contacts`).then((r) => {
+                            setCampaignContactIds(new Set<number>((r.data?.contact_ids || []) as number[]));
+                          });
                         }}
                         className={`w-full text-left px-4 py-2.5 text-sm transition-colors truncate
                           ${campaignFilter === c.id ? 'bg-green-50 text-whatsapp-green font-semibold' : 'text-gray-700 hover:bg-gray-50'}`}>
@@ -1047,9 +1044,8 @@ export default function InboxPage() {
                 {campaigns.find((c) => c.id === campaignFilter)?.name}
               </span>
               <button onClick={() => {
-                campaignFilterRef.current = null;
                 setCampaignFilter(null);
-                loadContacts();
+                setCampaignContactIds(null);
               }} className="text-green-600 hover:text-red-500 flex-shrink-0">
                 <X size={12} />
               </button>
