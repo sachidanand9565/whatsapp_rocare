@@ -176,6 +176,31 @@ export async function POST(req: NextRequest) {
 
     // ---- Forward to all active custom chatbot webhooks (non-blocking) ----
     if (activeWebhooks.length > 0) {
+      // If user replied to a template button, fetch original template content from DB
+      let repliedTemplate: Record<string, unknown> | null = null;
+      if (msg.type === 'button' && msg.replied_to_wamid) {
+        try {
+          const origRows = await query<RowDataPacket[]>(
+            `SELECT content, type FROM messages
+             WHERE wamid = ? AND workspace_id = ? LIMIT 1`,
+            [msg.replied_to_wamid, workspaceId]
+          );
+          if (origRows.length > 0 && origRows[0].type === 'template') {
+            const parsed = JSON.parse(origRows[0].content as string);
+            if (parsed?.__type === 'template') {
+              repliedTemplate = {
+                template_name:  parsed.template_name,
+                header_type:    parsed.header_type,
+                header_content: parsed.header_content,
+                body:           parsed.body,
+                footer:         parsed.footer,
+                buttons:        parsed.buttons,
+              };
+            }
+          }
+        } catch { /* ignore parse errors */ }
+      }
+
       const fwdPayload = {
         event:        'message.received',
         workspace_id: workspaceId,
@@ -184,11 +209,15 @@ export async function POST(req: NextRequest) {
           wamid:            msg.wamid,
           type:             msg.type,
           content,
-          ...(msg.type === 'button' && msg.button?.payload
-            ? { button_payload: msg.button.payload }
+          ...(msg.type === 'button' && msg.button
+            ? {
+                button_text:    msg.button.text,
+                button_payload: msg.button.payload,
+              }
             : {}),
           timestamp:        msg.timestamp,
           replied_to_wamid: msg.replied_to_wamid || null,
+          ...(repliedTemplate ? { replied_template: repliedTemplate } : {}),
         },
       };
       for (const hook of activeWebhooks) {
