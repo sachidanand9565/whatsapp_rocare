@@ -416,7 +416,7 @@ async function fireCrmIntegration(
   contactId: number,
   phone: string
 ) {
-  // Find original message template_name from replied wamid
+  // Find original message content from replied wamid
   const msgRows = await query<RowDataPacket[]>(
     'SELECT content FROM messages WHERE wamid = ? AND workspace_id = ? LIMIT 1',
     [repliedToWamid, workspaceId]
@@ -424,9 +424,20 @@ async function fireCrmIntegration(
   if (msgRows.length === 0) return;
 
   let templateName = '';
+  let templateContent: Record<string, unknown> | null = null;
   try {
     const parsed = JSON.parse(msgRows[0].content as string);
     templateName = parsed?.template_name || '';
+    if (parsed?.__type === 'template') {
+      templateContent = {
+        template_name:  parsed.template_name,
+        header_type:    parsed.header_type,
+        header_content: parsed.header_content,
+        body:           parsed.body,
+        footer:         parsed.footer,
+        buttons:        parsed.buttons,
+      };
+    }
   } catch { return; }
   if (!templateName) return;
 
@@ -438,12 +449,13 @@ async function fireCrmIntegration(
   if (crms.length === 0) return;
 
   const crmPayload = JSON.stringify({
-    event:          'template_button_reply',
-    template_name:  templateName,
-    button_text:    button.text,
-    button_payload: button.payload,
-    contact:        { id: contactId, phone },
-    workspace_id:   workspaceId,
+    event:             'template_button_reply',
+    template_name:     templateName,
+    button_text:       button.text,
+    button_payload:    button.payload,
+    contact:           { id: contactId, phone },
+    workspace_id:      workspaceId,
+    ...(templateContent ? { template: templateContent } : {}),
   });
 
   for (const crm of crms) {
