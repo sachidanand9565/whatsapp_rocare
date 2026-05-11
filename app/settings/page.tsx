@@ -863,9 +863,12 @@ export default function SettingsPage() {
                 audio:    `"{\\"__type\\":\\"media\\",\\"media_id\\":\\"def456\\",\\"mime_type\\":\\"audio/ogg\\"}"`,
                 document: `"{\\"__type\\":\\"media\\",\\"media_id\\":\\"ghi789\\",\\"mime_type\\":\\"application/pdf\\",\\"filename\\":\\"invoice.pdf\\"}"`,
                 location: `"{\\"__type\\":\\"location\\",\\"latitude\\":28.6139,\\"longitude\\":77.2090,\\"name\\":\\"New Delhi\\"}"`,
-                button:   `"Buy Now"`,
+                button:   `"Confirm Order"`,
               };
-              const payload = `{\n  "event": "message.received",\n  "workspace_id": ${wsId},\n  "contact": { "id": 42, "phone": "919876543210" },\n  "message": {\n    "wamid": "wamid.HBgMOTE5...",\n    "type": "${payloadTab}",\n    "content": ${contentMap[payloadTab]},\n    "timestamp": "${Math.floor(Date.now() / 1000)}",\n    "replied_to_wamid": null\n  }\n}`;
+              const buttonExtra = payloadTab === 'button'
+                ? `,\n    "button_text": "Confirm Order",\n    "button_payload": "confirm_order",\n    "replied_to_wamid": "wamid.ABCxyz...",\n    "replied_template": {\n      "template_name": "order_update",\n      "header_type": "TEXT",\n      "header_content": "Order Ready",\n      "body": "Your order #1234 is ready!",\n      "footer": "Regards, Team",\n      "buttons": [{ "type": "QUICK_REPLY", "text": "Confirm Order" }]\n    }`
+                : ``;
+              const payload = `{\n  "event": "message.received",\n  "workspace_id": ${wsId},\n  "contact": { "id": 42, "phone": "919876543210" },\n  "message": {\n    "wamid": "wamid.HBgMOTE5...",\n    "type": "${payloadTab}",\n    "content": ${contentMap[payloadTab]},\n    "timestamp": "${Math.floor(Date.now() / 1000)}",\n    "replied_to_wamid": null${buttonExtra}\n  }\n}`;
               return (
                 <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-600 space-y-2">
                   <div className="flex items-center justify-between">
