@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   LayoutDashboard, MessageSquare, Users, Megaphone,
   FileText, Bot, BarChart3, Settings, LogOut, Menu, X,
-  History, CreditCard, UserCog, ChevronRight, Plus, Check,
+  History, CreditCard, UserCog, ChevronRight, Plus, Check, ShieldCheck,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -23,6 +23,7 @@ const ALL_NAV = [
   { label: 'Chatbot',    href: '/chatbot',      icon: Bot,             roles: ['admin'] },
   { label: 'Analytics',  href: '/analytics',    icon: BarChart3,       roles: ['admin','manager'] },
   { label: 'Agents',     href: '/agents',       icon: UserCog,         roles: ['admin'] },
+  { label: 'Sub Admins', href: '/sub-admins',   icon: ShieldCheck,     roles: ['admin'] },
   { label: 'Billing',    href: '/billing',      icon: CreditCard,      roles: ['admin'] },
   { label: 'Settings',   href: '/settings',     icon: Settings,        roles: ['admin'] },
 ];
