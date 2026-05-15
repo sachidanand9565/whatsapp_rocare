@@ -136,8 +136,15 @@ export async function POST(req: NextRequest) {
       let mediaObj: Record<string, unknown> = {};
 
       if (mediaOverride && Object.keys(mediaOverride).length > 0) {
-        // Caller provided media (url, id, filename etc.)
-        mediaObj = mediaOverride;
+        // Caller passed media — normalize: support both 'url' and 'link' keys
+        const mediaUrl = (mediaOverride.url || mediaOverride.link) as string | undefined;
+        const mediaId  = mediaOverride.id as string | undefined;
+        if (mediaUrl) {
+          mediaObj = { link: mediaUrl };
+          if (mediaOverride.filename) mediaObj.filename = mediaOverride.filename as string;
+        } else if (mediaId) {
+          mediaObj = { id: mediaId };
+        }
       } else if (headerContent) {
         // Use stored header_content (URL or media handle)
         mediaObj = headerContent.startsWith('http')
