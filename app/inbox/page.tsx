@@ -2,7 +2,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { apiFetch } from '@/hooks/useApi';
 import MediaLibrary, { type MediaItem as MLItem } from '@/app/components/MediaLibrary';
-import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter } from 'lucide-react';
+import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter, BellOff, Bell } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Contact, Message } from '@/types';
 
@@ -277,7 +277,6 @@ function ProfilePanel({ contact, templateMsgCount, sessionMsgCount, onContactUpd
     { label: 'Template Messages', value: templateMsgCount },
     { label: 'Session Messages',  value: sessionMsgCount },
     { label: 'Source',            value: contact.source || '—' },
-    { label: 'Opted In',          value: contact.opted_in ? <span className="text-green-600 font-semibold">Yes</span> : <span className="text-red-400">No</span> },
   ];
 
   return (
@@ -306,6 +305,30 @@ function ProfilePanel({ contact, templateMsgCount, sessionMsgCount, onContactUpd
                 <span className="text-gray-700 text-right">{value}</span>
               </div>
             ))}
+            {/* Opted In toggle */}
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-400">Opted In</span>
+              <button
+                onClick={async () => {
+                  const newVal = contact.opted_in === 0 ? 1 : 0;
+                  try {
+                    await apiFetch(`/api/contacts/${contact.id}`, {
+                      method: 'PUT',
+                      body:   JSON.stringify({ opted_in: newVal }),
+                    });
+                    onContactUpdate({ opted_in: newVal });
+                    toast.success(newVal ? 'Opted In ✓' : 'Opted Out');
+                  } catch { toast.error('Failed'); }
+                }}
+                className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors
+                  ${contact.opted_in === 0
+                    ? 'bg-red-50 border-red-200 text-red-500 hover:bg-red-100'
+                    : 'bg-green-50 border-green-200 text-green-600 hover:bg-green-100'}`}>
+                {contact.opted_in === 0
+                  ? <><BellOff size={11} /> Opted Out</>
+                  : <><Bell size={11} /> Opted In</>}
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -744,6 +767,24 @@ export default function InboxPage() {
     apiFetch(`/api/contacts/${c.id}`, { method: 'PUT', body: JSON.stringify({ reset_unread: true }) }).catch(() => {});
     // Send WhatsApp read receipts so user sees blue ticks on their end
     apiFetch('/api/messages/read', { method: 'POST', body: JSON.stringify({ contactId: c.id }) }).catch(() => {});
+  }
+
+  async function toggleOptedIn(e: React.MouseEvent, c: Contact) {
+    e.stopPropagation(); // contact select na ho
+    const newVal = c.opted_in === 0 ? 1 : 0;
+    try {
+      await apiFetch(`/api/contacts/${c.id}`, {
+        method: 'PUT',
+        body:   JSON.stringify({ opted_in: newVal }),
+      });
+      // Update both lists
+      const update = (prev: Contact[]) =>
+        prev.map((x) => x.id === c.id ? { ...x, opted_in: newVal } : x);
+      setContacts(update);
+      setIntervenedContacts(update);
+      if (selected?.id === c.id) setSelected((prev) => prev ? { ...prev, opted_in: newVal } : prev);
+      toast.success(newVal ? 'Opted In ✓' : 'Opted Out');
+    } catch { toast.error('Failed'); }
   }
 
   useEffect(() => {
@@ -1255,40 +1296,50 @@ export default function InboxPage() {
                     : `User Intervened by ${c.intervened_by}`)
               : null;
             return (
-              <button key={c.id} onClick={() => selectContact(c)}
-                className={`w-full text-left px-3 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors flex items-center gap-3
+              <div key={c.id}
+                className={`w-full border-b border-gray-50 hover:bg-gray-50 transition-colors flex items-center gap-3
                   ${selected?.id === c.id ? 'bg-green-50 border-l-2 border-l-whatsapp-green' : ''}
                   ${isResolved ? 'opacity-60' : ''}`}>
-                <div className={`w-10 h-10 rounded-full ${color} text-white flex items-center justify-center font-bold text-sm flex-shrink-0`}>
-                  {initial}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-1">
-                    <p className={`text-sm truncate ${unread > 0 ? 'font-bold text-gray-900' : 'font-medium text-gray-700'}`}>
-                      {c.name || c.phone}
-                    </p>
-                    {c.last_message_at && (
-                      <span className="text-xs text-gray-400 flex-shrink-0">
-                        {toLocalDate(c.last_message_at!).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}
-                      </span>
-                    )}
+                {/* Main clickable area */}
+                <button onClick={() => selectContact(c)} className="flex items-center gap-3 flex-1 min-w-0 text-left px-3 py-3">
+                  <div className={`w-10 h-10 rounded-full ${color} text-white flex items-center justify-center font-bold text-sm flex-shrink-0`}>
+                    {initial}
                   </div>
-                  <div className="flex items-center justify-between mt-0.5">
-                    <p className={`text-xs truncate ${unread > 0 ? 'text-gray-700 font-medium' : 'text-gray-400'}`}>
-                      {isResolved
-                        ? <span className="text-green-600 font-medium">Resolved</span>
-                        : intervenedLabel
-                          ? <span className="text-orange-600">{intervenedLabel}</span>
-                          : `+${c.phone}`}
-                    </p>
-                    {unread > 0 && !isResolved && (
-                      <span className="flex-shrink-0 bg-whatsapp-green text-white text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1.5">
-                        {unread > 99 ? '99+' : unread}
-                      </span>
-                    )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <p className={`text-sm truncate ${unread > 0 ? 'font-bold text-gray-900' : 'font-medium text-gray-700'}`}>
+                          {c.name || c.phone}
+                        </p>
+                        {c.opted_in === 0 && (
+                          <span className="flex-shrink-0 text-[9px] font-semibold bg-red-100 text-red-500 px-1.5 py-0.5 rounded-full leading-none">
+                            Opted Out
+                          </span>
+                        )}
+                      </div>
+                      {c.last_message_at && (
+                        <span className="text-xs text-gray-400 flex-shrink-0">
+                          {toLocalDate(c.last_message_at!).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between mt-0.5">
+                      <p className={`text-xs truncate ${unread > 0 ? 'text-gray-700 font-medium' : 'text-gray-400'}`}>
+                        {isResolved
+                          ? <span className="text-green-600 font-medium">Resolved</span>
+                          : intervenedLabel
+                            ? <span className="text-orange-600">{intervenedLabel}</span>
+                            : `+${c.phone}`}
+                      </p>
+                      {unread > 0 && !isResolved && (
+                        <span className="flex-shrink-0 bg-whatsapp-green text-white text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1.5">
+                          {unread > 99 ? '99+' : unread}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </button>
+                </button>
+              </div>
             );
           })}
         </div>
@@ -1782,6 +1833,7 @@ export default function InboxPage() {
           onContactUpdate={(updated) => {
             setSelected((prev) => prev ? { ...prev, ...updated } : prev);
             setContacts((prev) => prev.map((c) => c.id === selected.id ? { ...c, ...updated } : c));
+            setIntervenedContacts((prev) => prev.map((c) => c.id === selected.id ? { ...c, ...updated } : c));
           }}
         />
       )}

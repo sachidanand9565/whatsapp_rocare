@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState, useRef } from 'react';
 import { apiFetch } from '@/hooks/useApi';
-import { Plus, Search, Upload, Trash2, Edit2, Tag } from 'lucide-react';
+import { Plus, Search, Upload, Trash2, Edit2, Tag, BellOff, Bell } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Contact } from '@/types';
 
@@ -41,6 +41,16 @@ export default function ContactsPage() {
     await apiFetch(`/api/contacts/${id}`, { method: 'DELETE' });
     toast.success('Deleted');
     load(page);
+  }
+
+  async function toggleOptedIn(c: Contact) {
+    const newVal = c.opted_in ? 0 : 1;
+    await apiFetch(`/api/contacts/${c.id}`, {
+      method: 'PUT',
+      body:   JSON.stringify({ opted_in: newVal }),
+    });
+    setContacts((prev) => prev.map((x) => x.id === c.id ? { ...x, opted_in: newVal } : x));
+    toast.success(newVal ? 'Contact opted in' : 'Contact opted out');
   }
 
   async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
@@ -106,7 +116,7 @@ export default function ContactsPage() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                {['Name', 'Phone', 'City', 'Source', 'Status', 'Tags', 'Actions'].map((h) => (
+                {['Name', 'Phone', 'City', 'Source', 'Status', 'Tags', 'Opted', 'Actions'].map((h) => (
                   <th key={h} className="text-left px-4 py-3 font-medium text-gray-600">{h}</th>
                 ))}
               </tr>
@@ -137,10 +147,27 @@ export default function ContactsPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3">
+                    {c.opted_in === 0 ? (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium bg-red-100 text-red-600 px-2 py-0.5 rounded-full">
+                        <BellOff size={10} /> Opted Out
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
+                        <Bell size={10} /> Active
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
                     <div className="flex gap-2">
                       <button onClick={() => { setEditContact(c); setShowModal(true); }}
                         className="text-blue-500 hover:text-blue-700 transition-colors">
                         <Edit2 size={15} />
+                      </button>
+                      <button
+                        onClick={() => toggleOptedIn(c)}
+                        title={c.opted_in === 0 ? 'Opt In' : 'Opt Out'}
+                        className={c.opted_in === 0 ? 'text-green-500 hover:text-green-700 transition-colors' : 'text-orange-400 hover:text-orange-600 transition-colors'}>
+                        {c.opted_in === 0 ? <Bell size={15} /> : <BellOff size={15} />}
                       </button>
                       <button onClick={() => deleteContact(c.id)}
                         className="text-red-500 hover:text-red-700 transition-colors">

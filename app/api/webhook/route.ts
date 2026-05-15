@@ -113,6 +113,18 @@ export async function POST(req: NextRequest) {
       [contactId]
     );
 
+    // Auto opt-out: if user sends STOP/UNSUBSCRIBE → mark opted_in = 0
+    if (msg.type === 'text' && msg.text) {
+      const lower = msg.text.trim().toLowerCase();
+      const optOutWords = ['stop', 'unsubscribe', 'cancel', 'opt out', 'optout', 'remove me'];
+      const optInWords  = ['start', 'subscribe', 'opt in', 'optin', 'yes'];
+      if (optOutWords.some((w) => lower === w || lower.startsWith(w + ' '))) {
+        await execute('UPDATE contacts SET opted_in = 0 WHERE id = ?', [contactId]);
+      } else if (optInWords.some((w) => lower === w || lower.startsWith(w + ' '))) {
+        await execute('UPDATE contacts SET opted_in = 1 WHERE id = ?', [contactId]);
+      }
+    }
+
     // Extract readable content based on message type
     let content = '';
     if (msg.type === 'text')     content = msg.text || '';

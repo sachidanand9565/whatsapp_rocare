@@ -43,12 +43,23 @@ export async function POST(req: NextRequest, { params }: Params) {
     // Mark as running
     await execute('UPDATE campaigns SET status = ?, started_at = ? WHERE id = ?', ['running', utcNow(), campaignId]);
 
-    // Get pending contacts
+    // Get pending contacts — skip opted-out ones
     const contacts = await query<RowDataPacket[]>(
       `SELECT cc.contact_id, c.phone, cc.id as cc_id
        FROM campaign_contacts cc
        JOIN contacts c ON c.id = cc.contact_id
-       WHERE cc.campaign_id = ? AND cc.status = 'pending'`,
+       WHERE cc.campaign_id = ? AND cc.status = 'pending'
+         AND (c.opted_in IS NULL OR c.opted_in = 1)`,
+      [campaignId]
+    );
+
+    // Mark opted-out contacts as skipped so they don't stay as pending
+    await execute(
+      `UPDATE campaign_contacts cc
+       JOIN contacts c ON c.id = cc.contact_id
+       SET cc.status = 'failed', cc.error = 'opted_out'
+       WHERE cc.campaign_id = ? AND cc.status = 'pending'
+         AND c.opted_in = 0`,
       [campaignId]
     );
 
