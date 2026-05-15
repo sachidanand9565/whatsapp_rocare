@@ -154,9 +154,32 @@ async function sendBulk(
 }
 
 function buildComponents(camp: RowDataPacket): object[] {
-  // Build body component from template_vars
-  const vars = (camp.template_vars as Record<string, string>) || {};
-  const params = Object.values(vars).map((v) => ({ type: 'text', text: v }));
-  if (params.length === 0) return [];
-  return [{ type: 'body', parameters: params }];
+  const components: object[] = [];
+
+  // ── Header component for media templates ──────────────────────
+  const headerType    = (camp.header_type as string || '').toUpperCase();
+  const headerContent = (camp.header_content as string) || '';
+
+  if (['IMAGE','DOCUMENT','VIDEO'].includes(headerType) && headerContent) {
+    const mediaType = headerType.toLowerCase() as 'image' | 'document' | 'video';
+    // header_content can be a URL (https://...) or a media handle
+    const isUrl = headerContent.startsWith('http');
+    const mediaObj = isUrl
+      ? { link: headerContent }
+      : { id: headerContent };
+
+    components.push({
+      type: 'header',
+      parameters: [{ type: mediaType, [mediaType]: mediaObj }],
+    });
+  }
+
+  // ── Body component for variable templates ─────────────────────
+  const vars   = (camp.template_vars as Record<string, string>) || {};
+  const params = Object.values(vars).map((v) => ({ type: 'text', text: String(v) }));
+  if (params.length > 0) {
+    components.push({ type: 'body', parameters: params });
+  }
+
+  return components;
 }

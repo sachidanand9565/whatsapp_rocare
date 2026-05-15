@@ -63,7 +63,10 @@ export async function POST(req: NextRequest) {
         language   || 'en',
         category   || 'UTILITY',
         (header_type === 'NONE' ? 'TEXT' : header_type) || 'TEXT',
-        header_type === 'NONE' ? '' : (header_content || ''),
+        // For media headers store the handle so campaigns can include it when sending
+        header_type === 'NONE' ? '' :
+        ['IMAGE','DOCUMENT','VIDEO'].includes(header_type) ? (media_handle || header_content || '') :
+        (header_content || ''),
         body_text,
         footer_text || '',
         JSON.stringify(buttons),

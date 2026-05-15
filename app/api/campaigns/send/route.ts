@@ -124,6 +124,36 @@ export async function POST(req: NextRequest) {
 
     // ── Build template components ─────────────────────────────
     const components: object[] = [];
+
+    // Header component for IMAGE / DOCUMENT / VIDEO templates
+    const headerType    = (campaign.header_type as string || '').toUpperCase();
+    const headerContent = (campaign.header_content as string) || '';
+    // Caller can override media via `media` field in request body
+    const mediaOverride = rawBody.media as Record<string, unknown> | undefined;
+
+    if (['IMAGE','DOCUMENT','VIDEO'].includes(headerType)) {
+      const mediaType = headerType.toLowerCase() as 'image' | 'document' | 'video';
+      let mediaObj: Record<string, unknown> = {};
+
+      if (mediaOverride && Object.keys(mediaOverride).length > 0) {
+        // Caller provided media (url, id, filename etc.)
+        mediaObj = mediaOverride;
+      } else if (headerContent) {
+        // Use stored header_content (URL or media handle)
+        mediaObj = headerContent.startsWith('http')
+          ? { link: headerContent }
+          : { id: headerContent };
+      }
+
+      if (Object.keys(mediaObj).length > 0) {
+        components.push({
+          type: 'header',
+          parameters: [{ type: mediaType, [mediaType]: mediaObj }],
+        });
+      }
+    }
+
+    // Body variables
     if (Object.keys(variables).length > 0) {
       const sortedKeys = Object.keys(variables).sort((a, b) => Number(a) - Number(b));
       components.push({
@@ -131,6 +161,7 @@ export async function POST(req: NextRequest) {
         parameters: sortedKeys.map((k) => ({ type: 'text', text: variables[k] })),
       });
     }
+
     // Button payloads — e.g. ["accept_123", "reject_123"]
     const buttonPayloads = rawBody.buttonPayloads as string[] | undefined;
     if (Array.isArray(buttonPayloads) && buttonPayloads.length > 0) {

@@ -51,6 +51,15 @@ function extractBodyText(components: MetaComponent[]): string {
 function extractHeaderInfo(components: MetaComponent[]): { type: string; content: string } {
   const h = components.find((c) => c.type === 'HEADER');
   if (!h) return { type: 'NONE', content: '' };
+
+  // For media headers, try to get the example URL/handle Meta returns
+  if (h.format && ['IMAGE','DOCUMENT','VIDEO'].includes(h.format)) {
+    const ex = (h as Record<string, unknown>).example as Record<string, unknown> | undefined;
+    const url  = (ex?.header_url  as string[] | undefined)?.[0] || '';
+    const handle = (ex?.header_handle as string[] | undefined)?.[0] || '';
+    return { type: h.format, content: url || handle };
+  }
+
   return {
     type:    h.format || 'TEXT',
     content: h.text   || '',
