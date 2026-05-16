@@ -203,11 +203,16 @@ export async function POST(req: NextRequest) {
     let buttons: unknown[] = [];
     try { buttons = JSON.parse((campaign.buttons as string) || '[]'); } catch { buttons = []; }
 
+    // Resolve the actual media URL to store (so inbox can display it)
+    const resolvedMediaUrl = mediaOverride
+      ? ((mediaOverride.url || mediaOverride.link) as string | undefined) || ''
+      : headerContent;
+
     const templateContent = JSON.stringify({
       __type:         'template',
       template_name:  campaign.template_name,
       header_type:    campaign.header_type    || 'NONE',
-      header_content: campaign.header_content || '',
+      header_content: resolvedMediaUrl || (campaign.header_content as string) || '',
       body:           bodyText,
       footer:         campaign.footer_text    || '',
       buttons,

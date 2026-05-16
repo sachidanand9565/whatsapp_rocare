@@ -157,19 +157,64 @@ function ContactsBubble({ data }: { data: ContactsContent }) {
 
 // ── WhatsApp template bubble ──────────────────────────────────
 function TemplateBubble({ data, status, time }: { data: TemplateContent; status: string; time: string }) {
-  const HeaderIcon = data.header_type === 'IMAGE' ? Image
-    : data.header_type === 'VIDEO'    ? FileVideo
-    : data.header_type === 'DOCUMENT' ? File : FileText;
+  const hasMediaUrl = data.header_content?.startsWith('http');
+
+  function MediaHeader() {
+    if (data.header_type === 'IMAGE' && hasMediaUrl) {
+      return (
+        <div className="bg-gray-100">
+          <img src={data.header_content} alt="header" className="w-full max-h-48 object-cover" loading="lazy" />
+        </div>
+      );
+    }
+    if (data.header_type === 'VIDEO' && hasMediaUrl) {
+      return (
+        <div className="bg-gray-100">
+          <video src={data.header_content} controls className="w-full max-h-48" />
+        </div>
+      );
+    }
+    if (data.header_type === 'DOCUMENT') {
+      return (
+        <div className="bg-gray-100 px-4 py-2.5">
+          {hasMediaUrl ? (
+            <a href={data.header_content} target="_blank" rel="noreferrer"
+              className="flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm font-medium">
+              <File size={16} className="flex-shrink-0" />
+              <span className="truncate">
+                {data.header_content.split('/').pop()?.split('?')[0] || 'Document'}
+              </span>
+              <Download size={13} className="flex-shrink-0 ml-auto" />
+            </a>
+          ) : (
+            <div className="flex items-center gap-2 text-gray-500 text-sm">
+              <File size={15} /><span>Document</span>
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (data.header_type === 'TEXT') {
+      return (
+        <div className="bg-gray-100 px-4 py-2.5">
+          <p className="font-bold text-gray-800 text-sm">{data.header_content}</p>
+        </div>
+      );
+    }
+    if (data.header_type && data.header_type !== 'NONE') {
+      const Icon = data.header_type === 'VIDEO' ? FileVideo : FileText;
+      return (
+        <div className="bg-gray-100 px-4 py-2.5 flex items-center gap-2 text-gray-500 text-sm">
+          <Icon size={15} /><span>{data.header_type}</span>
+        </div>
+      );
+    }
+    return null;
+  }
 
   return (
     <div className="w-72 rounded-2xl rounded-br-sm overflow-hidden shadow-sm border border-green-100">
-      {data.header_type && data.header_type !== 'NONE' && (
-        <div className="bg-gray-100 px-4 py-2.5">
-          {data.header_type === 'TEXT'
-            ? <p className="font-bold text-gray-800 text-sm">{data.header_content}</p>
-            : <div className="flex items-center gap-2 text-gray-500 text-sm"><HeaderIcon size={15} /><span>{data.header_type}</span></div>}
-        </div>
-      )}
+      {data.header_type && data.header_type !== 'NONE' && <MediaHeader />}
       <div className="bg-[#dcf8c6] px-4 py-2.5">
         <p className="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed">{data.body}</p>
         {data.footer && <p className="text-xs text-gray-400 mt-1.5">{data.footer}</p>}
