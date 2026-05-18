@@ -173,7 +173,23 @@ export default function CampaignsPage() {
                         {c.status}
                       </span>
                     </div>
-                    <p className="text-sm text-gray-500">Template: {c.template_name || c.template_id}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <p className="text-sm text-gray-500">Template: {c.template_name || c.template_id}</p>
+                      {(c as Campaign & { template_status?: string }).template_status && (c as Campaign & { template_status?: string }).template_status !== 'APPROVED' && (() => {
+                        const ts = (c as Campaign & { template_status?: string }).template_status!;
+                        const cfg: Record<string, { bg: string; text: string; label: string }> = {
+                          PAUSED:   { bg: 'bg-orange-100', text: 'text-orange-700', label: '⏸ Paused' },
+                          PENDING:  { bg: 'bg-yellow-100', text: 'text-yellow-700', label: '⏳ Pending' },
+                          REJECTED: { bg: 'bg-red-100',    text: 'text-red-700',    label: '✗ Rejected' },
+                        };
+                        const c2 = cfg[ts];
+                        return c2 ? (
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c2.bg} ${c2.text}`}>
+                            {c2.label}
+                          </span>
+                        ) : null;
+                      })()}
+                    </div>
                     {c.scheduled_at && (
                       <p className="text-sm text-gray-400 mt-0.5">
                         Scheduled: {new Date(c.scheduled_at).toLocaleString()}

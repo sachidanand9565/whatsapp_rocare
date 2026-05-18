@@ -2,7 +2,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { apiFetch } from '@/hooks/useApi';
 import {
-  Plus, CheckCircle, Clock, XCircle, X,
+  Plus, CheckCircle, Clock, XCircle, X, PauseCircle,
   Image, FileText, Video, AlignLeft,
   Link2, Phone, MessageSquare, Eye, RefreshCw, Copy, Trash2,
 } from 'lucide-react';
@@ -42,13 +42,14 @@ const STATUS_CONFIG: Record<string, { icon: React.ReactNode; color: string; bg: 
   APPROVED: { icon: <CheckCircle size={13} />, color: 'text-green-700',  bg: 'bg-green-100',  border: 'border-green-200' },
   PENDING:  { icon: <Clock       size={13} />, color: 'text-yellow-700', bg: 'bg-yellow-100', border: 'border-yellow-200' },
   REJECTED: { icon: <XCircle     size={13} />, color: 'text-red-700',    bg: 'bg-red-100',    border: 'border-red-200' },
-  PAUSED:   { icon: <Clock       size={13} />, color: 'text-gray-600',   bg: 'bg-gray-100',   border: 'border-gray-200' },
+  PAUSED:   { icon: <PauseCircle size={13} />, color: 'text-orange-700', bg: 'bg-orange-100', border: 'border-orange-200' },
 };
 
 const TABS = [
   { key: 'ALL',      label: 'All',      color: 'text-gray-700' },
-  { key: 'PENDING',  label: 'Pending',  color: 'text-yellow-700' },
   { key: 'APPROVED', label: 'Approved', color: 'text-green-700' },
+  { key: 'PENDING',  label: 'Pending',  color: 'text-yellow-700' },
+  { key: 'PAUSED',   label: 'Paused',   color: 'text-orange-700' },
   { key: 'REJECTED', label: 'Rejected', color: 'text-red-700' },
 ];
 
@@ -160,8 +161,9 @@ export default function TemplatesPage() {
   // Count per tab
   const counts = useMemo(() => ({
     ALL:      templates.length,
-    PENDING:  templates.filter((t) => t.status === 'PENDING').length,
     APPROVED: templates.filter((t) => t.status === 'APPROVED').length,
+    PENDING:  templates.filter((t) => t.status === 'PENDING').length,
+    PAUSED:   templates.filter((t) => t.status === 'PAUSED').length,
     REJECTED: templates.filter((t) => t.status === 'REJECTED').length,
   }), [templates]);
 

@@ -243,7 +243,19 @@ export async function POST(req: NextRequest) {
 
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
-    console.error('[campaigns/send]', err);
-    return apiError('Failed to send message', 500);
+
+    // Extract Meta API error details if available
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const axiosErr = err as any;
+    if (axiosErr?.response?.data) {
+      const metaErr = axiosErr.response.data?.error;
+      const msg = metaErr?.error_user_msg || metaErr?.message || 'Meta API error';
+      console.error('[campaigns/send] Meta error:', JSON.stringify(axiosErr.response.data));
+      return apiError(`Meta: ${msg}`, axiosErr.response.status || 500);
+    }
+
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[campaigns/send]', msg);
+    return apiError(msg, 500);
   }
 }

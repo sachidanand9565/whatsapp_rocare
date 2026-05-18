@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
         GROUP BY campaign_id
       ) cc_stats ON cc_stats.campaign_id = c.id`;
 
-    const selectCols = `c.*, t.name as template_name,
+    const selectCols = `c.*, t.name as template_name, t.status as template_status,
       COALESCE(cc_stats.cc_sent,      0) AS cc_sent,
       COALESCE(cc_stats.cc_delivered, 0) AS cc_delivered,
       COALESCE(cc_stats.cc_read,      0) AS cc_read,
