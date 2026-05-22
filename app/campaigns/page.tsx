@@ -46,7 +46,7 @@ export default function CampaignsPage() {
   useEffect(() => { load(); }, []);
 
   async function deleteCampaign(id: number, name: string) {
-    if (!confirm(`Delete campaign "${name}"? Ye action undo nahi ho sakta.`)) return;
+    if (!confirm(`Delete campaign "${name}"? This action cannot be undone.`)) return;
     setDeletingId(id);
     try {
       const token = localStorage.getItem('token');
@@ -238,7 +238,7 @@ export default function CampaignsPage() {
                       <button
                         onClick={() => deleteCampaign(c.id, c.name)}
                         disabled={deletingId === c.id || c.status === 'running'}
-                        title={c.status === 'running' ? 'Running campaign delete nahi ho sakta' : 'Delete campaign'}
+                        title={c.status === 'running' ? 'Cannot delete a running campaign' : 'Delete campaign'}
                         className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                         {deletingId === c.id
                           ? <div className="w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
@@ -642,8 +642,7 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
                 <Zap size={14} /> API Campaign — No contacts needed
               </p>
               <p className="text-xs text-blue-600">
-                Campaign create hone ke baad ek API endpoint milega. Aap us endpoint ko apne backend se call karke
-                kisi bhi number pe message bhej sakte ho — manually contacts select karne ki zaroorat nahi.
+                After creating the campaign, an API endpoint will be provided. Call it from your backend to send messages to any number — no need to select contacts manually.
               </p>
             </div>
           ) : (

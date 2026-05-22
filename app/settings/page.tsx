@@ -962,7 +962,7 @@ export default function SettingsPage() {
 
             {apiKey ? (<>
               <div>
-                <label className="form-label">API Key <span className="text-green-600 font-semibold text-xs ml-1">● Permanent — kabhi expire nahi hoga</span></label>
+                <label className="form-label">API Key <span className="text-green-600 font-semibold text-xs ml-1">● Permanent — never expires</span></label>
                 <div className="flex gap-2 mt-1">
                   <input type={showApiKey ? 'text' : 'password'} value={apiKey} readOnly className="input font-mono text-xs flex-1 bg-gray-50" />
                   <button onClick={() => setShowApiKey((s) => !s)} className="btn-secondary px-3 flex-shrink-0">
@@ -980,7 +980,7 @@ export default function SettingsPage() {
 
               {/* Campaign usage */}
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs space-y-1.5">
-                <p className="font-semibold text-blue-800">📦 Campaign API mein use karo (PHP/Python/etc):</p>
+                <p className="font-semibold text-blue-800">Campaign API usage (PHP / Python / cURL):</p>
                 <pre className="bg-gray-900 text-green-400 rounded p-2 overflow-x-auto leading-relaxed whitespace-pre-wrap">{`POST ${typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.com'}/api/campaigns/send
 
 {
@@ -993,7 +993,7 @@ export default function SettingsPage() {
 
               {/* External chatbot usage */}
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-600 space-y-2">
-                <p className="font-semibold text-gray-700">🤖 Direct message (n8n / Make / custom bot):</p>
+                <p className="font-semibold text-gray-700">Direct message (n8n / Make / custom bot):</p>
                 <pre className="bg-gray-900 text-green-400 rounded p-2 overflow-x-auto leading-relaxed whitespace-pre-wrap">{`POST ${typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.com'}/api/external/send
 Headers:
   X-API-Key: ${showApiKey ? apiKey : '•'.repeat(24)}

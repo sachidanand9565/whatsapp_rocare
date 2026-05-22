@@ -1337,7 +1337,7 @@ export default function InboxPage() {
               ? (c.assigned_agent_id
                   ? `User Transferred to ${transferredToAgent || 'agent'} by ${c.intervened_by}`
                   : c.intervened_by === currentUserName
-                    ? 'User Intervened by you'
+                    ? 'Intervened by you'
                     : `User Intervened by ${c.intervened_by}`)
               : null;
             return (

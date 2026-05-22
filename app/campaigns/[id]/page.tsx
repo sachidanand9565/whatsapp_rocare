@@ -571,18 +571,18 @@ export default function CampaignDetailPage() {
                 <button
                   onClick={() => { setSelected(new Set()); setSelectAllPages(false); }}
                   className="text-blue-600 underline hover:text-blue-800 font-medium">
-                  Selection clear karo
+                  Clear selection
                 </button>
               </>
             ) : (
               <>
                 <span className="text-blue-700">
-                  Is page ke {contacts.length} contacts select hain.
+                  {contacts.length} contacts on this page are selected.
                 </span>
                 <button
                   onClick={confirmSelectAllPages}
                   className="text-blue-600 underline hover:text-blue-800 font-medium">
-                  Saare {pagination.total.toLocaleString()} contacts select karo
+                  Select all {pagination.total.toLocaleString()} contacts
                 </button>
               </>
             )}
@@ -1070,7 +1070,7 @@ function ChatDrawer({ phone, name, onClose }: { phone: string; name: string; onC
                 {/* Notice bar */}
                 <div className="flex items-center justify-center gap-1.5 px-4 py-2 bg-amber-50 border-b border-amber-100">
                   <AlertCircle size={13} className="text-amber-500 shrink-0" />
-                  <p className="text-xs text-amber-700">24hr window closed — sirf template bhej sakte ho</p>
+                  <p className="text-xs text-amber-700">24hr window closed — only templates can be sent</p>
                 </div>
 
                 {!showTpl ? (
