@@ -1229,8 +1229,14 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
   const [phone, setPhone]     = useState('');
   const [vars, setVars]       = useState(defaultParams);
   const [sending, setSending] = useState(false);
+  const [wsApiKey, setWsApiKey] = useState<string>('');
 
-  const token    = typeof window !== 'undefined' ? localStorage.getItem('token') || 'YOUR_JWT_TOKEN' : 'YOUR_JWT_TOKEN';
+  useEffect(() => {
+    apiFetch('/api/workspace/api-key').then((r) => {
+      if (r.data?.api_key) setWsApiKey(r.data.api_key);
+    }).catch(() => {});
+  }, []);
+
   const endpoint = typeof window !== 'undefined'
     ? `${window.location.origin}/api/campaigns/send`
     : '/api/campaigns/send';
@@ -1239,7 +1245,7 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
   try { parsedParams = JSON.parse(vars); } catch { /* shown in UI */ }
 
   const bodyObj = {
-    apiKey:              token,
+    apiKey:              wsApiKey || 'YOUR_WORKSPACE_API_KEY',
     campaignName:        campaign.name,
     destination:         phone || '919876543210',
     userName:            'YOUR_BRAND_NAME',

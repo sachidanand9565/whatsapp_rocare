@@ -37,11 +37,25 @@ export async function POST(
       rawBody = {};
     }
 
-    if (rawBody.apiKey) {
-      // Inject apiKey as a Bearer token so requireAuth can verify it
+    const incomingKey = rawBody.apiKey as string | undefined;
+    if (incomingKey?.startsWith('ws_')) {
+      // Permanent workspace API key
+      const wsRows = await query<RowDataPacket[]>(
+        'SELECT id, owner_id FROM workspaces WHERE api_key = ? AND is_active = 1 LIMIT 1',
+        [incomingKey]
+      );
+      if (wsRows.length === 0) return apiError('Invalid API key', 401);
+      payload = {
+        userId:      wsRows[0].owner_id as number,
+        email:       '',
+        role:        'admin',
+        workspaceId: wsRows[0].id as number,
+      };
+    } else if (incomingKey) {
+      // Legacy JWT token
       const syntheticReq = new Request(req.url, {
         method:  req.method,
-        headers: { ...Object.fromEntries(req.headers), authorization: `Bearer ${rawBody.apiKey}` },
+        headers: { ...Object.fromEntries(req.headers), authorization: `Bearer ${incomingKey}` },
         body:    JSON.stringify(rawBody),
       });
       payload = requireAuth(syntheticReq as unknown as NextRequest);

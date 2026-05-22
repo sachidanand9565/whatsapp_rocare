@@ -32,12 +32,29 @@ export async function POST(req: NextRequest) {
       return apiError('Invalid JSON body', 400);
     }
 
-    // ── Auth: apiKey in body OR Authorization header ──────────
+    // ── Auth: workspace api_key (ws_...) OR JWT Bearer token ────
     let payload: ReturnType<typeof requireAuth>;
-    if (rawBody.apiKey) {
+    const incomingKey = rawBody.apiKey as string | undefined;
+
+    if (incomingKey?.startsWith('ws_')) {
+      // Permanent workspace API key — look up workspace in DB
+      const wsRows = await query<RowDataPacket[]>(
+        'SELECT id, owner_id FROM workspaces WHERE api_key = ? AND is_active = 1 LIMIT 1',
+        [incomingKey]
+      );
+      if (wsRows.length === 0) return apiError('Invalid API key', 401);
+      // Build a synthetic payload matching JWTPayload shape
+      payload = {
+        userId:      wsRows[0].owner_id as number,
+        email:       '',
+        role:        'admin',
+        workspaceId: wsRows[0].id as number,
+      };
+    } else if (incomingKey) {
+      // Legacy: JWT token passed as apiKey
       const syntheticReq = new Request(req.url, {
         method:  req.method,
-        headers: { ...Object.fromEntries(req.headers), authorization: `Bearer ${rawBody.apiKey}` },
+        headers: { ...Object.fromEntries(req.headers), authorization: `Bearer ${incomingKey}` },
         body:    JSON.stringify(rawBody),
       });
       payload = requireAuth(syntheticReq as unknown as NextRequest);
