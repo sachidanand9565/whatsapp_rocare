@@ -216,7 +216,7 @@ export async function POST(req: NextRequest) {
       const fwdPayload = {
         event:        'message.received',
         workspace_id: workspaceId,
-        contact:      { id: contactId, phone },
+        contact:      { id: contactId, phone, name: profileName || null },
         message: {
           wamid:            msg.wamid,
           type:             msg.type,
