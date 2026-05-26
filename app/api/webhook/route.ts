@@ -292,6 +292,22 @@ export async function POST(req: NextRequest) {
           );
         }
 
+        // Save Meta error detail to campaign_contacts.error
+        if (status.status === 'failed') {
+          let errText = 'Message delivery failed';
+          if (status.errors?.length) {
+            const e = status.errors[0] as { code?: number; title?: string; message?: string; error_data?: { details?: string } };
+            const title   = e.title   || e.message || '';
+            const code    = e.code    ? `(#${e.code})` : '';
+            const details = (e as { error_data?: { details?: string } }).error_data?.details || '';
+            errText = [title, code].filter(Boolean).join(' ') || details || 'Message delivery failed';
+          }
+          await execute(
+            'UPDATE campaign_contacts SET error = ? WHERE message_id = ?',
+            [errText, msgId]
+          ).catch(() => {});
+        }
+
         // Fire failed-message webhooks configured for this campaign
         if (status.status === 'failed') {
           fireFailedWebhooks(workspaceId!, campId, contactId, msgRows[0].id as number).catch(() => {});
