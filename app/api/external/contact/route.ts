@@ -5,16 +5,21 @@
  * Headers:
  *   X-API-Key: ws_xxxxxxxxxxxxxxxxxxxx
  */
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { query } from '@/lib/db';
 import { normalizePhone } from '@/lib/utils';
+import { corsResponse, optionsResponse } from '@/lib/cors';
 import { RowDataPacket } from 'mysql2';
+
+export async function OPTIONS() {
+  return optionsResponse();
+}
 
 export async function GET(req: NextRequest) {
   // ── Auth via API key ─────────────────────────────────────────
   const apiKey = req.headers.get('x-api-key') || req.headers.get('X-API-Key');
   if (!apiKey) {
-    return NextResponse.json({ error: 'X-API-Key header required' }, { status: 401 });
+    return corsResponse({ error: 'X-API-Key header required' }, 401);
   }
 
   const wsRows = await query<RowDataPacket[]>(
@@ -22,14 +27,14 @@ export async function GET(req: NextRequest) {
     [apiKey]
   );
   if (wsRows.length === 0) {
-    return NextResponse.json({ error: 'Invalid API key' }, { status: 401 });
+    return corsResponse({ error: 'Invalid API key' }, 401);
   }
   const workspaceId = wsRows[0].id as number;
 
   // ── Validate input ───────────────────────────────────────────
   const phone = new URL(req.url).searchParams.get('phone');
   if (!phone) {
-    return NextResponse.json({ error: 'phone query param is required' }, { status: 400 });
+    return corsResponse({ error: 'phone query param is required' }, 400);
   }
   const normalised = normalizePhone(phone);
 
@@ -39,7 +44,7 @@ export async function GET(req: NextRequest) {
     [workspaceId, normalised]
   );
   if (contactRows.length === 0) {
-    return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
+    return corsResponse({ error: 'Contact not found' }, 404);
   }
   const contact = contactRows[0];
 
@@ -53,7 +58,7 @@ export async function GET(req: NextRequest) {
     [workspaceId, contact.id]
   );
 
-  return NextResponse.json({
+  return corsResponse({
     contact: {
       id:          contact.id,
       phone:       contact.phone,

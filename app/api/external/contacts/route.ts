@@ -1,7 +1,7 @@
 /**
  * GET /api/external/contacts
  * Returns paginated contact list with their chat messages.
- * Only returns contacts created after 2026-05-07.
+ * Only returns contacts created after 2026-05-07 by default.
  *
  * Headers:
  *   X-API-Key: ws_xxxxxxxxxxxxxxxxxxxx
@@ -14,17 +14,22 @@
  *   opted_in    - filter by 1 or 0
  *   after       - custom date filter e.g. 2026-05-07 (default: 2026-05-07)
  */
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { query } from '@/lib/db';
+import { corsResponse, optionsResponse } from '@/lib/cors';
 import { RowDataPacket } from 'mysql2';
 
 const DEFAULT_AFTER = '2026-05-07';
+
+export async function OPTIONS() {
+  return optionsResponse();
+}
 
 export async function GET(req: NextRequest) {
   // ── Auth ─────────────────────────────────────────────────────
   const apiKey = req.headers.get('x-api-key') || req.headers.get('X-API-Key');
   if (!apiKey) {
-    return NextResponse.json({ error: 'X-API-Key header required' }, { status: 401 });
+    return corsResponse({ error: 'X-API-Key header required' }, 401);
   }
 
   const wsRows = await query<RowDataPacket[]>(
@@ -32,7 +37,7 @@ export async function GET(req: NextRequest) {
     [apiKey]
   );
   if (wsRows.length === 0) {
-    return NextResponse.json({ error: 'Invalid API key' }, { status: 401 });
+    return corsResponse({ error: 'Invalid API key' }, 401);
   }
   const workspaceId = wsRows[0].id as number;
 
@@ -83,21 +88,15 @@ export async function GET(req: NextRequest) {
   ]);
 
   if (contacts.length === 0) {
-    return NextResponse.json({
+    return corsResponse({
       contacts: [],
-      pagination: {
-        page, limit,
-        total:       0,
-        total_pages: 0,
-        has_next:    false,
-        has_prev:    page > 1,
-      },
+      pagination: { page, limit, total: 0, total_pages: 0, has_next: false, has_prev: page > 1 },
     });
   }
 
   // ── Fetch messages for all contacts in one query ──────────────
-  const contactIds = contacts.map((c) => c.id as number);
-  const placeholders = contactIds.map(() => '?').join(',');
+  const contactIds    = contacts.map((c) => c.id as number);
+  const placeholders  = contactIds.map(() => '?').join(',');
 
   const messages = await query<RowDataPacket[]>(
     `SELECT id, contact_id, wamid, direction, type, content,
@@ -119,21 +118,21 @@ export async function GET(req: NextRequest) {
   const total      = countRows[0].total as number;
   const totalPages = Math.ceil(total / limit);
 
-  return NextResponse.json({
+  return corsResponse({
     contacts: contacts.map((c) => ({
-      id:          c.id,
-      phone:       c.phone,
-      name:        c.name        || null,
-      email:       c.email       || null,
-      city:        c.city        || null,
-      source:      c.source      || null,
-      status:      c.status      || null,
-      tags:        c.tags ? JSON.parse(c.tags as string) : [],
-      notes:       c.notes       || null,
-      opted_in:    !!c.opted_in,
-      chat_status: c.chat_status || 'open',
-      created_at:  c.created_at,
-      messages:    msgMap[c.id as number] || [],
+      id:             c.id,
+      phone:          c.phone,
+      name:           c.name        || null,
+      email:          c.email       || null,
+      city:           c.city        || null,
+      source:         c.source      || null,
+      status:         c.status      || null,
+      tags:           c.tags ? JSON.parse(c.tags as string) : [],
+      notes:          c.notes       || null,
+      opted_in:       !!c.opted_in,
+      chat_status:    c.chat_status || 'open',
+      created_at:     c.created_at,
+      messages:       msgMap[c.id as number] || [],
       total_messages: (msgMap[c.id as number] || []).length,
     })),
     pagination: {

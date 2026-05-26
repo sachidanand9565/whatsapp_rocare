@@ -14,8 +14,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query, insert, execute } from '@/lib/db';
 import { sendTextMessage } from '@/lib/whatsapp';
 import { normalizePhone, utcNow } from '@/lib/utils';
+import { optionsResponse } from '@/lib/cors';
 import { RowDataPacket } from 'mysql2';
 import { emitSSE } from '@/lib/sse';
+
+export async function OPTIONS() {
+  return optionsResponse();
+}
 
 export async function POST(req: NextRequest) {
   // ── Auth via API key ─────────────────────────────────────────
