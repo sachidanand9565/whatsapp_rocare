@@ -29,8 +29,14 @@ export function getPagination(searchParams: URLSearchParams, maxLimit = 100) {
 }
 
 // ---- Phone normalizer: ensure E.164 without '+' ----
+// Auto-adds India country code (91) for 10-digit numbers starting with 6-9
+// Handles both: "919876543210" (already full) and "9876543210" (10-digit)
 export function normalizePhone(phone: string): string {
-  return phone.replace(/\D/g, '');
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length === 10 && /^[6-9]/.test(digits)) {
+    return '91' + digits;
+  }
+  return digits;
 }
 
 // ---- UTC datetime helpers (MySQL-safe "YYYY-MM-DD HH:mm:ss" in UTC) ----
