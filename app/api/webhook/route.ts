@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
     // Auto opt-out: if user sends STOP/UNSUBSCRIBE → mark opted_in = 0
     if (msg.type === 'text' && msg.text) {
       const lower = msg.text.trim().toLowerCase();
-      const optOutWords = ['stop', 'unsubscribe', 'cancel', 'opt out', 'optout', 'remove me'];
+      const optOutWords = ['stop'];
       const optInWords  = ['start', 'subscribe', 'opt in', 'optin', 'yes'];
       if (optOutWords.some((w) => lower === w || lower.startsWith(w + ' '))) {
         await execute('UPDATE contacts SET opted_in = 0 WHERE id = ?', [contactId]);
