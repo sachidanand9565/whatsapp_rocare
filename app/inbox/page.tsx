@@ -826,6 +826,8 @@ export default function InboxPage() {
   );
 
   function selectContact(c: Contact) {
+    setMessages([]);
+    setMessagesLoading(true);
     setSelected(c);
     setUnreadCounts(prev => {
       const next = { ...prev, [c.id]: 0 };
