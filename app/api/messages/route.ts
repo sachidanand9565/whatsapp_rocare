@@ -38,33 +38,10 @@ export async function GET(req: NextRequest) {
       `SELECT m.*, c.name as contact_name, c.phone as contact_phone
        FROM messages m
        LEFT JOIN contacts c ON c.id = m.contact_id
-       WHERE m.workspace_id = ?
-         AND (
-           m.contact_id IN (
-             SELECT id FROM contacts
-             WHERE workspace_id = ?
-               AND phone = (SELECT phone FROM contacts WHERE id = ? AND workspace_id = ?)
-           )
-           OR m.wamid IN (
-             SELECT replied_to_wamid FROM messages
-             WHERE workspace_id = ?
-               AND replied_to_wamid IS NOT NULL
-               AND contact_id IN (
-                 SELECT id FROM contacts
-                 WHERE workspace_id = ?
-                   AND phone = (SELECT phone FROM contacts WHERE id = ? AND workspace_id = ?)
-               )
-           )
-         )
-       ORDER BY COALESCE(m.created_at, m.sent_at) DESC, m.id DESC
+       WHERE m.workspace_id = ? AND m.contact_id = ?
+       ORDER BY m.id DESC
        LIMIT ?`,
-      [
-        payload.workspaceId,
-        payload.workspaceId, contactId, payload.workspaceId,
-        payload.workspaceId,
-        payload.workspaceId, contactId, payload.workspaceId,
-        limit,
-      ]
+      [payload.workspaceId, contactId, limit]
     );
 
     return apiSuccess(messages.reverse()); // oldest first
