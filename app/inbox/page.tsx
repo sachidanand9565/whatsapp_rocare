@@ -644,8 +644,8 @@ export default function InboxPage() {
     localStorage.setItem('unreadCounts', JSON.stringify(counts));
   };
 
-  const loadContacts = useCallback((campaignId?: number) => {
-    setContactsLoading(true);
+  const loadContacts = useCallback((campaignId?: number, silent = false) => {
+    if (!silent) setContactsLoading(true);
     const qs = campaignId
       ? `limit=500&chatStatus=inbox&campaignId=${campaignId}`
       : `limit=500&chatStatus=inbox`;
@@ -666,7 +666,7 @@ export default function InboxPage() {
         saveUnread(next);
         return next;
       });
-    }).finally(() => setContactsLoading(false));
+    }).finally(() => { if (!silent) setContactsLoading(false); });
   }, []);
 
   // Load intervened contacts — for admin/manager: all agents' chats; for agent: their own assigned
@@ -699,17 +699,21 @@ export default function InboxPage() {
   useEffect(() => {
     loadContacts();
     loadIntervenedContacts();
-    const iv = setInterval(() => {
-      loadContacts(campaignFilterRef.current);
-      loadIntervenedContacts();
-    }, 60_000);
-    return () => clearInterval(iv);
+    // No polling — SSE handles real-time updates
   }, [loadContacts, loadIntervenedContacts]);
+
+  // Tracks the highest message id loaded for the current chat (for incremental SSE fetch)
+  const lastMsgIdRef = useRef<number>(0);
 
   const loadMessages = useCallback((contactId: number) => {
     setMessagesLoading(true);
+    lastMsgIdRef.current = 0;
     apiFetch(`/api/messages?contactId=${contactId}&limit=80`)
-      .then((r) => setMessages(r.data || []))
+      .then((r) => {
+        const msgs: Message[] = r.data || [];
+        setMessages(msgs);
+        if (msgs.length > 0) lastMsgIdRef.current = msgs[msgs.length - 1].id;
+      })
       .finally(() => setMessagesLoading(false));
   }, []);
 
@@ -742,10 +746,30 @@ export default function InboxPage() {
           };
 
           if (data.type === 'new_message') {
-            loadContacts();
+            // Silent refresh — no skeleton flicker
+            loadContacts(campaignFilterRef.current, true);
             loadIntervenedContacts();
+
             if (selectedRef.current?.id === data.contactId) {
-              loadMessages(data.contactId!);
+              // Incremental fetch: only load messages newer than last known id
+              const lastId = lastMsgIdRef.current;
+              if (lastId > 0) {
+                apiFetch(`/api/messages?contactId=${data.contactId}&afterId=${lastId}&limit=20`)
+                  .then((r) => {
+                    const newMsgs: Message[] = r.data || [];
+                    if (newMsgs.length > 0) {
+                      setMessages(prev => {
+                        const existingIds = new Set(prev.map((m) => m.id));
+                        const toAdd = newMsgs.filter((m) => !existingIds.has(m.id));
+                        if (toAdd.length === 0) return prev;
+                        lastMsgIdRef.current = toAdd[toAdd.length - 1].id;
+                        return [...prev, ...toAdd];
+                      });
+                    }
+                  }).catch(() => {});
+              } else {
+                loadMessages(data.contactId!);
+              }
             } else if (data.contactId && data.direction === 'inbound') {
               setUnreadCounts(prev => {
                 const next = { ...prev, [data.contactId!]: (prev[data.contactId!] || 0) + 1 };
@@ -760,7 +784,7 @@ export default function InboxPage() {
               ));
             }
           } else if (data.type === 'chat_status_update' && data.contactId && data.chatStatus) {
-            loadContacts();
+            loadContacts(campaignFilterRef.current, true);
             loadIntervenedContacts();
             if (selectedRef.current?.id === data.contactId) {
               setSelected(prev => prev ? { ...prev, chat_status: data.chatStatus as Contact['chat_status'] } : prev);

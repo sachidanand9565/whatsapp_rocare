@@ -1,6 +1,7 @@
 /**
- * GET /api/messages?contactId=X
- * Returns conversation history with a contact
+ * GET /api/messages?contactId=X[&limit=80][&afterId=Y]
+ * Returns conversation history with a contact.
+ * afterId: if provided, only returns messages with id > afterId (incremental load).
  */
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
@@ -10,16 +11,29 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
-    const sp        = new URL(req.url).searchParams;
-    const contactId = sp.get('contactId');
-    const limit     = Math.min(100, Number(sp.get('limit') || 50));
+    const payload    = requireAuth(req);
+    const sp         = new URL(req.url).searchParams;
+    const contactId  = sp.get('contactId');
+    const limit      = Math.min(100, Number(sp.get('limit') || 80));
+    const afterId    = Number(sp.get('afterId') || 0);
 
     if (!contactId) return apiError('contactId required');
 
-    // Fetch all messages for this contact's phone number AND any outbound
-    // messages that were replied-to (handles templates saved under a different
-    // contact_id or with contact_id = NULL due to race conditions).
+    // ── Incremental fetch (SSE-triggered, only new messages) ────
+    if (afterId > 0) {
+      const messages = await query<RowDataPacket[]>(
+        `SELECT m.*, c.name as contact_name, c.phone as contact_phone
+         FROM messages m
+         LEFT JOIN contacts c ON c.id = m.contact_id
+         WHERE m.workspace_id = ? AND m.contact_id = ? AND m.id > ?
+         ORDER BY m.id ASC
+         LIMIT ?`,
+        [payload.workspaceId, contactId, afterId, limit]
+      );
+      return apiSuccess(messages);
+    }
+
+    // ── Full load (initial open) ─────────────────────────────────
     const messages = await query<RowDataPacket[]>(
       `SELECT m.*, c.name as contact_name, c.phone as contact_phone
        FROM messages m
