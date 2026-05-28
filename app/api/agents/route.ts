@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
 
     const agents = await query<RowDataPacket[]>(
       `SELECT u.id, u.name, u.email, u.phone, u.role, u.is_active, u.created_at,
-              wm.role AS workspace_role
+              wm.role AS workspace_role, u.plain_password
        FROM workspace_members wm
        JOIN users u ON u.id = wm.user_id
        WHERE wm.workspace_id = ?
@@ -51,8 +51,8 @@ export async function POST(req: NextRequest) {
     const hashed = await hashPassword(password);
 
     const userId = await insert(
-      'INSERT INTO users (name, email, phone, password, role) VALUES (?, ?, ?, ?, ?)',
-      [name, email, phone || null, hashed, role]
+      'INSERT INTO users (name, email, phone, password, plain_password, role) VALUES (?, ?, ?, ?, ?, ?)',
+      [name, email, phone || null, hashed, password, role]
     );
 
     await insert(

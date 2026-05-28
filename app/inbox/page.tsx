@@ -1868,11 +1868,53 @@ export default function InboxPage() {
               </button>
             </div>
           ) : (
-            <div className="p-4 border-t border-gray-200 bg-gray-50 flex items-center justify-center">
+            <div className="p-4 border-t border-gray-200 bg-gray-50 flex items-center justify-center gap-2">
               <button onClick={intervene} disabled={actioning}
                 className="flex items-center gap-2 px-6 py-2.5 bg-whatsapp-green hover:bg-green-600 text-white font-semibold rounded-full text-sm transition-colors disabled:opacity-50 shadow-sm">
                 {actioning ? <Loader2 size={15} className="animate-spin" /> : <UserCheck size={15} />}
                 Intervene
+              </button>
+              {/* Transfer dropdown */}
+              <div className="relative" ref={transferRef}>
+                <button onClick={openTransfer} disabled={actioning || transferring}
+                  className="flex items-center gap-1.5 px-4 py-2.5 bg-blue-400 hover:bg-blue-600 text-white text-sm font-semibold rounded-full transition-colors disabled:opacity-50 shadow-sm">
+                  {transferring ? <Loader2 size={13} className="animate-spin" /> : <ArrowRightLeft size={13} />}
+                  Transfer
+                  <ChevronDown size={12} className={`transition-transform duration-150 ${showTransfer ? 'rotate-180' : ''}`} />
+                </button>
+                {showTransfer && (
+                  <div className="absolute right-0 bottom-full mb-1 w-52 bg-white border border-gray-200 rounded-lg shadow-lg z-20 overflow-hidden">
+                    <p className="px-3 py-2 text-xs font-semibold text-gray-500 border-b border-gray-100">Transfer to</p>
+                    {loadingAgents ? (
+                      <div className="flex items-center justify-center py-5">
+                        <Loader2 size={16} className="animate-spin text-gray-400" />
+                      </div>
+                    ) : transferAgents.length === 0 ? (
+                      <p className="px-3 py-4 text-xs text-gray-400 text-center">No agents available</p>
+                    ) : (
+                      <div className="max-h-48 overflow-y-auto">
+                        {transferAgents.map((a) => (
+                          <button key={a.id} onClick={() => transferChat(a)}
+                            className="w-full text-left px-3 py-2.5 hover:bg-gray-50 flex items-center gap-2.5 transition-colors border-b border-gray-50 last:border-0">
+                            <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold flex-shrink-0">
+                              {a.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium text-gray-800 truncate">{a.name}</p>
+                              <p className="text-xs text-gray-400 capitalize">{a.workspace_role}</p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              {/* Resolve button */}
+              <button onClick={resolve} disabled={actioning}
+                className="flex items-center gap-1.5 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-full transition-colors disabled:opacity-50 shadow-sm">
+                {actioning ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
+                Resolve
               </button>
             </div>
           )}

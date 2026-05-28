@@ -3,7 +3,7 @@
  * DELETE /api/agents/[id]  — remove agent from workspace (admin only)
  */
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth';
+import { requireAuth, hashPassword } from '@/lib/auth';
 import { query } from '@/lib/db';
 import { apiSuccess, apiError } from '@/lib/utils';
 
@@ -16,15 +16,12 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
 
     const { id } = await ctx.params;
     const agentId = Number(id);
-    const { role, is_active } = await req.json();
+    const { role, is_active, password } = await req.json();
 
     if (role && !['manager', 'agent'].includes(role)) return apiError('Invalid role');
 
     if (role) {
-      await query(
-        'UPDATE users SET role = ? WHERE id = ?',
-        [role, agentId]
-      );
+      await query('UPDATE users SET role = ? WHERE id = ?', [role, agentId]);
       await query(
         'UPDATE workspace_members SET role = ? WHERE user_id = ? AND workspace_id = ?',
         [role, agentId, payload.workspaceId]
@@ -33,6 +30,14 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
 
     if (typeof is_active === 'number') {
       await query('UPDATE users SET is_active = ? WHERE id = ?', [is_active, agentId]);
+    }
+
+    if (password && password.trim()) {
+      const hashed = await hashPassword(password.trim());
+      await query(
+        'UPDATE users SET password = ?, plain_password = ? WHERE id = ?',
+        [hashed, password.trim(), agentId]
+      );
     }
 
     return apiSuccess({ updated: true });

@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, ToggleLeft, ToggleRight, Search, UserCog, SlidersHorizontal, X, Check } from 'lucide-react';
+import { Plus, Trash2, ToggleLeft, ToggleRight, Search, UserCog, SlidersHorizontal, X, Check, Eye, EyeOff, KeyRound } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface Agent {
@@ -12,6 +12,7 @@ interface Agent {
   workspace_role: 'manager' | 'agent';
   is_active: number;
   created_at: string;
+  plain_password?: string | null;
 }
 
 interface Campaign {
@@ -188,6 +189,10 @@ export default function AgentsPage() {
   const [showModal, setShowModal]       = useState(false);
   const [assignAgent, setAssignAgent]   = useState<Agent | null>(null);
   const [saving, setSaving]             = useState(false);
+  const [visiblePasswords, setVisiblePasswords] = useState<Record<number, boolean>>({});
+  const [changePwdAgent, setChangePwdAgent]     = useState<Agent | null>(null);
+  const [newPassword, setNewPassword]           = useState('');
+  const [savingPwd, setSavingPwd]               = useState(false);
 
   const [form, setForm] = useState({
     name: '', email: '', phone: '',
@@ -260,6 +265,25 @@ export default function AgentsPage() {
     if (res.ok) { toast.success('Role updated'); fetchAgents(); }
   }
 
+  async function saveNewPassword() {
+    if (!changePwdAgent || !newPassword.trim()) return;
+    setSavingPwd(true);
+    try {
+      const res = await fetch(`/api/agents/${changePwdAgent.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ password: newPassword.trim() }),
+      });
+      if (!res.ok) { toast.error('Failed to update password'); return; }
+      toast.success('Password updated');
+      setChangePwdAgent(null);
+      setNewPassword('');
+      fetchAgents();
+    } finally {
+      setSavingPwd(false);
+    }
+  }
+
   const filtered = agents.filter((a) =>
     a.name.toLowerCase().includes(search.toLowerCase()) ||
     a.email.toLowerCase().includes(search.toLowerCase())
@@ -308,6 +332,7 @@ export default function AgentsPage() {
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Agent</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Email</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Phone</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-600">Password</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Role</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Status</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Actions</th>
@@ -326,6 +351,22 @@ export default function AgentsPage() {
                     </td>
                     <td className="px-4 py-3 text-gray-600">{agent.email}</td>
                     <td className="px-4 py-3 text-gray-600">{agent.phone || '—'}</td>
+                    <td className="px-4 py-3">
+                      {agent.plain_password ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono text-sm text-gray-700">
+                            {visiblePasswords[agent.id] ? agent.plain_password : '••••••••'}
+                          </span>
+                          <button
+                            onClick={() => setVisiblePasswords(p => ({ ...p, [agent.id]: !p[agent.id] }))}
+                            className="text-gray-400 hover:text-gray-600 transition-colors">
+                            {visiblePasswords[agent.id] ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-400 italic">Not set</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <select
                         value={agent.workspace_role}
@@ -347,7 +388,15 @@ export default function AgentsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
-                        {/* Filter / Assign Campaigns icon */}
+                        {/* Change Password */}
+                        <button
+                          onClick={() => { setChangePwdAgent(agent); setNewPassword(''); }}
+                          title="Change password"
+                          className="p-1.5 text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 rounded transition-colors"
+                        >
+                          <KeyRound size={15} />
+                        </button>
+                        {/* Assign Campaigns */}
                         <button
                           onClick={() => setAssignAgent(agent)}
                           title="Assign campaigns"
@@ -448,6 +497,66 @@ export default function AgentsPage() {
           agent={assignAgent}
           onClose={() => setAssignAgent(null)}
         />
+      )}
+
+      {/* Change Password Modal */}
+      {changePwdAgent && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">Change Password</h2>
+                <p className="text-sm text-gray-500 mt-0.5">{changePwdAgent.name}</p>
+              </div>
+              <button onClick={() => setChangePwdAgent(null)} className="text-gray-400 hover:text-gray-600">
+                <X size={18} />
+              </button>
+            </div>
+
+            {changePwdAgent.plain_password && (
+              <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <p className="text-xs text-gray-500 mb-1">Current Password</p>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm text-gray-700 flex-1">
+                    {visiblePasswords[changePwdAgent.id] ? changePwdAgent.plain_password : '••••••••'}
+                  </span>
+                  <button
+                    onClick={() => setVisiblePasswords(p => ({ ...p, [changePwdAgent.id]: !p[changePwdAgent.id] }))}
+                    className="text-gray-400 hover:text-gray-600">
+                    {visiblePasswords[changePwdAgent.id] ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+                <input
+                  type="text"
+                  placeholder="Enter new password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="input font-mono"
+                  autoFocus
+                />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setChangePwdAgent(null)}
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">
+                  Cancel
+                </button>
+                <button
+                  onClick={saveNewPassword}
+                  disabled={savingPwd || !newPassword.trim()}
+                  className="flex-1 btn-primary disabled:opacity-50">
+                  {savingPwd ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
