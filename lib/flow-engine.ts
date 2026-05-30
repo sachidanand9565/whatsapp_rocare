@@ -1,34 +1,70 @@
 /**
  * lib/flow-engine.ts
  * Flow execution engine — handles starting, resuming, and executing chatbot flows.
+ *
+ * Node types:
+ *   message        — send text to user
+ *   wait           — pause, wait for user reply
+ *   condition      — branch based on user reply
+ *   set_variable   — save user reply into a named variable
+ *   api_call       — HTTP request to external URL with {{variable}} support
+ *   update_contact — update contact field in DB
+ *   delay          — wait N seconds before continuing
+ *   template       — send WhatsApp approved template
+ *   transfer       — transfer chat to human agent
+ *   end            — end the flow
  */
 import { query, insert, execute } from '@/lib/db';
-import { sendTextMessage } from '@/lib/whatsapp';
+import { sendTextMessage, sendTemplateMessage } from '@/lib/whatsapp';
 import { utcNow } from '@/lib/utils';
 import { emitSSE } from '@/lib/sse';
 import { RowDataPacket } from 'mysql2';
 
 // ── Types ────────────────────────────────────────────────────────
 
+export type FlowNodeType =
+  | 'message' | 'wait' | 'condition'
+  | 'set_variable' | 'api_call' | 'update_contact'
+  | 'delay' | 'template' | 'transfer' | 'end';
+
 export interface FlowNode {
-  id:       string;
-  type:     'message' | 'wait' | 'condition' | 'transfer' | 'end';
-  data:     {
-    text?:        string;          // message node
-    conditions?:  { value: string; label: string }[]; // condition node
-    transferNote?: string;         // transfer node
+  id:   string;
+  type: FlowNodeType;
+  data: {
+    // message
+    text?:           string;
+    // condition
+    conditions?:     { value: string; label: string }[];
+    // set_variable
+    variable_name?:  string;
+    // api_call
+    url?:            string;
+    method?:         'GET' | 'POST' | 'PUT' | 'PATCH';
+    headers?:        string;   // JSON string
+    body?:           string;   // JSON template string with {{vars}}
+    save_response_as?: string; // variable name to store response body
+    // update_contact
+    contact_field?:  'name' | 'email' | 'phone' | 'notes' | 'tags';
+    field_value?:    string;   // supports {{vars}}
+    // delay
+    seconds?:        number;
+    // template
+    template_name?:  string;
+    language?:       string;
+    // transfer
+    transferNote?:   string;
   };
   position: { x: number; y: number };
 }
 
 export interface FlowEdge {
-  id:           string;
-  source:       string;
-  target:       string;
-  sourceHandle?: string | null; // condition branch: condition value or 'default'
+  id:            string;
+  source:        string;
+  target:        string;
+  sourceHandle?: string | null;
 }
 
-export interface FlowDefinition {
+interface FlowDefinition {
   id:            number;
   workspace_id:  number;
   name:          string;
@@ -47,38 +83,44 @@ interface FlowSession {
   variables:       Record<string, string>;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────
+// ── Variable substitution ────────────────────────────────────────
 
-function getNode(nodes: FlowNode[], id: string): FlowNode | null {
-  return nodes.find((n) => n.id === id) || null;
+function substituteVars(
+  text: string,
+  vars: Record<string, string>,
+  extras: { contact_phone?: string; contact_name?: string; user_message?: string }
+): string {
+  return text
+    .replace(/\{\{user_message\}\}/gi,   extras.user_message   || '')
+    .replace(/\{\{contact_phone\}\}/gi,  extras.contact_phone  || '')
+    .replace(/\{\{contact_name\}\}/gi,   extras.contact_name   || '')
+    .replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] !== undefined ? vars[key] : `{{${key}}}`);
 }
 
-// Get the next node following an edge from source, optionally matching a handle
-function getNextNode(edges: FlowEdge[], nodes: FlowNode[], sourceId: string, handle?: string): FlowNode | null {
-  const edge = handle
-    ? edges.find((e) => e.source === sourceId && e.sourceHandle === handle)
-      || edges.find((e) => e.source === sourceId && e.sourceHandle === 'default')
-      || edges.find((e) => e.source === sourceId && !e.sourceHandle)
-    : edges.find((e) => e.source === sourceId);
-  if (!edge) return null;
-  return getNode(nodes, edge.target);
-}
+// ── DB Helpers ───────────────────────────────────────────────────
 
-async function saveMessage(workspaceId: number, contactId: number, text: string, wamid: string | null) {
+async function saveOutboundMessage(workspaceId: number, contactId: number, text: string, wamid: string | null, type = 'text') {
   const now = utcNow();
   await insert(
     `INSERT INTO messages (workspace_id, contact_id, wamid, direction, type, content, status, sent_at, created_at)
-     VALUES (?, ?, ?, 'outbound', 'text', ?, 'sent', ?, ?)`,
-    [workspaceId, contactId, wamid, text, now, now]
+     VALUES (?, ?, ?, 'outbound', ?, ?, 'sent', ?, ?)`,
+    [workspaceId, contactId, wamid, type, text, now, now]
   );
   emitSSE({ type: 'new_message', workspaceId, contactId, direction: 'outbound' });
 }
 
-async function updateSession(sessionId: number, nodeId: string) {
-  await execute(
-    'UPDATE flow_sessions SET current_node_id = ?, updated_at = NOW() WHERE id = ?',
-    [nodeId, sessionId]
-  );
+async function updateSessionNode(sessionId: number, nodeId: string, variables?: Record<string, string>) {
+  if (variables !== undefined) {
+    await execute(
+      'UPDATE flow_sessions SET current_node_id = ?, variables = ?, updated_at = NOW() WHERE id = ?',
+      [nodeId, JSON.stringify(variables), sessionId]
+    );
+  } else {
+    await execute(
+      'UPDATE flow_sessions SET current_node_id = ?, updated_at = NOW() WHERE id = ?',
+      [nodeId, sessionId]
+    );
+  }
 }
 
 async function endSession(sessionId: number) {
@@ -95,54 +137,164 @@ async function abandonOldSessions(workspaceId: number, contactId: number) {
   );
 }
 
+function getNode(nodes: FlowNode[], id: string): FlowNode | null {
+  return nodes.find((n) => n.id === id) || null;
+}
+
+function getNextNode(edges: FlowEdge[], nodes: FlowNode[], sourceId: string, handle?: string): FlowNode | null {
+  const edge = handle
+    ? (edges.find((e) => e.source === sourceId && e.sourceHandle === handle)
+      || edges.find((e) => e.source === sourceId && e.sourceHandle === 'default')
+      || edges.find((e) => e.source === sourceId && !e.sourceHandle))
+    : edges.find((e) => e.source === sourceId);
+  if (!edge) return null;
+  return getNode(nodes, edge.target);
+}
+
 // ── Core Executor ────────────────────────────────────────────────
 
 async function executeFromNode(
-  flow:        FlowDefinition,
-  session:     FlowSession,
-  startNode:   FlowNode,
-  accessToken: string,
+  flow:          FlowDefinition,
+  session:       FlowSession,
+  startNode:     FlowNode,
+  accessToken:   string,
   phoneNumberId: string,
-  contactPhone: string,
-  workspaceId: number,
+  contactPhone:  string,
+  workspaceId:   number,
+  userMessage:   string = '',
+  contactName:   string = '',
 ): Promise<void> {
   let node: FlowNode | null = startNode;
+  let vars = { ...session.variables };
+
+  const extras = { contact_phone: contactPhone, contact_name: contactName, user_message: userMessage };
 
   while (node) {
+    const nodeId = node.id;
+
     switch (node.type) {
 
+      // ── Message: send text ─────────────────────────────────────
       case 'message': {
-        const text = node.data.text || '';
+        const text = substituteVars(node.data.text || '', vars, extras);
         let wamid: string | null = null;
         try {
           const res = await sendTextMessage(accessToken, phoneNumberId, contactPhone, text);
           wamid = res?.messages?.[0]?.id || null;
-        } catch { /* log but continue */ }
-        await saveMessage(workspaceId, session.contact_id, text, wamid);
-        node = getNextNode(flow.edges, flow.nodes, node.id);
-        if (node) await updateSession(session.id, node.id);
+        } catch { /* continue even if send fails */ }
+        await saveOutboundMessage(workspaceId, session.contact_id, text, wamid);
+        node = getNextNode(flow.edges, flow.nodes, nodeId);
+        if (node) await updateSessionNode(session.id, node.id, vars);
         break;
       }
 
+      // ── Wait: pause for user reply ────────────────────────────
       case 'wait': {
-        // Pause here — next user message will resume
-        await updateSession(session.id, node.id);
+        await updateSessionNode(session.id, nodeId, vars);
         return;
       }
 
+      // ── Condition: branch on user reply ───────────────────────
       case 'condition': {
-        // Condition node itself just routes — it needs user reply
-        // So we treat it like wait: pause and let resumeFlow handle branching
-        await updateSession(session.id, node.id);
+        await updateSessionNode(session.id, nodeId, vars);
         return;
       }
 
+      // ── Set Variable: store user reply ────────────────────────
+      case 'set_variable': {
+        const varName = node.data.variable_name?.trim();
+        if (varName) {
+          vars[varName] = userMessage;
+          extras.user_message = userMessage; // keep consistent
+        }
+        node = getNextNode(flow.edges, flow.nodes, nodeId);
+        if (node) await updateSessionNode(session.id, node.id, vars);
+        break;
+      }
+
+      // ── API Call: external HTTP request ───────────────────────
+      case 'api_call': {
+        const url    = substituteVars(node.data.url || '', vars, extras);
+        const method = node.data.method || 'POST';
+        let headersObj: Record<string, string> = { 'Content-Type': 'application/json' };
+        try {
+          if (node.data.headers) {
+            const parsed = JSON.parse(substituteVars(node.data.headers, vars, extras));
+            headersObj = { ...headersObj, ...parsed };
+          }
+        } catch { /* invalid headers JSON, use defaults */ }
+
+        let bodyStr: string | undefined;
+        if (method !== 'GET' && node.data.body) {
+          bodyStr = substituteVars(node.data.body, vars, extras);
+        }
+
+        try {
+          const res = await fetch(url, {
+            method,
+            headers: headersObj,
+            body: bodyStr,
+          });
+          if (node.data.save_response_as) {
+            try {
+              const responseText = await res.text();
+              vars[node.data.save_response_as] = responseText;
+            } catch { /* ignore */ }
+          }
+        } catch { /* API call failed, continue flow */ }
+
+        node = getNextNode(flow.edges, flow.nodes, nodeId);
+        if (node) await updateSessionNode(session.id, node.id, vars);
+        break;
+      }
+
+      // ── Update Contact: update DB field ───────────────────────
+      case 'update_contact': {
+        const field = node.data.contact_field;
+        const value = substituteVars(node.data.field_value || '', vars, extras);
+        if (field && value) {
+          try {
+            await execute(
+              `UPDATE contacts SET ${field} = ? WHERE id = ?`,
+              [value, session.contact_id]
+            );
+            emitSSE({ type: 'chat_status_update', workspaceId, contactId: session.contact_id });
+          } catch { /* ignore */ }
+        }
+        node = getNextNode(flow.edges, flow.nodes, nodeId);
+        if (node) await updateSessionNode(session.id, node.id, vars);
+        break;
+      }
+
+      // ── Delay: wait N seconds ─────────────────────────────────
+      case 'delay': {
+        const secs = Math.min(Number(node.data.seconds) || 1, 30);
+        await new Promise((resolve) => setTimeout(resolve, secs * 1000));
+        node = getNextNode(flow.edges, flow.nodes, nodeId);
+        if (node) await updateSessionNode(session.id, node.id, vars);
+        break;
+      }
+
+      // ── Template: send WhatsApp template ─────────────────────
+      case 'template': {
+        const tName = node.data.template_name;
+        const tLang = node.data.language || 'en';
+        if (tName) {
+          try {
+            const res = await sendTemplateMessage(accessToken, phoneNumberId, contactPhone, tName, tLang, []);
+            const wamid = res?.messages?.[0]?.id || null;
+            await saveOutboundMessage(workspaceId, session.contact_id, `[Template: ${tName}]`, wamid, 'template');
+          } catch { /* continue */ }
+        }
+        node = getNextNode(flow.edges, flow.nodes, nodeId);
+        if (node) await updateSessionNode(session.id, node.id, vars);
+        break;
+      }
+
+      // ── Transfer: send to agent ───────────────────────────────
       case 'transfer': {
-        const note = node.data.transferNote || 'Flow transferred to agent';
-        await execute(
-          "UPDATE contacts SET chat_status = 'open' WHERE id = ?",
-          [session.contact_id]
-        );
+        const note = substituteVars(node.data.transferNote || 'Chat transferred to agent', vars, extras);
+        await execute("UPDATE contacts SET chat_status = 'open' WHERE id = ?", [session.contact_id]);
         const now = utcNow();
         await insert(
           `INSERT INTO messages (workspace_id, contact_id, wamid, direction, type, content, status, sent_at, created_at)
@@ -150,10 +302,12 @@ async function executeFromNode(
           [workspaceId, session.contact_id, note, now, now]
         );
         emitSSE({ type: 'new_message', workspaceId, contactId: session.contact_id, direction: 'outbound' });
+        emitSSE({ type: 'chat_status_update', workspaceId, contactId: session.contact_id, chatStatus: 'open' });
         await endSession(session.id);
         return;
       }
 
+      // ── End ───────────────────────────────────────────────────
       case 'end':
       default: {
         await endSession(session.id);
@@ -162,22 +316,17 @@ async function executeFromNode(
     }
   }
 
-  // No more nodes — session complete
   await endSession(session.id);
 }
 
 // ── Public API ───────────────────────────────────────────────────
 
-/**
- * Check if a flow matches the incoming message and start it.
- * Returns true if a flow was started.
- */
 export async function tryStartFlow(
-  workspaceId:  number,
-  contactId:    number,
-  contactPhone: string,
-  userMessage:  string,
-  accessToken:  string,
+  workspaceId:   number,
+  contactId:     number,
+  contactPhone:  string,
+  userMessage:   string,
+  accessToken:   string,
   phoneNumberId: string,
 ): Promise<boolean> {
   const msg = userMessage.trim().toLowerCase();
@@ -187,62 +336,48 @@ export async function tryStartFlow(
     [workspaceId]
   );
 
-  let matchedFlow: FlowDefinition | null = null;
+  let matchedFlow: RowDataPacket | null = null;
   for (const row of flows) {
-    const f = row as RowDataPacket;
-    const ttype = f.trigger_type as string;
-    const tval  = (f.trigger_value as string || '').toLowerCase();
-    if (ttype === 'any') { matchedFlow = f as unknown as FlowDefinition; break; }
-    if (ttype === 'keyword' && msg.includes(tval)) { matchedFlow = f as unknown as FlowDefinition; break; }
-    if (ttype === 'starts_with' && msg.startsWith(tval)) { matchedFlow = f as unknown as FlowDefinition; break; }
+    const ttype = row.trigger_type as string;
+    const tval  = (row.trigger_value as string || '').toLowerCase();
+    if (ttype === 'any')                             { matchedFlow = row; break; }
+    if (ttype === 'keyword'     && msg.includes(tval))    { matchedFlow = row; break; }
+    if (ttype === 'starts_with' && msg.startsWith(tval))  { matchedFlow = row; break; }
   }
-
   if (!matchedFlow) return false;
 
-  const nodes: FlowNode[] = typeof matchedFlow.nodes === 'string'
-    ? JSON.parse(matchedFlow.nodes) : matchedFlow.nodes;
-  const edges: FlowEdge[] = typeof matchedFlow.edges === 'string'
-    ? JSON.parse(matchedFlow.edges) : matchedFlow.edges;
+  const nodes: FlowNode[] = typeof matchedFlow.nodes === 'string' ? JSON.parse(matchedFlow.nodes) : matchedFlow.nodes;
+  const edges: FlowEdge[] = typeof matchedFlow.edges === 'string' ? JSON.parse(matchedFlow.edges) : matchedFlow.edges;
 
-  // Find start node (no incoming edges)
-  const targetIds = new Set(edges.map((e) => e.target));
-  const startNode = nodes.find((n) => !targetIds.has(n.id)) || nodes[0];
+  const targetIds  = new Set(edges.map((e) => e.target));
+  const startNode  = nodes.find((n) => !targetIds.has(n.id)) || nodes[0];
   if (!startNode) return false;
 
-  // Abandon any existing active session for this contact
   await abandonOldSessions(workspaceId, contactId);
 
-  // Create new session
   const sessionId = await insert(
     `INSERT INTO flow_sessions (workspace_id, contact_id, flow_id, current_node_id, variables, status)
      VALUES (?, ?, ?, ?, '{}', 'active')`,
     [workspaceId, contactId, matchedFlow.id, startNode.id]
   );
 
-  const session: FlowSession = {
-    id: sessionId, contact_id: contactId, flow_id: matchedFlow.id,
-    current_node_id: startNode.id, variables: {},
-  };
+  // Get contact name
+  const contactRows = await query<RowDataPacket[]>('SELECT name FROM contacts WHERE id = ? LIMIT 1', [contactId]);
+  const contactName = (contactRows[0]?.name as string) || '';
 
-  await executeFromNode(
-    { ...matchedFlow, nodes, edges },
-    session, startNode,
-    accessToken, phoneNumberId, contactPhone, workspaceId
-  );
+  const session: FlowSession = { id: sessionId, contact_id: contactId, flow_id: matchedFlow.id as number, current_node_id: startNode.id, variables: {} };
+  const flow = { ...matchedFlow, nodes, edges } as unknown as FlowDefinition;
 
+  await executeFromNode(flow, session, startNode, accessToken, phoneNumberId, contactPhone, workspaceId, userMessage, contactName);
   return true;
 }
 
-/**
- * Resume an active flow session with user's reply.
- * Returns true if a session was active and handled the message.
- */
 export async function tryResumeFlow(
-  workspaceId:  number,
-  contactId:    number,
-  contactPhone: string,
-  userMessage:  string,
-  accessToken:  string,
+  workspaceId:   number,
+  contactId:     number,
+  contactPhone:  string,
+  userMessage:   string,
+  accessToken:   string,
   phoneNumberId: string,
 ): Promise<boolean> {
   const sessions = await query<RowDataPacket[]>(
@@ -260,10 +395,7 @@ export async function tryResumeFlow(
     variables:       typeof sess.variables === 'string' ? JSON.parse(sess.variables) : sess.variables || {},
   };
 
-  const flowRows = await query<RowDataPacket[]>(
-    'SELECT * FROM flows WHERE id = ? AND workspace_id = ? LIMIT 1',
-    [session.flow_id, workspaceId]
-  );
+  const flowRows = await query<RowDataPacket[]>('SELECT * FROM flows WHERE id = ? AND workspace_id = ? LIMIT 1', [session.flow_id, workspaceId]);
   if (flowRows.length === 0) { await endSession(session.id); return false; }
 
   const flowRow = flowRows[0];
@@ -276,22 +408,24 @@ export async function tryResumeFlow(
 
   let nextNode: FlowNode | null = null;
 
-  if (currentNode.type === 'wait') {
-    // Simple wait — just move to next node
+  if (currentNode.type === 'wait' || currentNode.type === 'set_variable') {
     nextNode = getNextNode(edges, nodes, currentNode.id);
   } else if (currentNode.type === 'condition') {
-    // Match user reply to a condition branch
     const msg = userMessage.trim().toLowerCase();
     const conditions = currentNode.data.conditions || [];
-    const matched = conditions.find((c) => msg === c.value.toLowerCase() || msg.includes(c.value.toLowerCase()));
+    const matched = conditions.find((c) =>
+      msg === c.value.toLowerCase() || msg === c.value
+    );
     const handle = matched ? matched.value : 'default';
     nextNode = getNextNode(edges, nodes, currentNode.id, handle);
   }
 
   if (!nextNode) { await endSession(session.id); return false; }
 
-  await updateSession(session.id, nextNode.id);
-  await executeFromNode(flow, session, nextNode, accessToken, phoneNumberId, contactPhone, workspaceId);
+  const contactRows = await query<RowDataPacket[]>('SELECT name FROM contacts WHERE id = ? LIMIT 1', [contactId]);
+  const contactName = (contactRows[0]?.name as string) || '';
 
+  await updateSessionNode(session.id, nextNode.id, session.variables);
+  await executeFromNode(flow, session, nextNode, accessToken, phoneNumberId, contactPhone, workspaceId, userMessage, contactName);
   return true;
 }
