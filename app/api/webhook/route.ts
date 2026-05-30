@@ -8,6 +8,7 @@ import { parseWebhookBody, sendTextMessage, markAsRead, TemplateStatusUpdate } f
 import { normalizePhone, utcNow, unixToUtc } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { emitSSE } from '@/lib/sse';
+import { tryResumeFlow, tryStartFlow } from '@/lib/flow-engine';
 
 // ---- GET: Verify webhook with Meta ----
 export async function GET(req: NextRequest) {
@@ -237,8 +238,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ---- Chatbot: match rules ----
-    if (msg.type === 'text' && msg.text) {
+    // ---- Flow Engine: resume active session OR start new flow ----
+    if (msg.type === 'text' && msg.text && workspaceAccessToken && phoneNumberId) {
+      const resumed = await tryResumeFlow(workspaceId, contactId, phone, msg.text, workspaceAccessToken, phoneNumberId).catch(() => false);
+      if (!resumed) {
+        const started = await tryStartFlow(workspaceId, contactId, phone, msg.text, workspaceAccessToken, phoneNumberId).catch(() => false);
+        // Only run chatbot rules if no flow matched
+        if (!started) {
+          await processChatbot(workspaceId, contactId, msg.text, phoneNumberId);
+        }
+      }
+    } else if (msg.type === 'text' && msg.text) {
       await processChatbot(workspaceId, contactId, msg.text, phoneNumberId);
     }
   }
