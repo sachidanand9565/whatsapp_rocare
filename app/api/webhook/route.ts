@@ -239,17 +239,16 @@ export async function POST(req: NextRequest) {
     }
 
     // ---- Flow Engine: resume active session OR start new flow ----
-    if (msg.type === 'text' && msg.text && workspaceAccessToken && phoneNumberId) {
-      const resumed = await tryResumeFlow(workspaceId, contactId, phone, msg.text, workspaceAccessToken, phoneNumberId).catch(() => false);
+    // Runs regardless of chatbot webhook status — access_token fetched inside flow engine
+    if (msg.type === 'text' && msg.text) {
+      const token = workspaceAccessToken || '';
+      const resumed = await tryResumeFlow(workspaceId, contactId, phone, msg.text, token, phoneNumberId || '').catch(() => false);
       if (!resumed) {
-        const started = await tryStartFlow(workspaceId, contactId, phone, msg.text, workspaceAccessToken, phoneNumberId).catch(() => false);
-        // Only run chatbot rules if no flow matched
+        const started = await tryStartFlow(workspaceId, contactId, phone, msg.text, token, phoneNumberId || '').catch(() => false);
         if (!started) {
-          await processChatbot(workspaceId, contactId, msg.text, phoneNumberId);
+          await processChatbot(workspaceId, contactId, msg.text, phoneNumberId || '');
         }
       }
-    } else if (msg.type === 'text' && msg.text) {
-      await processChatbot(workspaceId, contactId, msg.text, phoneNumberId);
     }
   }
 
