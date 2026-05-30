@@ -78,17 +78,29 @@ export default function HistoryPage() {
   const [selected, setSelected]     = useState<Contact | null>(null);
   const [messages, setMessages]     = useState<Message[]>([]);
   const [search, setSearch]         = useState('');
-  const [actioning, setActioning]   = useState(false);
+  const [searching, setSearching]   = useState(false);
   const [templates, setTemplates]   = useState<{ id: number; name: string; language: string; body_text: string; status: string }[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [sendingTpl, setSendingTpl] = useState<number | null>(null);
   const bottomRef                   = useRef<HTMLDivElement>(null);
+  const debounceRef                 = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const loadContacts = useCallback(() => {
-    apiFetch('/api/contacts?limit=200&chatStatus=history').then((r) => setContacts(r.data?.data || []));
+  const loadContacts = useCallback((q = '') => {
+    setSearching(true);
+    const qs = q.trim() ? `&search=${encodeURIComponent(q.trim())}` : '';
+    apiFetch(`/api/contacts?limit=500&chatStatus=history${qs}`)
+      .then((r) => setContacts(r.data?.data || []))
+      .finally(() => setSearching(false));
   }, []);
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
+
+  // Debounced server-side search — waits 400ms after user stops typing
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => loadContacts(search), 400);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [search, loadContacts]);
 
   useEffect(() => {
     if (!selected) return;
@@ -122,10 +134,7 @@ export default function HistoryPage() {
     }
   }
 
-  const s = search.toLowerCase();
-  const filtered = contacts.filter((c) =>
-    (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)
-  );
+  const filtered = contacts;
   const avatarColors = ['bg-orange-400', 'bg-purple-500', 'bg-blue-500', 'bg-green-500', 'bg-red-400'];
   const getColor = (ch: string) => avatarColors[ch.charCodeAt(0) % avatarColors.length];
 
@@ -136,9 +145,11 @@ export default function HistoryPage() {
       <div className="w-72 border-r border-gray-200 flex flex-col flex-shrink-0">
         <div className="p-3 border-b border-gray-100">
           <div className="relative">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            {searching
+              ? <Loader2 size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 animate-spin" />
+              : <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />}
             <input value={search} onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search history..." className="input pl-9 text-sm py-2" />
+              placeholder="Search by name or phone..." className="input pl-9 text-sm py-2" />
           </div>
         </div>
         <div className="px-4 py-2 border-b border-gray-100 flex items-center gap-2">
