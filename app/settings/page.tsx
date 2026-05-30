@@ -6,7 +6,7 @@ import {
   Webhook, RefreshCw, Plus, Trash2, ToggleLeft, ToggleRight,
   Facebook, ChevronRight, X, Phone, Loader2, Key, RotateCcw, Zap,
   MessageSquare, Image, FileText, Music, MapPin, MousePointerClick, PauseCircle,
-  Database, Globe,
+  Database, Globe, User, Lock,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -250,7 +250,59 @@ export default function SettingsPage() {
   const [workspaceId, setWorkspaceId] = useState<number | null>(null);
 
   // Sidebar navigation
-  const [activeSection, setActiveSection] = useState<'auth' | 'developer' | 'campaigns' | 'crm'>('auth');
+  const [activeSection, setActiveSection] = useState<'profile' | 'auth' | 'developer' | 'campaigns' | 'crm'>('profile');
+
+  // ── My Profile state ─────────────────────────────────────────
+  const [profileForm, setProfileForm] = useState({ name: '', email: '', phone: '' });
+  const [profileLoaded, setProfileLoaded] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [pwdForm, setPwdForm] = useState({ current: '', next: '', confirm: '' });
+  const [savingPwd, setSavingPwd] = useState(false);
+  const [showCurPwd, setShowCurPwd]   = useState(false);
+  const [showNextPwd, setShowNextPwd] = useState(false);
+
+  useEffect(() => {
+    if (activeSection !== 'profile' || profileLoaded) return;
+    apiFetch('/api/profile').then((r) => {
+      if (r.data) {
+        setProfileForm({ name: r.data.name || '', email: r.data.email || '', phone: r.data.phone || '' });
+        setProfileLoaded(true);
+      }
+    });
+  }, [activeSection, profileLoaded]);
+
+  async function saveProfile() {
+    setSavingProfile(true);
+    try {
+      await apiFetch('/api/profile', {
+        method: 'PUT',
+        body: JSON.stringify({ name: profileForm.name, email: profileForm.email, phone: profileForm.phone }),
+      });
+      toast.success('Profile updated!');
+    } catch { toast.error('Failed to save'); }
+    finally { setSavingProfile(false); }
+  }
+
+  async function changePassword() {
+    if (!pwdForm.current) { toast.error('Enter current password'); return; }
+    if (!pwdForm.next)    { toast.error('Enter new password'); return; }
+    if (pwdForm.next !== pwdForm.confirm) { toast.error('Passwords do not match'); return; }
+    setSavingPwd(true);
+    try {
+      const r = await apiFetch('/api/profile', {
+        method: 'PUT',
+        body: JSON.stringify({ current_password: pwdForm.current, new_password: pwdForm.next }),
+      });
+      // Replace token so current session stays logged in
+      if (r.data?.token) {
+        localStorage.setItem('token', r.data.token);
+      }
+      setPwdForm({ current: '', next: '', confirm: '' });
+      toast.success('Password changed — all other sessions logged out');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    } finally { setSavingPwd(false); }
+  }
 
   // CRM integrations
   const [crmList, setCrmList]         = useState<CRMIntegration[]>([]);
@@ -647,7 +699,12 @@ export default function SettingsPage() {
         <div className="p-4 pt-5">
           <p className="text-xs font-bold text-gray-800 px-3 pb-4">Settings</p>
 
-          <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider px-3 pb-1">General</p>
+          <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider px-3 pb-1">Account</p>
+          <button onClick={() => setActiveSection('profile')} className={navBtn('profile')}>
+            <User size={14} /> My Profile
+          </button>
+
+          <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider px-3 pt-4 pb-1">General</p>
           <button onClick={() => setActiveSection('auth')} className={navBtn('auth')}>
             <Key size={14} /> Auth &amp; WhatsApp
           </button>
@@ -669,6 +726,115 @@ export default function SettingsPage() {
 
       {/* ── Content Area ── */}
       <div className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-6">
+
+        {/* ─── PROFILE SECTION ─── */}
+        {activeSection === 'profile' && (
+          <div className="space-y-4">
+            <h2 className="text-lg font-bold text-gray-900">My Profile</h2>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+
+            {/* Personal Details */}
+            <div className="card space-y-4">
+              <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+                <User size={18} className="text-whatsapp-teal" />
+                <p className="font-semibold text-gray-800">Personal Details</p>
+              </div>
+              <div>
+                <label className="form-label">Full Name</label>
+                <input
+                  value={profileForm.name}
+                  onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
+                  className="input" placeholder="Your name"
+                />
+              </div>
+              <div>
+                <label className="form-label">Email</label>
+                <input
+                  type="email"
+                  value={profileForm.email}
+                  readOnly
+                  className="input bg-gray-50 text-gray-400 cursor-not-allowed"
+                />
+                <p className="text-xs text-gray-400 mt-1">Email cannot be changed</p>
+              </div>
+              <div>
+                <label className="form-label">Phone (optional)</label>
+                <input
+                  value={profileForm.phone}
+                  onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })}
+                  className="input" placeholder="+91 9876543210"
+                />
+              </div>
+              <button
+                onClick={saveProfile}
+                disabled={savingProfile}
+                className="btn-primary flex items-center gap-2 disabled:opacity-50">
+                {savingProfile ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Save Details
+              </button>
+            </div>
+
+            {/* Change password */}
+            <div className="card space-y-4">
+              <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+                <Lock size={18} className="text-whatsapp-teal" />
+                <div>
+                  <p className="font-semibold text-gray-800">Change Password</p>
+                  <p className="text-xs text-gray-400 mt-0.5">All other logged-in sessions will be signed out</p>
+                </div>
+              </div>
+              <div>
+                <label className="form-label">Current Password</label>
+                <div className="relative">
+                  <input
+                    type={showCurPwd ? 'text' : 'password'}
+                    value={pwdForm.current}
+                    onChange={(e) => setPwdForm({ ...pwdForm, current: e.target.value })}
+                    className="input pr-10" placeholder="Enter current password"
+                  />
+                  <button type="button" onClick={() => setShowCurPwd(v => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                    {showCurPwd ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="form-label">New Password</label>
+                <div className="relative">
+                  <input
+                    type={showNextPwd ? 'text' : 'password'}
+                    value={pwdForm.next}
+                    onChange={(e) => setPwdForm({ ...pwdForm, next: e.target.value })}
+                    className="input pr-10" placeholder="Min. 6 characters"
+                  />
+                  <button type="button" onClick={() => setShowNextPwd(v => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                    {showNextPwd ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="form-label">Confirm New Password</label>
+                <input
+                  type="password"
+                  value={pwdForm.confirm}
+                  onChange={(e) => setPwdForm({ ...pwdForm, confirm: e.target.value })}
+                  className="input" placeholder="Re-enter new password"
+                />
+              </div>
+              <button
+                onClick={changePassword}
+                disabled={savingPwd || !pwdForm.current || !pwdForm.next || !pwdForm.confirm}
+                className="btn-primary flex items-center gap-2 disabled:opacity-50">
+                {savingPwd ? <Loader2 size={14} className="animate-spin" /> : <Lock size={14} />}
+                Change Password
+              </button>
+            </div>
+
+            </div>{/* end grid */}
+          </div>
+        )}
 
         {/* ─── AUTH SECTION ─── */}
         {activeSection === 'auth' && (<>

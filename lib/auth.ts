@@ -16,6 +16,14 @@ export interface JWTPayload {
   workspaceId: number;
 }
 
+// ---- In-memory token invalidation (password change force-logout) ----
+// userId -> unix timestamp: tokens issued BEFORE this time are rejected
+const invalidatedAt = new Map<number, number>();
+
+export function invalidateUserTokens(userId: number): void {
+  invalidatedAt.set(userId, Math.floor(Date.now() / 1000));
+}
+
 // ---- Token generation ----
 export function signToken(payload: JWTPayload): string {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES } as jwt.SignOptions);
@@ -40,7 +48,11 @@ export function authenticate(req: NextRequest): JWTPayload | null {
   try {
     const token = extractToken(req);
     if (!token) return null;
-    return verifyToken(token);
+    const decoded = jwt.verify(token, JWT_SECRET) as JWTPayload & { iat: number };
+    // Check if token was issued before a password-change invalidation
+    const minIat = invalidatedAt.get(decoded.userId);
+    if (minIat && decoded.iat < minIat) return null;
+    return decoded;
   } catch {
     return null;
   }

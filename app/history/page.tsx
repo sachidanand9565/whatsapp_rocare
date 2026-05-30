@@ -122,7 +122,10 @@ export default function HistoryPage() {
     }
   }
 
-  const filtered = contacts.filter((c) => (c.name || c.phone).toLowerCase().includes(search.toLowerCase()));
+  const s = search.toLowerCase();
+  const filtered = contacts.filter((c) =>
+    (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)
+  );
   const avatarColors = ['bg-orange-400', 'bg-purple-500', 'bg-blue-500', 'bg-green-500', 'bg-red-400'];
   const getColor = (ch: string) => avatarColors[ch.charCodeAt(0) % avatarColors.length];
 
