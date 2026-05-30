@@ -239,16 +239,24 @@ export async function POST(req: NextRequest) {
     }
 
     // ---- Flow Engine: resume active session OR start new flow ----
-    // Runs regardless of chatbot webhook status — access_token fetched inside flow engine
+    // Handles both text messages and interactive button clicks
     if (msg.type === 'text' && msg.text) {
-      const token = workspaceAccessToken || '';
-      const resumed = await tryResumeFlow(workspaceId, contactId, phone, msg.text, token, phoneNumberId || '').catch(() => false);
+      const token   = workspaceAccessToken || '';
+      const pnId    = phoneNumberId || '';
+      const resumed = await tryResumeFlow(workspaceId, contactId, phone, msg.text, token, pnId).catch(() => false);
       if (!resumed) {
-        const started = await tryStartFlow(workspaceId, contactId, phone, msg.text, token, phoneNumberId || '').catch(() => false);
+        const started = await tryStartFlow(workspaceId, contactId, phone, msg.text, token, pnId).catch(() => false);
         if (!started) {
-          await processChatbot(workspaceId, contactId, msg.text, phoneNumberId || '');
+          await processChatbot(workspaceId, contactId, msg.text, pnId);
         }
       }
+    } else if (msg.type === 'button' && msg.button) {
+      // User clicked an interactive button — resume active flow session with button payload
+      const token        = workspaceAccessToken || '';
+      const pnId         = phoneNumberId || '';
+      const buttonText   = msg.button.text   || '';
+      const buttonPayload = msg.button.payload || buttonText;
+      await tryResumeFlow(workspaceId, contactId, phone, buttonText, token, pnId, buttonPayload).catch(() => {});
     }
   }
 

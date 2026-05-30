@@ -1,7 +1,7 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { apiFetch } from '@/hooks/useApi';
-import { Plus, Trash2, ToggleLeft, ToggleRight, GitBranch, Pencil } from 'lucide-react';
+import { Plus, Trash2, ToggleLeft, ToggleRight, GitBranch, Pencil, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useRouter } from 'next/navigation';
 
@@ -27,6 +27,9 @@ export default function FlowsPage() {
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving]     = useState(false);
   const [form, setForm]         = useState({ name: '', trigger_type: 'keyword', trigger_value: '' });
+  const [keywords, setKeywords] = useState<string[]>([]);
+  const [kwInput, setKwInput]   = useState('');
+  const kwInputRef              = useRef<HTMLInputElement>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -35,16 +38,29 @@ export default function FlowsPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  function addKeyword(val: string) {
+    const kw = val.trim().toLowerCase();
+    if (kw && !keywords.includes(kw)) setKeywords((prev) => [...prev, kw]);
+    setKwInput('');
+  }
+
   async function createFlow(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     try {
+      // Combine tag-input keywords OR single input
+      const triggerVal = form.trigger_type === 'any'
+        ? null
+        : keywords.length > 0
+          ? keywords.join(', ')
+          : form.trigger_value || null;
+
       const r = await apiFetch('/api/flows', {
         method: 'POST',
         body: JSON.stringify({
           name: form.name,
           trigger_type: form.trigger_type,
-          trigger_value: form.trigger_value || null,
+          trigger_value: triggerVal,
           nodes: [],
           edges: [],
         }),
@@ -52,7 +68,7 @@ export default function FlowsPage() {
       toast.success('Flow created!');
       setShowModal(false);
       setForm({ name: '', trigger_type: 'keyword', trigger_value: '' });
-      // Open builder immediately
+      setKeywords([]);
       router.push(`/flows/${r.data.id}`);
     } catch { toast.error('Failed to create flow'); }
     finally { setSaving(false); }
@@ -122,12 +138,16 @@ export default function FlowsPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <span className="text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded-full font-medium">
-                      {TRIGGER_LABELS[flow.trigger_type] || flow.trigger_type}
-                    </span>
-                    {flow.trigger_value && (
-                      <span className="ml-2 text-xs text-gray-500 font-mono">&ldquo;{flow.trigger_value}&rdquo;</span>
-                    )}
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium flex-shrink-0">
+                        {TRIGGER_LABELS[flow.trigger_type] || flow.trigger_type}
+                      </span>
+                      {flow.trigger_value && flow.trigger_value.split(',').map((k) => k.trim()).filter(Boolean).map((kw) => (
+                        <span key={kw} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-mono">
+                          {kw}
+                        </span>
+                      ))}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <button onClick={() => toggleFlow(flow)}>
@@ -188,13 +208,41 @@ export default function FlowsPage() {
               </div>
               {form.trigger_type !== 'any' && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Trigger Value</label>
-                  <input
-                    value={form.trigger_value}
-                    onChange={(e) => setForm({ ...form, trigger_value: e.target.value })}
-                    placeholder={form.trigger_type === 'keyword' ? 'e.g. hi, hello, order' : 'e.g. /start'}
-                    className="input"
-                  />
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Keywords
+                    <span className="text-gray-400 font-normal ml-1">(Enter ya comma dabao)</span>
+                  </label>
+                  {/* Tag input */}
+                  <div
+                    onClick={() => kwInputRef.current?.focus()}
+                    className="min-h-[42px] flex flex-wrap gap-1.5 p-2 border border-gray-200 rounded-lg cursor-text focus-within:ring-1 focus-within:ring-whatsapp-green">
+                    {keywords.map((kw) => (
+                      <span key={kw} className="inline-flex items-center gap-1 bg-teal-100 text-teal-800 text-xs font-medium px-2 py-1 rounded-full">
+                        {kw}
+                        <button type="button" onClick={() => setKeywords((prev) => prev.filter((k) => k !== kw))}
+                          className="hover:text-red-600"><X size={10}/></button>
+                      </span>
+                    ))}
+                    <input
+                      ref={kwInputRef}
+                      value={kwInput}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val.endsWith(',')) { addKeyword(val.slice(0,-1)); }
+                        else { setKwInput(val); }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); addKeyword(kwInput); }
+                        if (e.key === 'Backspace' && !kwInput && keywords.length) {
+                          setKeywords((prev) => prev.slice(0,-1));
+                        }
+                      }}
+                      onBlur={() => { if (kwInput.trim()) addKeyword(kwInput); }}
+                      placeholder={keywords.length ? '' : form.trigger_type === 'keyword' ? 'hi, hello, order…' : '/start, /help…'}
+                      className="flex-1 min-w-[120px] outline-none text-sm bg-transparent"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">Multiple keywords = flow in se kisi bhi message pe trigger hoga</p>
                 </div>
               )}
               <div className="flex gap-3 pt-2">

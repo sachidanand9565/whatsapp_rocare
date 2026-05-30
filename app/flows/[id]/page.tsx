@@ -14,12 +14,13 @@ import toast from 'react-hot-toast';
 import {
   MessageSquare, Clock, GitBranch, ArrowRightLeft, XCircle,
   Save, ArrowLeft, Plus, Trash2, X, Loader2, HelpCircle,
-  Zap, Globe, Database, UserCheck, Timer, LayoutTemplate,
+  Zap, Globe, Database, UserCheck, Timer, LayoutTemplate, Settings,
 } from 'lucide-react';
 
 // ── Node type configs ─────────────────────────────────────────
 const NODE_TYPES_META = {
   message:        { label: 'Message',        color: 'bg-green-500',   icon: MessageSquare,  border: 'border-green-400',   desc: 'Text message bhejo' },
+  button_message: { label: 'Buttons',        color: 'bg-emerald-600', icon: LayoutTemplate, border: 'border-emerald-500', desc: 'WhatsApp clickable buttons bhejo' },
   wait:           { label: 'Wait',           color: 'bg-yellow-500',  icon: Clock,          border: 'border-yellow-400',  desc: 'User reply ka wait karo' },
   condition:      { label: 'Condition',      color: 'bg-blue-500',    icon: GitBranch,      border: 'border-blue-400',    desc: 'Reply se branch karo' },
   set_variable:   { label: 'Save Reply',     color: 'bg-teal-500',    icon: Database,       border: 'border-teal-400',    desc: 'User reply variable mein save karo' },
@@ -86,6 +87,15 @@ function FlowNode({ data, selected }: NodeProps) {
       </div>
       <div className="px-3 py-2 text-xs text-gray-600 min-h-[32px]">
         {data.type === 'message'   && <p className="line-clamp-3 whitespace-pre-wrap">{data.text || <span className="text-gray-300 italic">Click to add message…</span>}</p>}
+        {data.type === 'button_message' && (
+          <div className="space-y-1">
+            <p className="line-clamp-2 text-gray-700">{data.body_text || <span className="text-gray-300 italic">Click to add message…</span>}</p>
+            {(data.buttons || []).map((b: { id: string; title: string }, i: number) => (
+              <div key={i} className="border border-emerald-300 text-emerald-700 rounded px-2 py-0.5 text-[10px] font-medium text-center bg-emerald-50">{b.title || '...'}</div>
+            ))}
+            {!(data.buttons?.length) && <div className="border border-dashed border-gray-200 rounded px-2 py-0.5 text-[10px] text-gray-300 text-center">Buttons yahan dikhenge</div>}
+          </div>
+        )}
         {data.type === 'wait'      && <p className="text-gray-400 italic">⏳ User reply ka wait…</p>}
         {data.type === 'set_variable' && <p className="text-teal-600 font-mono">save → <strong>{data.variable_name || '?'}</strong></p>}
         {data.type === 'api_call'  && <p className="text-purple-600 truncate font-mono text-[10px]">{data.method||'POST'} {data.url||'...'}</p>}
@@ -136,6 +146,10 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
   const Icon = meta.icon;
 
   const [text,           setText]          = useState(node.data.text||'');
+  const [btnBodyText,    setBtnBodyText]   = useState(node.data.body_text||'');
+  const [btnHeaderText,  setBtnHeaderText] = useState(node.data.header_text||'');
+  const [btnFooterText,  setBtnFooterText] = useState(node.data.footer_text||'');
+  const [buttons,        setButtons]       = useState<{ id: string; title: string }[]>(node.data.buttons||[]);
   const [transferNote,   setTransferNote]  = useState(node.data.transferNote||'');
   const [conditions,     setConditions]    = useState<{value:string;label:string}[]>(node.data.conditions||[]);
   const [varName,        setVarName]       = useState(node.data.variable_name||'');
@@ -154,6 +168,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
     const base = { type: node.data.type };
     const updates: Record<string,unknown> = { ...base };
     if (type==='message')        { updates.text = text; }
+    if (type==='button_message') { updates.body_text=btnBodyText; updates.header_text=btnHeaderText; updates.footer_text=btnFooterText; updates.buttons=buttons; }
     if (type==='transfer')       { updates.transferNote = transferNote; }
     if (type==='condition')      { updates.conditions = conditions; }
     if (type==='set_variable')   { updates.variable_name = varName; }
@@ -165,7 +180,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
     onClose();
   }
 
-  const readOnly = type==='wait'||type==='end';
+  const readOnly = type==='wait' || type==='end';
 
   return (
     <div className="w-80 bg-white border-l border-gray-200 flex flex-col h-full shadow-xl">
@@ -189,6 +204,61 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
             {['{{user_message}}','{{contact_phone}}','{{contact_name}}','{{koi_bhi_variable}}'].map(v=>(
               <p key={v} className="font-mono text-green-700">{v}</p>
             ))}
+          </div>
+        </>}
+
+        {/* BUTTON MESSAGE */}
+        {type==='button_message' && <>
+          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+            <p className="font-semibold text-emerald-800 mb-1">🔘 Button Message Node</p>
+            <p className="text-emerald-700">WhatsApp ke clickable buttons bhejta hai (max 3). User button dabaye to condition se match hoga.</p>
+          </div>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Header (optional)</label>
+            <input value={btnHeaderText} onChange={e=>setBtnHeaderText(e.target.value)}
+              placeholder="e.g. RO Care India" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-400"/>
+          </div>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Message Body *</label>
+            <textarea value={btnBodyText} onChange={e=>setBtnBodyText(e.target.value)} rows={3}
+              placeholder="Kya help chahiye? Neeche se select karo:"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-400 resize-none"/>
+          </div>
+          <div className="space-y-2">
+            <label className="block font-semibold text-gray-600">Buttons (max 3)</label>
+            {buttons.map((b, i) => (
+              <div key={i} className="flex gap-2 items-center bg-gray-50 rounded-lg p-2">
+                <div className="flex-1 space-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-gray-400 w-8 flex-shrink-0 text-[11px]">ID:</span>
+                    <input value={b.id} onChange={e=>{const n=[...buttons];n[i]={...n[i],id:e.target.value};setButtons(n);}}
+                      placeholder="btn_1" className="flex-1 border border-gray-200 rounded px-2 py-1 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-emerald-400"/>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-gray-400 w-8 flex-shrink-0 text-[11px]">Text:</span>
+                    <input value={b.title} onChange={e=>{const n=[...buttons];n[i]={...n[i],title:e.target.value.slice(0,20)};setButtons(n);}}
+                      placeholder="Book Service (max 20)" maxLength={20}
+                      className="flex-1 border border-gray-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-emerald-400"/>
+                  </div>
+                </div>
+                <button onClick={()=>setButtons(buttons.filter((_,j)=>j!==i))} className="text-gray-300 hover:text-red-500"><Trash2 size={12}/></button>
+              </div>
+            ))}
+            {buttons.length < 3 && (
+              <button onClick={()=>setButtons([...buttons,{id:`btn_${buttons.length+1}`,title:''}])}
+                className="flex items-center gap-1 text-emerald-600 hover:text-emerald-800 font-medium text-xs">
+                <Plus size={11}/> Button Add Karo
+              </button>
+            )}
+          </div>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Footer (optional)</label>
+            <input value={btnFooterText} onChange={e=>setBtnFooterText(e.target.value)}
+              placeholder="e.g. Powered by Limbu.ai" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-400"/>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5">
+            <p className="font-semibold text-blue-800 mb-1 text-[11px]">💡 Condition se connect karo</p>
+            <p className="text-blue-700 text-[11px]">Button ID ko Condition node ke "User reply" value se match karo. User jab button dabayega to wo ID match hogi.</p>
           </div>
         </>}
 
@@ -462,10 +532,23 @@ export default function FlowBuilderPage() {
   const [showHelp, setShowHelp]          = useState(false);
   const wrapper                          = useRef<HTMLDivElement>(null);
 
+  // Flow settings (trigger edit)
+  const [showSettings, setShowSettings]     = useState(false);
+  const [settingsTriggerType, setSettingsTriggerType] = useState('keyword');
+  const [settingsKeywords, setSettingsKeywords]       = useState<string[]>([]);
+  const [settingsKwInput, setSettingsKwInput]         = useState('');
+  const [settingsName, setSettingsName]               = useState('');
+  const [savingSettings, setSavingSettings]           = useState(false);
+  const settingsKwRef                                 = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     apiFetch(`/api/flows/${flowId}`).then((r) => {
       const f = r.data;
       setFlowName(f.name || '');
+      setSettingsName(f.name || '');
+      setSettingsTriggerType(f.trigger_type || 'keyword');
+      const kws = (f.trigger_value || '').split(',').map((k: string) => k.trim()).filter(Boolean);
+      setSettingsKeywords(kws);
       setNodes((f.nodes||[]).map((n:Node) => ({ ...n, type:'flowNode' })));
       setEdges(f.edges||[]);
       if (!(f.nodes||[]).length) setShowHelp(true);
@@ -480,7 +563,7 @@ export default function FlowBuilderPage() {
     setNodes(nds => [...nds, {
       id: uid(), type:'flowNode',
       position: { x: 220 + Math.random()*80, y: 80 + nds.length*140 },
-      data: { type, text:'', conditions:[], transferNote:'', variable_name:'', url:'', method:'POST', headers:'', body:'', seconds:2, template_name:'', language:'en', contact_field:'name', field_value:'' },
+      data: { type, text:'', conditions:[], transferNote:'', variable_name:'', url:'', method:'POST', headers:'', body:'', seconds:2, template_name:'', language:'en', contact_field:'name', field_value:'', body_text:'', header_text:'', footer_text:'', buttons:[] },
     }]);
   }
 
@@ -503,6 +586,33 @@ export default function FlowBuilderPage() {
     setSelectedNode(null);
   }
 
+  function addSettingsKeyword(val: string) {
+    const kw = val.trim().toLowerCase();
+    if (kw && !settingsKeywords.includes(kw)) setSettingsKeywords(p => [...p, kw]);
+    setSettingsKwInput('');
+  }
+
+  async function saveSettings() {
+    setSavingSettings(true);
+    try {
+      const triggerVal = settingsTriggerType === 'any'
+        ? null
+        : settingsKeywords.join(', ') || null;
+      await apiFetch(`/api/flows/${flowId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: settingsName,
+          trigger_type: settingsTriggerType,
+          trigger_value: triggerVal,
+        }),
+      });
+      setFlowName(settingsName);
+      setShowSettings(false);
+      toast.success('Settings saved!');
+    } catch { toast.error('Failed to save settings'); }
+    finally { setSavingSettings(false); }
+  }
+
   async function save() {
     setSaving(true);
     try {
@@ -519,7 +629,7 @@ export default function FlowBuilderPage() {
     </div>
   );
 
-  const rightPanel = showHelp ? 'help' : selectedNode ? 'config' : null;
+  const rightPanel = showSettings ? 'settings' : showHelp ? 'help' : selectedNode ? 'config' : null;
 
   return (
     <div className="h-[calc(100vh-5rem)] flex flex-col -mx-4 lg:-mx-6 -mt-4 lg:-mt-6">
@@ -552,7 +662,12 @@ export default function FlowBuilderPage() {
           })}
         </div>
 
-        <button onClick={()=>{setShowHelp(v=>!v);setSelectedNode(null);}}
+        <button onClick={()=>{setShowSettings(v=>!v);setSelectedNode(null);setShowHelp(false);}}
+          title="Flow Settings — keywords, name edit karo"
+          className={`p-1.5 rounded-lg transition-colors flex-shrink-0 ${showSettings?'bg-orange-50 text-orange-600':'text-gray-400 hover:bg-gray-100'}`}>
+          <Settings size={16}/>
+        </button>
+        <button onClick={()=>{setShowHelp(v=>!v);setSelectedNode(null);setShowSettings(false);}}
           className={`p-1.5 rounded-lg transition-colors flex-shrink-0 ${showHelp?'bg-teal-50 text-whatsapp-teal':'text-gray-400 hover:bg-gray-100'}`}>
           <HelpCircle size={16}/>
         </button>
@@ -607,6 +722,77 @@ export default function FlowBuilderPage() {
           <ConfigPanel node={selectedNode} onUpdate={updateNodeData} onDelete={deleteNode} onClose={()=>setSelectedNode(null)}/>
         )}
         {rightPanel==='help' && <HelpPanel onClose={()=>setShowHelp(false)}/>}
+
+        {/* Settings Panel */}
+        {rightPanel==='settings' && (
+          <div className="w-80 bg-white border-l border-gray-200 flex flex-col h-full shadow-xl">
+            <div className="bg-orange-500 text-white px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-2"><Settings size={15}/><span className="font-semibold text-sm">Flow Settings</span></div>
+              <button onClick={()=>setShowSettings(false)} className="opacity-80 hover:opacity-100"><X size={16}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
+              <div>
+                <label className="block font-semibold text-gray-600 mb-1">Flow Name</label>
+                <input value={settingsName} onChange={e=>setSettingsName(e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-orange-400"/>
+              </div>
+              <div>
+                <label className="block font-semibold text-gray-600 mb-1">Trigger Type</label>
+                <select value={settingsTriggerType} onChange={e=>{ setSettingsTriggerType(e.target.value); setSettingsKeywords([]); }}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                  <option value="keyword">Contains keyword</option>
+                  <option value="starts_with">Starts with</option>
+                  <option value="any">Any message</option>
+                </select>
+              </div>
+              {settingsTriggerType !== 'any' && (
+                <div>
+                  <label className="block font-semibold text-gray-600 mb-1">
+                    Keywords
+                    <span className="text-gray-400 font-normal ml-1">(Enter ya comma)</span>
+                  </label>
+                  <div
+                    onClick={()=>settingsKwRef.current?.focus()}
+                    className="min-h-[42px] flex flex-wrap gap-1.5 p-2 border border-gray-200 rounded-lg cursor-text focus-within:ring-1 focus-within:ring-orange-400">
+                    {settingsKeywords.map((kw) => (
+                      <span key={kw} className="inline-flex items-center gap-1 bg-orange-100 text-orange-800 text-xs font-medium px-2 py-1 rounded-full">
+                        {kw}
+                        <button type="button" onClick={()=>setSettingsKeywords(p=>p.filter(k=>k!==kw))}
+                          className="hover:text-red-600"><X size={10}/></button>
+                      </span>
+                    ))}
+                    <input
+                      ref={settingsKwRef}
+                      value={settingsKwInput}
+                      onChange={e=>{
+                        const val = e.target.value;
+                        if (val.endsWith(',')) { addSettingsKeyword(val.slice(0,-1)); }
+                        else { setSettingsKwInput(val); }
+                      }}
+                      onKeyDown={e=>{
+                        if (e.key==='Enter') { e.preventDefault(); addSettingsKeyword(settingsKwInput); }
+                        if (e.key==='Backspace' && !settingsKwInput && settingsKeywords.length) {
+                          setSettingsKeywords(p=>p.slice(0,-1));
+                        }
+                      }}
+                      onBlur={()=>{ if(settingsKwInput.trim()) addSettingsKeyword(settingsKwInput); }}
+                      placeholder={settingsKeywords.length ? '' : 'hi, hii, hello…'}
+                      className="flex-1 min-w-[100px] outline-none text-sm bg-transparent"
+                    />
+                  </div>
+                  <p className="text-gray-400 mt-1">In keywords mein se koi bhi aane pe flow trigger hoga</p>
+                </div>
+              )}
+            </div>
+            <div className="p-4 border-t border-gray-100">
+              <button onClick={saveSettings} disabled={savingSettings}
+                className="w-full btn-primary flex items-center justify-center gap-2 disabled:opacity-50">
+                {savingSettings ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>}
+                Save Settings
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

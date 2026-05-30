@@ -37,6 +37,40 @@ export async function sendTextMessage(
   return data; // { messages: [{ id: 'wamid...' }] }
 }
 
+// ---- Send interactive button message (max 3 buttons) ----
+export async function sendButtonMessage(
+  accessToken:   string,
+  phoneNumberId: string,
+  to:            string,
+  bodyText:      string,
+  buttons:       { id: string; title: string }[],
+  headerText?:   string,
+  footerText?:   string,
+) {
+  const client = createWAClient(accessToken);
+  const interactive: Record<string, unknown> = {
+    type: 'button',
+    body: { text: bodyText },
+    action: {
+      buttons: buttons.slice(0, 3).map((b) => ({
+        type:  'reply',
+        reply: { id: b.id.slice(0, 256), title: b.title.slice(0, 20) },
+      })),
+    },
+  };
+  if (headerText) interactive.header = { type: 'text', text: headerText };
+  if (footerText) interactive.footer = { text: footerText };
+
+  const { data } = await client.post(`/${phoneNumberId}/messages`, {
+    messaging_product: 'whatsapp',
+    recipient_type:    'individual',
+    to,
+    type:              'interactive',
+    interactive,
+  });
+  return data;
+}
+
 // ---- Send template message ----
 export async function sendTemplateMessage(
   accessToken:   string,

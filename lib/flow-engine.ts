@@ -4,8 +4,9 @@
  *
  * Node types:
  *   message        — send text to user
- *   wait           — pause, wait for user reply
- *   condition      — branch based on user reply
+ *   button_message — send WhatsApp interactive button message (max 3 buttons)
+ *   wait           — pause, wait for user reply / button click
+ *   condition      — branch based on user reply or button click
  *   set_variable   — save user reply into a named variable
  *   api_call       — HTTP request to external URL with {{variable}} support
  *   update_contact — update contact field in DB
@@ -15,7 +16,7 @@
  *   end            — end the flow
  */
 import { query, insert, execute } from '@/lib/db';
-import { sendTextMessage, sendTemplateMessage } from '@/lib/whatsapp';
+import { sendTextMessage, sendTemplateMessage, sendButtonMessage } from '@/lib/whatsapp';
 import { utcNow } from '@/lib/utils';
 import { emitSSE } from '@/lib/sse';
 import { RowDataPacket } from 'mysql2';
@@ -23,7 +24,7 @@ import { RowDataPacket } from 'mysql2';
 // ── Types ────────────────────────────────────────────────────────
 
 export type FlowNodeType =
-  | 'message' | 'wait' | 'condition'
+  | 'message' | 'button_message' | 'wait' | 'condition'
   | 'set_variable' | 'api_call' | 'update_contact'
   | 'delay' | 'template' | 'transfer' | 'end';
 
@@ -173,6 +174,25 @@ async function executeFromNode(
     const nodeId = node.id;
 
     switch (node.type) {
+
+        // ── Button Message: WhatsApp interactive buttons ──────────
+      case 'button_message': {
+        const bodyText   = substituteVars(node.data.body_text || '', vars, extras);
+        const headerText = node.data.header_text ? substituteVars(node.data.header_text, vars, extras) : undefined;
+        const footerText = node.data.footer_text ? substituteVars(node.data.footer_text, vars, extras) : undefined;
+        const buttons    = (node.data.buttons || []) as { id: string; title: string }[];
+        let wamid: string | null = null;
+        try {
+          const res = await sendButtonMessage(accessToken, phoneNumberId, contactPhone, bodyText, buttons, headerText, footerText);
+          wamid = res?.messages?.[0]?.id || null;
+        } catch { /* continue */ }
+        // Save as interactive type
+        const btnContent = JSON.stringify({ __type: 'buttons', body: bodyText, buttons, header: headerText, footer: footerText });
+        await saveOutboundMessage(workspaceId, session.contact_id, btnContent, wamid, 'interactive');
+        node = getNextNode(flow.edges, flow.nodes, nodeId);
+        if (node) await updateSessionNode(session.id, node.id, vars);
+        break;
+      }
 
       // ── Message: send text ─────────────────────────────────────
       case 'message': {
@@ -338,11 +358,13 @@ export async function tryStartFlow(
 
   let matchedFlow: RowDataPacket | null = null;
   for (const row of flows) {
-    const ttype = row.trigger_type as string;
-    const tval  = (row.trigger_value as string || '').toLowerCase();
-    if (ttype === 'any')                             { matchedFlow = row; break; }
-    if (ttype === 'keyword'     && msg.includes(tval))    { matchedFlow = row; break; }
-    if (ttype === 'starts_with' && msg.startsWith(tval))  { matchedFlow = row; break; }
+    const ttype    = row.trigger_type as string;
+    const rawVal   = (row.trigger_value as string || '');
+    // Support comma-separated keywords: "hi, hii, hello, hey"
+    const keywords = rawVal.split(',').map((k: string) => k.trim().toLowerCase()).filter(Boolean);
+    if (ttype === 'any') { matchedFlow = row; break; }
+    if (ttype === 'keyword'     && keywords.some((k) => msg.includes(k)))    { matchedFlow = row; break; }
+    if (ttype === 'starts_with' && keywords.some((k) => msg.startsWith(k)))  { matchedFlow = row; break; }
   }
   if (!matchedFlow) return false;
 
@@ -379,6 +401,7 @@ export async function tryResumeFlow(
   userMessage:   string,
   accessToken:   string,
   phoneNumberId: string,
+  buttonPayload?: string, // button id when user clicked an interactive button
 ): Promise<boolean> {
   const sessions = await query<RowDataPacket[]>(
     "SELECT * FROM flow_sessions WHERE workspace_id = ? AND contact_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1",
@@ -407,14 +430,15 @@ export async function tryResumeFlow(
   if (!currentNode) { await endSession(session.id); return false; }
 
   let nextNode: FlowNode | null = null;
+  // Effective match value: button payload (id) takes priority over text
+  const effectiveMsg = (buttonPayload || userMessage).trim().toLowerCase();
 
   if (currentNode.type === 'wait' || currentNode.type === 'set_variable') {
     nextNode = getNextNode(edges, nodes, currentNode.id);
   } else if (currentNode.type === 'condition') {
-    const msg = userMessage.trim().toLowerCase();
     const conditions = currentNode.data.conditions || [];
     const matched = conditions.find((c) =>
-      msg === c.value.toLowerCase() || msg === c.value
+      effectiveMsg === c.value.toLowerCase() || effectiveMsg.includes(c.value.toLowerCase())
     );
     const handle = matched ? matched.value : 'default';
     nextNode = getNextNode(edges, nodes, currentNode.id, handle);
@@ -426,6 +450,7 @@ export async function tryResumeFlow(
   const contactName = (contactRows[0]?.name as string) || '';
 
   await updateSessionNode(session.id, nextNode.id, session.variables);
+  // Pass button text as userMessage for variable saving (more readable than button id)
   await executeFromNode(flow, session, nextNode, accessToken, phoneNumberId, contactPhone, workspaceId, userMessage, contactName);
   return true;
 }
