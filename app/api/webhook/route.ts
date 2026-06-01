@@ -244,8 +244,8 @@ export async function POST(req: NextRequest) {
       const token   = workspaceAccessToken || '';
       const pnId    = phoneNumberId || '';
       // Show typing indicator to user while chatbot/flow processes
-      if (token && pnId) {
-        sendTypingIndicator(token, pnId, phone).catch(() => {});
+      if (token && pnId && msg.wamid) {
+        sendTypingIndicator(token, pnId, msg.wamid).catch(() => {});
       }
       const resumed = await tryResumeFlow(workspaceId, contactId, phone, msg.text, token, pnId).catch(() => false);
       if (!resumed) {
@@ -261,8 +261,8 @@ export async function POST(req: NextRequest) {
       const buttonText   = msg.button.text   || '';
       const buttonPayload = msg.button.payload || buttonText;
       // Show typing indicator while processing button reply
-      if (token && pnId) {
-        sendTypingIndicator(token, pnId, phone).catch(() => {});
+      if (token && pnId && msg.wamid) {
+        sendTypingIndicator(token, pnId, msg.wamid).catch(() => {});
       }
       await tryResumeFlow(workspaceId, contactId, phone, buttonText, token, pnId, buttonPayload).catch(() => {});
     }

@@ -171,21 +171,24 @@ export async function uploadMedia(
   return json.id;
 }
 
-// ---- Send typing indicator (typing_on) ----
+// ---- Send typing indicator — same status pattern as markAsRead ----
 export async function sendTypingIndicator(
   accessToken:   string,
   phoneNumberId: string,
-  to:            string
+  messageId:     string   // wamid of the incoming message being replied to
 ) {
   const client = createWAClient(accessToken);
-  const { data } = await client.post(`/${phoneNumberId}/messages`, {
-    messaging_product: 'whatsapp',
-    recipient_type:    'individual',
-    to,
-    type:              'typing',
-    typing:            { status: 'typing_on' },
-  });
-  return data;
+  try {
+    const { data } = await client.post(`/${phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      status:            'typing',
+      message_id:        messageId,
+    });
+    return data;
+  } catch (err: unknown) {
+    const msg = (err as { response?: { data?: unknown }; message?: string })?.response?.data || (err as { message?: string })?.message;
+    console.error('[WhatsApp] typing indicator failed:', msg);
+  }
 }
 
 // ---- Mark message as read ----
