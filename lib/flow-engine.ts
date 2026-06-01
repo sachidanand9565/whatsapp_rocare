@@ -34,6 +34,11 @@ export interface FlowNode {
   data: {
     // message
     text?:           string;
+    // button_message
+    body_text?:      string;
+    header_text?:    string;
+    footer_text?:    string;
+    buttons?:        { id: string; title: string }[];
     // condition
     conditions?:     { value: string; label: string }[];
     // set_variable
