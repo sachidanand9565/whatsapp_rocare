@@ -55,16 +55,73 @@ function MediaBubble({ data, msgType }: { data: MediaContent; msgType: string })
   const isAudio = msgType === 'audio';
   const isVideo = msgType === 'video';
   const isDoc   = msgType === 'document';
+  const [lightbox, setLightbox] = useState(false);
+
+  function handleDownload() {
+    const a = document.createElement('a');
+    a.href = src;
+    a.download = data.filename || 'image';
+    a.target = '_blank';
+    a.click();
+  }
 
   return (
     <div className="max-w-xs">
       {isImage && (
-        <img
-          src={src}
-          alt={data.caption || 'Image'}
-          className="rounded-xl max-w-full max-h-64 object-cover"
-          loading="lazy"
-        />
+        <>
+          <div
+            className="relative group cursor-pointer rounded-xl overflow-hidden"
+            onClick={() => setLightbox(true)}
+          >
+            <img
+              src={src}
+              alt={data.caption || 'Image'}
+              className="rounded-xl max-w-full max-h-64 object-cover"
+              loading="lazy"
+            />
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+              <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 rounded-full p-1.5">
+                <Maximize2 size={16} className="text-white" />
+              </div>
+            </div>
+          </div>
+          {lightbox && (
+            <div
+              className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center"
+              onClick={() => setLightbox(false)}
+            >
+              <div
+                className="relative max-w-3xl max-h-[90vh] mx-4"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <img
+                  src={src}
+                  alt={data.caption || 'Image'}
+                  className="max-w-full max-h-[80vh] rounded-xl object-contain"
+                />
+                <div className="absolute top-3 right-3 flex gap-2">
+                  <button
+                    onClick={handleDownload}
+                    title="Download"
+                    className="bg-white/90 hover:bg-white text-gray-800 rounded-full p-2 shadow transition-colors"
+                  >
+                    <Download size={18} />
+                  </button>
+                  <button
+                    onClick={() => setLightbox(false)}
+                    title="Close"
+                    className="bg-white/90 hover:bg-white text-gray-800 rounded-full p-2 shadow transition-colors"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                {data.caption && (
+                  <p className="text-white text-sm text-center mt-3 px-2">{data.caption}</p>
+                )}
+              </div>
+            </div>
+          )}
+        </>
       )}
       {isVideo && (
         <video
@@ -481,6 +538,9 @@ export default function InboxPage() {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [text, setText]             = useState('');
   const [search, setSearch]         = useState('');
+  const [searchResults, setSearchResults] = useState<Contact[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchDebounceRef               = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sending, setSending]       = useState(false);
   const [actioning, setActioning]   = useState(false);
   const [tab, setTab]               = useState<'all' | 'requested' | 'intervened'>('requested');
@@ -701,6 +761,30 @@ export default function InboxPage() {
     loadIntervenedContacts();
     // No polling — SSE handles real-time updates
   }, [loadContacts, loadIntervenedContacts]);
+
+  // Debounced server-side search — finds contacts beyond the initial 500 load
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    if (!search.trim()) {
+      setSearchResults(null);
+      return;
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      setSearchLoading(true);
+      const enc = encodeURIComponent(search.trim());
+      const cqs = campaignFilter ? `&campaignId=${campaignFilter}` : '';
+      Promise.all([
+        apiFetch(`/api/contacts?limit=500&chatStatus=inbox&search=${enc}${cqs}`),
+        apiFetch(`/api/contacts?limit=500&chatStatus=intervened&search=${enc}`),
+      ]).then(([inboxRes, intervenedRes]) => {
+        setSearchResults([
+          ...(inboxRes.data?.data || []),
+          ...(intervenedRes.data?.data || []),
+        ]);
+      }).finally(() => setSearchLoading(false));
+    }, 400);
+    return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
+  }, [search, campaignFilter]);
 
   // Tracks the highest message id loaded for the current chat (for incremental SSE fetch)
   const lastMsgIdRef = useRef<number>(0);
@@ -1065,9 +1149,16 @@ export default function InboxPage() {
   }
 
   const s = search.toLowerCase();
-  const filtered = contacts.filter((c) =>
-    (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)
-  );
+  const filtered = searchResults !== null
+    ? searchResults.filter((c) => c.chat_status !== 'intervened')
+    : contacts.filter((c) =>
+        (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)
+      );
+
+  // When search is active, use server results for intervened contacts too
+  const effectiveIntervenedContacts = searchResults !== null
+    ? searchResults.filter((c) => c.chat_status === 'intervened')
+    : intervenedContacts;
 
   // Shared intervened sub-filter — used for badge count, dropdown count, and contact list
   function matchesIntervenedFilter(c: Contact, fil: typeof intervenedFilter): boolean {
@@ -1098,7 +1189,9 @@ export default function InboxPage() {
         <div className="p-3 border-b border-gray-100 space-y-2">
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
-              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              {searchLoading
+                ? <Loader2 size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 animate-spin" />
+                : <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />}
               <input value={search} onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search contacts..." className="input pl-9 text-sm py-2 w-full" />
             </div>
@@ -1184,9 +1277,9 @@ export default function InboxPage() {
           {(['all', 'requested', 'intervened'] as const).map((t) => {
             const requestedCount   = filtered.filter((c) => c.chat_status === 'open' && Number(c.inbound_count) > 0).length;
             const isAdminOrManager = currentUserRole === 'admin' || currentUserRole === 'manager';
-            const intervenedSource = intervenedContacts
+            const intervenedSource = effectiveIntervenedContacts
               .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
-              .filter((c) => ((c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)));
+              .filter((c) => searchResults !== null || (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s));
             // Badge shows count matching the current active sub-filter
             const intervenedCount  = intervenedSource.filter((c) => matchesIntervenedFilter(c, intervenedFilter)).length;
             const label =
@@ -1226,10 +1319,10 @@ export default function InboxPage() {
                 intervenedFilter === 'other' ? 'Intervened By Other' :
                 selectedAgent ? `Intervened By ${selectedAgent.name}` : 'Intervened By Agent';
 
-              // Count from intervenedContacts using the shared filter helper (respects campaign filter)
-              const filterCount = intervenedContacts
+              // Count from effectiveIntervenedContacts using the shared filter helper (respects campaign filter)
+              const filterCount = effectiveIntervenedContacts
                 .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
-                .filter((c) => ((c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)))
+                .filter((c) => searchResults !== null || (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s))
                 .filter((c) => matchesIntervenedFilter(c, intervenedFilter)).length;
 
               return (
@@ -1252,7 +1345,7 @@ export default function InboxPage() {
                     { key: 'any'   as const, label: 'Intervened By Any' },
                     { key: 'other' as const, label: 'Intervened By Other' },
                   ]).map((opt) => {
-                    const cnt = intervenedContacts
+                    const cnt = effectiveIntervenedContacts
                       .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
                       .filter((c) => matchesIntervenedFilter(c, opt.key)).length;
                     return (
@@ -1274,7 +1367,7 @@ export default function InboxPage() {
                       <Loader2 size={14} className="animate-spin text-gray-400" />
                     </div>
                   ) : filterAgents.map((a) => {
-                    const agentCount = intervenedContacts
+                    const agentCount = effectiveIntervenedContacts
                       .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
                       .filter((c) =>
                         c.assigned_agent_id === a.id ||
@@ -1325,9 +1418,9 @@ export default function InboxPage() {
           )}
           {!contactsLoading && (() => {
             const source = (tab === 'intervened')
-              ? intervenedContacts
+              ? effectiveIntervenedContacts
                   .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
-                  .filter((c) => ((c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)))
+                  .filter((c) => searchResults !== null || (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s))
               : filtered;
             if (source.length === 0 && tab !== 'all' && tab !== 'requested') {
               return <p className="text-center text-gray-400 text-xs py-10">No contacts</p>;
@@ -1336,9 +1429,9 @@ export default function InboxPage() {
           })()}
           {!contactsLoading && (() => {
             const source = (tab === 'intervened')
-              ? intervenedContacts
+              ? effectiveIntervenedContacts
                   .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
-                  .filter((c) => ((c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)))
+                  .filter((c) => searchResults !== null || (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s))
               : filtered;
             return source;
           })()

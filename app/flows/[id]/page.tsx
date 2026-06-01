@@ -5,7 +5,8 @@ import ReactFlow, {
   addEdge, useNodesState, useEdgesState,
   type Connection, type Edge, type Node,
   Handle, Position, type NodeProps,
-  MarkerType,
+  MarkerType, BaseEdge, EdgeLabelRenderer, getStraightPath,
+  type EdgeProps, useReactFlow,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { apiFetch } from '@/hooks/useApi';
@@ -134,7 +135,30 @@ function FlowNode({ data, selected }: NodeProps) {
     </div>
   );
 }
+// ── Custom Edge with Delete Button ───────────────────────────
+function DeleteEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, style }: EdgeProps) {
+  const { setEdges } = useReactFlow();
+  const [edgePath, labelX, labelY] = getStraightPath({ sourceX, sourceY, targetX, targetY });
+  return (
+    <>
+      <BaseEdge path={edgePath} markerEnd={markerEnd} style={style}/>
+      <EdgeLabelRenderer>
+        <div
+          style={{ position:'absolute', transform:`translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents:'all' }}
+          className="nodrag nopan group">
+          <button
+            onClick={() => setEdges((eds) => eds.filter((e) => e.id !== id))}
+            className="w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity shadow-md hover:bg-red-700">
+            ×
+          </button>
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  );
+}
+
 const nodeTypes = { flowNode: FlowNode };
+const edgeTypes = { deleteEdge: DeleteEdge };
 
 // ── Config Panel ──────────────────────────────────────────────
 function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
@@ -550,13 +574,13 @@ export default function FlowBuilderPage() {
       const kws = (f.trigger_value || '').split(',').map((k: string) => k.trim()).filter(Boolean);
       setSettingsKeywords(kws);
       setNodes((f.nodes||[]).map((n:Node) => ({ ...n, type:'flowNode' })));
-      setEdges(f.edges||[]);
+      setEdges((f.edges||[]).map((e:Edge) => ({ ...e, type:'deleteEdge', markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} })));
       if (!(f.nodes||[]).length) setShowHelp(true);
     }).catch(()=>toast.error('Flow not found')).finally(()=>setLoading(false));
   }, [flowId, setNodes, setEdges]);
 
   const onConnect = useCallback((p:Connection) => {
-    setEdges(eds => addEdge({ ...p, markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} }, eds));
+    setEdges(eds => addEdge({ ...p, type:'deleteEdge', markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} }, eds));
   }, [setEdges]);
 
   function addNode(type: NodeType) {
@@ -682,11 +706,12 @@ export default function FlowBuilderPage() {
         <div className="flex-1" ref={wrapper}>
           <ReactFlow nodes={nodes} edges={edges}
             onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
-            onConnect={onConnect} nodeTypes={nodeTypes}
-            onNodeClick={(_,n)=>{setSelectedNode(n);setShowHelp(false);}}
+            onConnect={onConnect} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
+            onNodeClick={(_,n)=>{setSelectedNode(n);setShowHelp(false);setShowSettings(false);}}
             onPaneClick={()=>setSelectedNode(null)}
+            deleteKeyCode={['Backspace','Delete']}
             fitView
-            defaultEdgeOptions={{markerEnd:{type:MarkerType.ArrowClosed},style:{strokeWidth:2}}}>
+            defaultEdgeOptions={{type:'deleteEdge', markerEnd:{type:MarkerType.ArrowClosed},style:{strokeWidth:2}}}>
             <Background color="#e5e7eb" gap={20}/>
             <Controls/>
             <MiniMap nodeColor={n=>{

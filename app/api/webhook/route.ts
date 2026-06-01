@@ -4,7 +4,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { query, insert, execute } from '@/lib/db';
-import { parseWebhookBody, sendTextMessage, markAsRead, TemplateStatusUpdate } from '@/lib/whatsapp';
+import { parseWebhookBody, sendTextMessage, markAsRead, sendTypingIndicator, TemplateStatusUpdate } from '@/lib/whatsapp';
 import { normalizePhone, utcNow, unixToUtc } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { emitSSE } from '@/lib/sse';
@@ -243,6 +243,10 @@ export async function POST(req: NextRequest) {
     if (msg.type === 'text' && msg.text) {
       const token   = workspaceAccessToken || '';
       const pnId    = phoneNumberId || '';
+      // Show typing indicator to user while chatbot/flow processes
+      if (token && pnId) {
+        sendTypingIndicator(token, pnId, phone).catch(() => {});
+      }
       const resumed = await tryResumeFlow(workspaceId, contactId, phone, msg.text, token, pnId).catch(() => false);
       if (!resumed) {
         const started = await tryStartFlow(workspaceId, contactId, phone, msg.text, token, pnId).catch(() => false);
@@ -256,6 +260,10 @@ export async function POST(req: NextRequest) {
       const pnId         = phoneNumberId || '';
       const buttonText   = msg.button.text   || '';
       const buttonPayload = msg.button.payload || buttonText;
+      // Show typing indicator while processing button reply
+      if (token && pnId) {
+        sendTypingIndicator(token, pnId, phone).catch(() => {});
+      }
       await tryResumeFlow(workspaceId, contactId, phone, buttonText, token, pnId, buttonPayload).catch(() => {});
     }
   }
