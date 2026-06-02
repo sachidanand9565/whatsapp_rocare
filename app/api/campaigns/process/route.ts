@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query, execute, insert } from '@/lib/db';
 import { sendTemplateMessage } from '@/lib/whatsapp';
 import { sleep, WA_RATE_LIMIT_MS, utcNow } from '@/lib/utils';
+import { requireAuth } from '@/lib/auth';
 import { RowDataPacket } from 'mysql2';
 
 export const maxDuration = 55; // stay under Vercel's 60s limit
@@ -14,13 +15,15 @@ export const maxDuration = 55; // stay under Vercel's 60s limit
 const BATCH_SIZE = 40; // messages per cron invocation
 
 export async function GET(req: NextRequest) {
-  // Verify Vercel cron secret (set CRON_SECRET in Vercel env vars)
+  // Accept either: Vercel cron secret OR a valid user JWT (manual trigger from UI)
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const auth = req.headers.get('authorization');
-    if (auth !== `Bearer ${cronSecret}`) {
-      return new NextResponse('Unauthorized', { status: 401 });
-    }
+  const authHeader = req.headers.get('authorization') || '';
+
+  const isCron    = cronSecret && authHeader === `Bearer ${cronSecret}`;
+  const isUser    = (() => { try { requireAuth(req); return true; } catch { return false; } })();
+
+  if (cronSecret && !isCron && !isUser) {
+    return new NextResponse('Unauthorized', { status: 401 });
   }
 
   try {
