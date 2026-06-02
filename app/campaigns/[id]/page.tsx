@@ -5,7 +5,7 @@ import { apiFetch } from '@/hooks/useApi';
 import {
   ArrowLeft, RefreshCw, Play, Radio, Zap, GitBranch, ShoppingBag,
   CheckCircle, Clock, XCircle, Send, Eye, Copy, X, Reply,
-  ChevronDown, Download, Tag, Ban, LayoutTemplate, AlertCircle, Paperclip, Image as ImageIcon,
+  ChevronDown, Download, Tag, Ban, LayoutTemplate, AlertCircle, Paperclip, Image as ImageIcon, Loader2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
