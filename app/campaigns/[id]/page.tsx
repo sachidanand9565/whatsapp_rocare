@@ -208,6 +208,42 @@ export default function CampaignDetailPage() {
     load('all', 1, daysAgoStr(7), todayStr());
   }, [load]);
 
+  // SSE — auto-refresh stats when webhook receives delivery/read receipts
+  useEffect(() => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    if (!token || !id) return;
+
+    let es: EventSource | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let destroyed = false;
+
+    function connect() {
+      if (destroyed) return;
+      es = new EventSource(`/api/events?token=${encodeURIComponent(token!)}`);
+      es.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data) as { type?: string; campaignId?: number };
+          if (data.type === 'campaign_update' && String(data.campaignId) === String(id)) {
+            // Silently refresh stats without full skeleton reload
+            load(activeTab, pagination.page, dateFrom, dateTo);
+          }
+        } catch { /**/ }
+      };
+      es.onerror = () => {
+        es?.close(); es = null;
+        if (!destroyed) retryTimer = setTimeout(connect, 3000);
+      };
+    }
+
+    connect();
+    return () => {
+      destroyed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      es?.close();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
   function switchTab(tab: TabKey) {
     setActiveTab(tab);
     load(tab, 1, dateFrom, dateTo);
@@ -409,34 +445,11 @@ export default function CampaignDetailPage() {
           <span className={`badge ${STATUS_COLOR[campaign.status] || 'bg-gray-100 text-gray-600'}`}>
             {campaign.status}
           </span>
-          {campaign.campaign_type === 'api' && campaign.status !== 'running' && (
-            <>
-              <button onClick={() => setShowTest(true)}
-                className="btn-secondary flex items-center gap-1.5 text-sm px-3 py-1.5">
-                <Zap size={14} /> Test
-              </button>
-              <button onClick={openBulkModal}
-                className="btn-primary flex items-center gap-1.5 text-sm px-3 py-1.5">
-                <Play size={14} /> Bulk Send
-              </button>
-            </>
-          )}
-          {/* API campaign running — show Process Now + Stop */}
-          {campaign.campaign_type === 'api' && campaign.status === 'running' && (
-            <>
-              <button onClick={processNow} disabled={processing}
-                className="btn-primary flex items-center gap-1.5 text-sm px-3 py-1.5 disabled:opacity-50">
-                {processing
-                  ? <><span className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" /> Processing...</>
-                  : <><Play size={14} /> Process Now</>}
-              </button>
-              <button onClick={stopCampaign} disabled={stopping}
-                className="flex items-center gap-1.5 text-sm px-3 py-1.5 bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 rounded-lg font-semibold transition-colors disabled:opacity-50">
-                {stopping
-                  ? <><span className="w-3 h-3 border border-red-400 border-t-transparent rounded-full animate-spin" /> Stopping...</>
-                  : <><AlertCircle size={14} /> Stop</>}
-              </button>
-            </>
+          {campaign.campaign_type === 'api' && (
+            <button onClick={() => setShowTest(true)}
+              className="btn-secondary flex items-center gap-1.5 text-sm px-3 py-1.5">
+              <Zap size={14} /> Test
+            </button>
           )}
           {/* Draft / Scheduled — show Test + Launch */}
           {campaign.campaign_type !== 'api' && ['draft', 'scheduled'].includes(campaign.status) && (
@@ -853,109 +866,6 @@ export default function CampaignDetailPage() {
         <TestPanel campaign={campaign} onClose={() => setShowTest(false)} />
       )}
 
-      {/* ── Bulk Send Modal (API campaigns) ─────────────────── */}
-      {showBulk && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
-          onClick={() => setShowBulk(false)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[80vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h3 className="font-bold text-gray-900 flex items-center gap-2">
-                <Play size={16} className="text-whatsapp-green" /> Bulk Send
-              </h3>
-              <button onClick={() => setShowBulk(false)} className="text-gray-400 hover:text-gray-600">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="px-5 py-4 space-y-3 overflow-y-auto flex-1">
-              {/* All vs selected toggle */}
-              <div className="flex gap-2">
-                <button onClick={() => setBulkAll(true)}
-                  className={`flex-1 py-2 text-sm font-semibold rounded-lg border transition-colors
-                    ${bulkAll ? 'bg-whatsapp-green text-white border-whatsapp-green' : 'bg-white text-gray-600 border-gray-200 hover:border-whatsapp-green'}`}>
-                  All Contacts
-                </button>
-                <button onClick={() => setBulkAll(false)}
-                  className={`flex-1 py-2 text-sm font-semibold rounded-lg border transition-colors
-                    ${!bulkAll ? 'bg-whatsapp-green text-white border-whatsapp-green' : 'bg-white text-gray-600 border-gray-200 hover:border-whatsapp-green'}`}>
-                  Select Contacts
-                </button>
-              </div>
-
-              {/* Info when All selected */}
-              {bulkAll && (
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-sm text-blue-700">
-                  All opted-in contacts will be queued. Template variables use{' '}
-                  <code className="bg-blue-100 px-1 rounded text-xs">{'{{contact_name}}'}</code> and{' '}
-                  <code className="bg-blue-100 px-1 rounded text-xs">{'{{contact_phone}}'}</code> dynamically.
-                </div>
-              )}
-
-              {/* Contact picker */}
-              {!bulkAll && (
-                <div className="border border-gray-200 rounded-xl overflow-hidden">
-                  {bulkLoading ? (
-                    <div className="flex items-center justify-center py-8">
-                      <Loader2 size={20} className="animate-spin text-gray-400" />
-                    </div>
-                  ) : (
-                    <>
-                      <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
-                        <span className="text-xs text-gray-500">{bulkSelected.size} selected</span>
-                        <button
-                          onClick={() => {
-                            if (bulkSelected.size === bulkContacts.length) {
-                              setBulkSelected(new Set());
-                            } else {
-                              setBulkSelected(new Set(bulkContacts.map((c) => c.id)));
-                            }
-                          }}
-                          className="text-xs text-whatsapp-green font-semibold hover:underline">
-                          {bulkSelected.size === bulkContacts.length ? 'Deselect All' : 'Select All'}
-                        </button>
-                      </div>
-                      <div className="max-h-52 overflow-y-auto divide-y divide-gray-50">
-                        {bulkContacts.map((c) => (
-                          <label key={c.id} className="flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 cursor-pointer">
-                            <input type="checkbox"
-                              checked={bulkSelected.has(c.id)}
-                              onChange={() => {
-                                setBulkSelected((prev) => {
-                                  const next = new Set(prev);
-                                  next.has(c.id) ? next.delete(c.id) : next.add(c.id);
-                                  return next;
-                                });
-                              }}
-                              className="accent-whatsapp-green w-4 h-4 flex-shrink-0" />
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-gray-800 truncate">{c.name || c.phone}</p>
-                              <p className="text-xs text-gray-400">+{c.phone}</p>
-                            </div>
-                          </label>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="px-5 pb-5 pt-3 border-t border-gray-100 flex justify-end gap-2">
-              <button onClick={() => setShowBulk(false)}
-                className="btn-secondary text-sm px-4 py-2">Cancel</button>
-              <button
-                onClick={sendBulkQueue}
-                disabled={bulkSending || (!bulkAll && bulkSelected.size === 0)}
-                className="btn-primary text-sm px-4 py-2 flex items-center gap-1.5 disabled:opacity-50">
-                {bulkSending
-                  ? <><span className="animate-spin inline-block w-3 h-3 border border-white border-t-transparent rounded-full" /> Queuing...</>
-                  : <><Play size={13} /> Queue & Send</>}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Broadcast / Drip Test Send Modal ─────────────────── */}
       {showTest && campaign.campaign_type !== 'api' && (() => {

@@ -9,13 +9,14 @@ const emitter = new EventEmitter();
 emitter.setMaxListeners(500);
 
 export interface SSEPayload {
-  type:        'new_message' | 'status_update' | 'chat_status_update';
+  type:        'new_message' | 'status_update' | 'chat_status_update' | 'campaign_update';
   workspaceId: number;
-  contactId:   number;
+  contactId?:  number;
   direction?:  'inbound' | 'outbound';
   wamid?:      string;   // for status_update
   status?:     string;   // for status_update
   chatStatus?: string;   // for chat_status_update
+  campaignId?: number;   // for campaign_update
 }
 
 /** Called from the webhook handler after a message is persisted. */

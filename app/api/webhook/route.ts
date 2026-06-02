@@ -315,6 +315,8 @@ export async function POST(req: NextRequest) {
             `UPDATE campaigns SET ${col} = ${col} + 1 WHERE id = ?`,
             [campId]
           );
+          // Notify campaign detail page to refresh stats
+          emitSSE({ type: 'campaign_update', workspaceId, campaignId: campId });
         }
 
         // Save Meta error detail to campaign_contacts.error
