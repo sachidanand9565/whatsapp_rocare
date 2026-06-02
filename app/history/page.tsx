@@ -134,8 +134,15 @@ function MediaBubble({ data, msgType }: { data: MediaContent; msgType: string })
   );
 }
 
+// ── Status ticks helper ───────────────────────────────────────
+function Ticks({ status }: { status: string }) {
+  if (status === 'read')      return <span className="ml-1 text-blue-500">✓✓</span>;
+  if (status === 'delivered') return <span className="ml-1 text-gray-400">✓✓</span>;
+  return <span className="ml-1 text-gray-400">✓</span>;
+}
+
 // ── Full template bubble (same as inbox) ──────────────────────
-function TemplateBubble({ data, timeStr }: { data: TemplateContent; timeStr: string }) {
+function TemplateBubble({ data, timeStr, status }: { data: TemplateContent; timeStr: string; status: string }) {
   const hasMediaUrl = data.header_content?.startsWith('http');
   const ht = (data.header_type || '').toUpperCase();
 
@@ -184,7 +191,9 @@ function TemplateBubble({ data, timeStr }: { data: TemplateContent; timeStr: str
           {renderWaText(data.body)}
         </p>
         {data.footer && <p className="text-xs text-gray-400 mt-1.5">{data.footer}</p>}
-        <p className="text-xs text-gray-400 text-right mt-1">{timeStr}</p>
+        <p className="text-xs text-gray-400 text-right mt-1">
+          {timeStr}<Ticks status={status} />
+        </p>
       </div>
       {/* Buttons */}
       {data.buttons?.length > 0 && (
@@ -373,12 +382,14 @@ export default function HistoryPage() {
                     <div className={`flex mb-1 ${m.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
                       {/* Full template bubble */}
                       {tpl ? (
-                        <TemplateBubble data={tpl} timeStr={timeStr} />
+                        <TemplateBubble data={tpl} timeStr={timeStr} status={m.status || ''} />
                       ) : media ? (
                         <div className={`max-w-xs rounded-2xl text-sm shadow-sm overflow-hidden px-3 py-2
                           ${m.direction === 'outbound' ? 'bg-[#dcf8c6] rounded-br-sm' : 'bg-white rounded-bl-sm'}`}>
                           <MediaBubble data={media} msgType={m.type} />
-                          <p className={`text-xs mt-1 ${m.direction === 'outbound' ? 'text-right text-gray-400' : 'text-gray-300'}`}>{timeStr}</p>
+                          <p className={`text-xs mt-1 ${m.direction === 'outbound' ? 'text-right text-gray-400' : 'text-gray-300'}`}>
+                            {timeStr}{m.direction === 'outbound' && <Ticks status={m.status || ''} />}
+                          </p>
                         </div>
                       ) : location ? (
                         <div className={`max-w-xs rounded-2xl text-sm shadow-sm overflow-hidden px-3 py-2
@@ -394,7 +405,9 @@ export default function HistoryPage() {
                               <p className="text-xs text-blue-500 mt-1">Open in Maps ↗</p>
                             </div>
                           </a>
-                          <p className={`text-xs mt-1 ${m.direction === 'outbound' ? 'text-right text-gray-400' : 'text-gray-300'}`}>{timeStr}</p>
+                          <p className={`text-xs mt-1 ${m.direction === 'outbound' ? 'text-right text-gray-400' : 'text-gray-300'}`}>
+                            {timeStr}{m.direction === 'outbound' && <Ticks status={m.status || ''} />}
+                          </p>
                         </div>
                       ) : contacts ? (
                         <div className={`max-w-xs rounded-2xl text-sm shadow-sm overflow-hidden px-3 py-2
@@ -416,7 +429,9 @@ export default function HistoryPage() {
                               );
                             })}
                           </div>
-                          <p className={`text-xs mt-1 ${m.direction === 'outbound' ? 'text-right text-gray-400' : 'text-gray-300'}`}>{timeStr}</p>
+                          <p className={`text-xs mt-1 ${m.direction === 'outbound' ? 'text-right text-gray-400' : 'text-gray-300'}`}>
+                            {timeStr}{m.direction === 'outbound' && <Ticks status={m.status || ''} />}
+                          </p>
                         </div>
                       ) : (
                         <div className={`max-w-xs lg:max-w-sm rounded-2xl text-sm shadow-sm overflow-hidden
@@ -425,7 +440,9 @@ export default function HistoryPage() {
                             <p className="break-words whitespace-pre-wrap leading-relaxed">
                               {renderWaText(m.content)}
                             </p>
-                            <p className={`text-xs mt-1 ${m.direction === 'outbound' ? 'text-right text-gray-400' : 'text-gray-300'}`}>{timeStr}</p>
+                            <p className={`text-xs mt-1 ${m.direction === 'outbound' ? 'text-right text-gray-400' : 'text-gray-300'}`}>
+                              {timeStr}{m.direction === 'outbound' && <Ticks status={m.status || ''} />}
+                            </p>
                           </div>
                         </div>
                       )}
