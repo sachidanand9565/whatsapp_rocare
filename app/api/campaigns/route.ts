@@ -67,12 +67,24 @@ export async function POST(req: NextRequest) {
     const payload = requireAuth(req);
     if (payload.role === 'agent') return apiError('Agents cannot create campaigns', 403);
 
-    const { name, template_id, scheduled_at, template_vars, contact_ids, campaign_type } = await req.json();
+    const { name, template_id, scheduled_at, template_vars, contact_ids, campaign_type, csv_contacts, header_media } = await req.json() as {
+      name: string;
+      template_id: number;
+      scheduled_at?: string;
+      template_vars?: Record<string, string>;
+      contact_ids?: number[];
+      campaign_type?: string;
+      header_media?: string;
+      csv_contacts?: { phone: string; name: string; vars: Record<string, string> }[];
+    };
 
     if (!name || !template_id) return apiError('Name and template are required');
 
     const validTypes = ['broadcast', 'api', 'drip', 'transactional'];
-    const type = validTypes.includes(campaign_type) ? campaign_type : 'broadcast';
+    const type = validTypes.includes(campaign_type || '') ? campaign_type! : 'broadcast';
+
+    // For CSV mode, total_contacts comes from csv_contacts length
+    const totalContacts = csv_contacts?.length || contact_ids?.length || 0;
 
     const id = await insert(
       `INSERT INTO campaigns (workspace_id, name, template_id, campaign_type, status, scheduled_at, template_vars, created_by, total_contacts)
@@ -82,16 +94,57 @@ export async function POST(req: NextRequest) {
         type,
         scheduled_at ? 'scheduled' : 'draft',
         scheduled_at || null,
-        JSON.stringify(template_vars || {}),
+        JSON.stringify({ ...(template_vars || {}), ...(header_media ? { _header_media: header_media } : {}) }),
         payload.userId,
-        contact_ids?.length || 0,
+        totalContacts,
       ]
     );
 
-    // Add campaign contacts
-    if (contact_ids?.length > 0) {
-      const values = (contact_ids as number[]).map((cid) => `(${id}, ${cid})`).join(',');
+    // Add contacts from manual selection
+    if (contact_ids && contact_ids.length > 0) {
+      const values = contact_ids.map((cid) => `(${id}, ${cid})`).join(',');
       await query(`INSERT IGNORE INTO campaign_contacts (campaign_id, contact_id) VALUES ${values}`);
+    }
+
+    // Add contacts from CSV — upsert contact + add to campaign_contacts with per-row vars
+    if (csv_contacts && csv_contacts.length > 0) {
+      const { normalizePhone } = await import('@/lib/utils');
+      const { execute: exec } = await import('@/lib/db');
+      for (const row of csv_contacts) {
+        const phone = normalizePhone(row.phone);
+        if (!phone) continue;
+        // Upsert contact
+        await exec(
+          'INSERT IGNORE INTO contacts (workspace_id, phone, name, source, opted_in) VALUES (?, ?, ?, ?, 1)',
+          [payload.workspaceId, phone, row.name || null, 'csv_import']
+        );
+        if (row.name) {
+          await exec(
+            "UPDATE contacts SET name = ? WHERE workspace_id = ? AND phone = ? AND (name IS NULL OR name = '')",
+            [row.name, payload.workspaceId, phone]
+          );
+        }
+        const contactRow = await query<RowDataPacket[]>(
+          'SELECT id FROM contacts WHERE workspace_id = ? AND phone = ? LIMIT 1',
+          [payload.workspaceId, phone]
+        );
+        if (contactRow.length === 0) continue;
+        const contactId = contactRow[0].id as number;
+        // Store per-contact vars as JSON in campaign_contacts
+        try {
+          await exec(
+            `INSERT IGNORE INTO campaign_contacts (campaign_id, contact_id, variables) VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE variables = VALUES(variables)`,
+            [id, contactId, JSON.stringify(row.vars || {})]
+          );
+        } catch {
+          // Fallback if variables column doesn't exist yet
+          await exec(
+            'INSERT IGNORE INTO campaign_contacts (campaign_id, contact_id) VALUES (?, ?)',
+            [id, contactId]
+          );
+        }
+      }
     }
 
     return apiSuccess({ id }, 201);

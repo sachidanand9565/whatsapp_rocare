@@ -49,9 +49,10 @@ export async function GET(req: NextRequest) {
     const campaignId  = camp.id as number;
     const workspaceId = camp.workspace_id as number;
 
-    // Get next batch of pending contacts (include name for dynamic vars)
+    // Get next batch of pending contacts (include per-row variables from CSV if set)
     const contacts = await query<RowDataPacket[]>(
-      `SELECT cc.contact_id, c.phone, c.name as contact_name, cc.id as cc_id
+      `SELECT cc.contact_id, c.phone, c.name as contact_name, cc.id as cc_id,
+              cc.variables as row_vars
        FROM campaign_contacts cc
        JOIN contacts c ON c.id = cc.contact_id
        WHERE cc.campaign_id = ? AND cc.status = 'pending'
@@ -95,13 +96,15 @@ export async function GET(req: NextRequest) {
 
     for (const contact of contacts) {
       try {
+        // Per-contact vars override campaign vars (CSV mode)
+        const rowVars = parseJson<Record<string, string>>(contact.row_vars as string, {});
         const result = await sendTemplateMessage(
           camp.access_token as string,
           camp.phone_number_id as string,
           contact.phone as string,
           camp.tname as string,
           camp.language as string,
-          buildComponents(camp, contact.phone as string, contact.contact_name as string | null)
+          buildComponents(camp, contact.phone as string, contact.contact_name as string | null, rowVars)
         );
 
         const wamid = (result?.messages as Record<string, unknown>[])?.[0]?.id as string;
@@ -170,29 +173,41 @@ export async function GET(req: NextRequest) {
   }
 }
 
-function buildComponents(camp: RowDataPacket, contactPhone: string, contactName: string | null): object[] {
+function buildComponents(camp: RowDataPacket, contactPhone: string, contactName: string | null, rowVars: Record<string, string> = {}): object[] {
   const components: object[] = [];
   const headerType    = (camp.header_type as string || '').toUpperCase();
-  const headerContent = (camp.header_content as string) || '';
+  // Use campaign-level header_media override if set, else fall back to template default
+  const campaignVarsRaw = parseJson<Record<string, string>>(camp.template_vars as string, {});
+  const headerMediaOverride = campaignVarsRaw._header_media || '';
+  const headerContent = headerMediaOverride || (camp.header_content as string) || '';
+
   if (['IMAGE', 'DOCUMENT', 'VIDEO'].includes(headerType) && headerContent) {
     const mediaType = headerType.toLowerCase() as 'image' | 'document' | 'video';
-    const isUrl = headerContent.startsWith('http');
+    const isMediaId = headerContent.startsWith('media_id:');
+    const mediaId   = isMediaId ? headerContent.replace('media_id:', '') : '';
+    const isUrl     = !isMediaId && headerContent.startsWith('http');
     components.push({
       type: 'header',
-      parameters: [{ type: mediaType, [mediaType]: isUrl ? { link: headerContent } : { id: headerContent } }],
+      parameters: [{
+        type: mediaType,
+        [mediaType]: isMediaId ? { id: mediaId } : isUrl ? { link: headerContent } : { id: headerContent },
+      }],
     });
   }
-  const rawVars = parseJson<Record<string, string>>(camp.template_vars as string, {});
-  // Resolve {{contact_name}} / {{contact_phone}} placeholders per contact
+  // Per-contact CSV vars take priority over campaign-level template_vars
+  const campaignVars = parseJson<Record<string, string>>(camp.template_vars as string, {});
+  const merged = { ...campaignVars, ...rowVars }; // CSV row overrides campaign defaults
+  // Resolve {{contact_name}} / {{contact_phone}} placeholders
   const resolvedVars = Object.fromEntries(
-    Object.entries(rawVars).map(([k, v]) => [
+    Object.entries(merged).map(([k, v]) => [
       k,
-      v
+      String(v)
         .replace(/\{\{contact_name\}\}/gi,  contactName || contactPhone)
         .replace(/\{\{contact_phone\}\}/gi, contactPhone),
     ])
   );
-  const params = Object.values(resolvedVars).map((v) => ({ type: 'text', text: String(v) }));
+  const sortedKeys = Object.keys(resolvedVars).sort((a, b) => Number(a) - Number(b));
+  const params = sortedKeys.map((k) => ({ type: 'text', text: resolvedVars[k] }));
   if (params.length > 0) {
     components.push({ type: 'body', parameters: params });
   }

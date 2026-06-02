@@ -2,7 +2,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/hooks/useApi';
-import { Plus, Play, Radio, Zap, GitBranch, ShoppingBag, ChevronRight, Trash2, UserPlus, X, Search, ChevronDown } from 'lucide-react';
+import { Plus, Play, Radio, Zap, GitBranch, ShoppingBag, ChevronRight, Trash2, UserPlus, X, Search, ChevronDown, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Campaign, Template, Contact, User } from '@/types';
 
@@ -21,7 +21,7 @@ const TYPE_CONFIG: Record<string, { label: string; color: string; bg: string; ic
   transactional: { label: 'Transactional', color: 'text-teal-700',   bg: 'bg-teal-100',   icon: <ShoppingBag size={12} />, desc: 'Order & booking confirmations' },
 };
 
-const ALL_TYPES = ['all', 'broadcast', 'api', 'drip', 'transactional'] as const;
+const ALL_TYPES = ['all', 'broadcast', 'api'] as const;
 type FilterType = typeof ALL_TYPES[number];
 
 export default function CampaignsPage() {
@@ -386,6 +386,13 @@ function AssignAgentModal({ campaign, onClose }: { campaign: Campaign; onClose: 
   );
 }
 
+// ── Simple CSV parser ─────────────────────────────────────────
+function parseCsv(text: string): string[][] {
+  return text.trim().split('\n').map((line) =>
+    line.split(',').map((cell) => cell.trim().replace(/^"|"$/g, '').trim())
+  );
+}
+
 // ---- Campaign Creation Modal ----
 function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [templates, setTemplates]       = useState<Template[]>([]);
@@ -396,13 +403,32 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   const [templateSearch, setTemplateSearch]     = useState<string>('');
   const [templateDropOpen, setTemplateDropOpen] = useState(false);
   const templateDropRef                         = useRef<HTMLDivElement>(null);
+  const fileRef                                 = useRef<HTMLInputElement>(null);
+  const [contactMode, setContactMode]   = useState<'select' | 'csv'>('select');
+  const [contactSearch, setContactSearch] = useState('');
+  const [contactSearchLoading, setContactSearchLoading] = useState(false);
+  const contactDebounceRef              = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [csvRows, setCsvRows]           = useState<{ phone: string; name: string; vars: Record<string, string> }[]>([]);
+  const [csvHeaders, setCsvHeaders]     = useState<string[]>([]);
+  const [csvColMap, setCsvColMap]       = useState<Record<string, string>>({});
+  const [csvError, setCsvError]         = useState('');
   const [form, setForm]                 = useState({
     name: '', template_id: '', scheduled_at: '', campaign_type: 'broadcast',
   });
-  const [templateVars, setTemplateVars] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
+  const [templateVars, setTemplateVars]   = useState<Record<string, string>>({});
+  const [headerMedia, setHeaderMedia]     = useState('');   // URL entered by user
+  const [headerMediaMode, setHeaderMediaMode] = useState<'url' | 'upload'>('url');
+  const [uploadingHeader, setUploadingHeader] = useState(false);
+  const headerFileRef                     = useRef<HTMLInputElement>(null);
+  const [saving, setSaving]               = useState(false);
 
-  const isApi = form.campaign_type === 'api';
+  const isApi       = form.campaign_type === 'api';
+  const isBroadcast = form.campaign_type === 'broadcast';
+  const selTpl      = templates.find((t) => String(t.id) === form.template_id);
+  const varNums     = selTpl ? [...new Set(
+    (selTpl.body_text?.match(/\{\{(\d+)\}\}/g) || []).map((m) => m.replace(/\{\{|\}\}/g, ''))
+  )].sort((a, b) => Number(a) - Number(b)) : [];
+  const hasMediaHeader = ['IMAGE', 'VIDEO', 'DOCUMENT'].includes((selTpl?.header_type || '').toUpperCase());
 
   // Close template dropdown on outside click
   useEffect(() => {
@@ -417,33 +443,112 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
 
   useEffect(() => {
     apiFetch('/api/templates').then((r) => setTemplates(r.data?.filter((t: Template) => t.status === 'APPROVED') || []));
-    if (!isApi) {
-      apiFetch('/api/contacts?limit=500').then((r) => setContacts(r.data?.data || []));
-    }
+    if (!isApi) loadContacts('');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.campaign_type]);
+
+  function loadContacts(q: string) {
+    setContactSearchLoading(true);
+    const qs = q.trim() ? `&search=${encodeURIComponent(q.trim())}` : '';
+    apiFetch(`/api/contacts?limit=500${qs}`)
+      .then((r) => setContacts(r.data?.data || []))
+      .finally(() => setContactSearchLoading(false));
+  }
+
+  useEffect(() => {
+    if (contactDebounceRef.current) clearTimeout(contactDebounceRef.current);
+    contactDebounceRef.current = setTimeout(() => loadContacts(contactSearch), 350);
+    return () => { if (contactDebounceRef.current) clearTimeout(contactDebounceRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contactSearch]);
 
   function toggleContact(id: number) {
     setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   }
 
+  function handleCsvFile(file: File) {
+    setCsvError('');
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const rows = parseCsv(text);
+      if (rows.length < 2) { setCsvError('CSV must have a header row + at least one data row'); return; }
+      const headers = rows[0];
+      const phoneCol = headers.findIndex((h) => /phone|mobile|number|whatsapp/i.test(h));
+      const nameCol  = headers.findIndex((h) => /name/i.test(h));
+      if (phoneCol < 0) { setCsvError('CSV must have a column named "phone", "mobile", or "number"'); return; }
+      setCsvHeaders(headers);
+      // Default mapping: first non-phone/name column → {{1}}, next → {{2}}, etc.
+      const extraCols = headers.map((h, i) => i).filter((i) => i !== phoneCol && i !== nameCol);
+      const initMap: Record<string, string> = {};
+      varNums.forEach((n, idx) => { if (extraCols[idx] !== undefined) initMap[n] = String(extraCols[idx]); });
+      setCsvColMap(initMap);
+      const parsed = rows.slice(1).filter((r) => r[phoneCol]?.trim()).map((r) => ({
+        phone: r[phoneCol].replace(/\D/g, ''),
+        name:  nameCol >= 0 ? r[nameCol] || '' : '',
+        vars:  Object.fromEntries(headers.map((_, i) => [String(i), r[i] || ''])),
+      }));
+      setCsvRows(parsed);
+    };
+    reader.readAsText(file);
+  }
+
+  async function uploadHeaderFile(file: File) {
+    setUploadingHeader(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/media', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      // Store as media_id reference
+      setHeaderMedia(`media_id:${data.data.mediaId}`);
+      toast.success('Media uploaded!');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploadingHeader(false);
+    }
+  }
+
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    if (!isApi && selectedIds.length === 0) {
+    if (!isApi && contactMode === 'select' && selectedIds.length === 0) {
       toast.error('Select at least one contact');
+      return;
+    }
+    if (!isApi && contactMode === 'csv' && csvRows.length === 0) {
+      toast.error('Upload a CSV file with contacts');
       return;
     }
     setSaving(true);
     try {
+      // Build contact_ids and per-row vars for CSV mode
+      let contact_ids: number[] = [];
+      let csv_contacts: { phone: string; name: string; vars: Record<string, string> }[] | undefined;
+
+      if (isBroadcast && contactMode === 'csv') {
+        csv_contacts = csvRows.map((row) => ({
+          phone: row.phone,
+          name:  row.name,
+          vars:  Object.fromEntries(varNums.map((n) => [n, row.vars[csvColMap[n] || ''] || templateVars[n] || ''])),
+        }));
+      } else if (!isApi) {
+        contact_ids = selectedIds;
+      }
+
       const r = await apiFetch('/api/campaigns', {
         method: 'POST',
-        body:   JSON.stringify({
+        body: JSON.stringify({
           name:          form.name,
           template_id:   Number(form.template_id),
           scheduled_at:  form.scheduled_at || undefined,
           campaign_type: form.campaign_type,
-          contact_ids:   isApi ? [] : selectedIds,
+          contact_ids,
           template_vars: templateVars,
+          header_media:  headerMedia || undefined,
+          csv_contacts,
         }),
       });
       if (isApi) {
@@ -511,116 +616,87 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           <h2 className="font-bold text-lg">New Campaign</h2>
         </div>
         <form onSubmit={save} className="p-6 space-y-4 overflow-y-auto flex-1">
+
+          {/* Campaign Name */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Campaign Name *</label>
             <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
               className="input" placeholder="e.g. Diwali Offer 2024" required />
           </div>
 
-          {/* Campaign Type */}
+          {/* Campaign Type — only Broadcast and API */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Campaign Type *</label>
             <div className="grid grid-cols-2 gap-2">
-              {Object.entries(TYPE_CONFIG).map(([key, cfg]) => (
-                <label key={key} className={`flex items-start gap-2.5 p-3 rounded-lg border-2 cursor-pointer transition-colors ${
-                  form.campaign_type === key
-                    ? 'border-whatsapp-green bg-green-50'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}>
-                  <input type="radio" name="campaign_type" value={key}
-                    checked={form.campaign_type === key}
-                    onChange={() => setForm({ ...form, campaign_type: key })}
-                    className="mt-0.5 accent-green-600" />
-                  <div>
-                    <div className={`flex items-center gap-1 text-sm font-medium ${cfg.color}`}>
-                      {cfg.icon} {cfg.label}
+              {(['broadcast', 'api'] as const).map((key) => {
+                const cfg = TYPE_CONFIG[key];
+                return (
+                  <label key={key} className={`flex items-start gap-2.5 p-3 rounded-lg border-2 cursor-pointer transition-colors ${
+                    form.campaign_type === key ? 'border-whatsapp-green bg-green-50' : 'border-gray-200 hover:border-gray-300'
+                  }`}>
+                    <input type="radio" name="campaign_type" value={key}
+                      checked={form.campaign_type === key}
+                      onChange={() => { setForm({ ...form, campaign_type: key }); setContactMode('select'); }}
+                      className="mt-0.5 accent-green-600" />
+                    <div>
+                      <div className={`flex items-center gap-1 text-sm font-medium ${cfg.color}`}>
+                        {cfg.icon} {cfg.label}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-0.5">{cfg.desc}</p>
                     </div>
-                    <p className="text-xs text-gray-400 mt-0.5">{cfg.desc}</p>
-                  </div>
-                </label>
-              ))}
+                  </label>
+                );
+              })}
             </div>
           </div>
 
+          {/* Template picker (same as before — with category filter + search) */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Template * (Approved only)</label>
-            {/* Select2-style combobox */}
             <div className="relative" ref={templateDropRef}>
-              {/* Trigger */}
-              <button type="button"
-                onClick={() => setTemplateDropOpen((v) => !v)}
+              <button type="button" onClick={() => setTemplateDropOpen((v) => !v)}
                 className="input w-full flex items-center justify-between text-left">
                 <span className={form.template_id ? 'text-gray-900' : 'text-gray-400'}>
-                  {form.template_id
-                    ? templates.find((t) => String(t.id) === form.template_id)?.name
-                    : 'Select template…'}
+                  {selTpl ? selTpl.name : 'Select template…'}
                 </span>
                 <ChevronDown size={15} className={`text-gray-400 flex-shrink-0 transition-transform ${templateDropOpen ? 'rotate-180' : ''}`} />
               </button>
-
-              {/* Dropdown panel */}
               {templateDropOpen && (
                 <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
-                  {/* Search box inside dropdown */}
                   <div className="p-2 border-b border-gray-100 flex items-center gap-2">
                     <Search size={14} className="text-gray-400 flex-shrink-0" />
-                    <input
-                      autoFocus
-                      type="text"
-                      value={templateSearch}
+                    <input autoFocus type="text" value={templateSearch}
                       onChange={(e) => setTemplateSearch(e.target.value)}
-                      placeholder="Search template…"
-                      className="flex-1 text-sm outline-none bg-transparent"
-                    />
-                    {templateSearch && (
-                      <button type="button" onClick={() => setTemplateSearch('')}>
-                        <X size={13} className="text-gray-400 hover:text-gray-600" />
-                      </button>
-                    )}
+                      placeholder="Search template…" className="flex-1 text-sm outline-none bg-transparent" />
+                    {templateSearch && <button type="button" onClick={() => setTemplateSearch('')}><X size={13} className="text-gray-400 hover:text-gray-600" /></button>}
                   </div>
-
-                  {/* Category pills inside dropdown */}
                   <div className="flex gap-1.5 px-2 py-1.5 border-b border-gray-100 flex-wrap">
                     {(['ALL', 'UTILITY', 'MARKETING', 'AUTHENTICATION'] as const).map((cat) => (
-                      <button key={cat} type="button"
-                        onClick={() => setTemplateCategory(cat)}
+                      <button key={cat} type="button" onClick={() => setTemplateCategory(cat)}
                         className={`px-2 py-0.5 rounded-md text-xs font-semibold border transition-colors
-                          ${templateCategory === cat
-                            ? 'bg-whatsapp-green text-white border-whatsapp-green'
-                            : 'bg-white text-gray-500 border-gray-200 hover:border-whatsapp-green'}`}>
+                          ${templateCategory === cat ? 'bg-whatsapp-green text-white border-whatsapp-green' : 'bg-white text-gray-500 border-gray-200 hover:border-whatsapp-green'}`}>
                         {cat === 'ALL' ? 'All' : cat.charAt(0) + cat.slice(1).toLowerCase()}
                       </button>
                     ))}
                   </div>
-
-                  {/* Filtered list */}
                   <ul className="max-h-52 overflow-y-auto">
-                    {templates
-                      .filter((t) =>
-                        (templateCategory === 'ALL' || t.category === templateCategory) &&
-                        t.name.toLowerCase().includes(templateSearch.toLowerCase())
-                      )
-                      .map((t) => (
-                        <li key={t.id}>
-                          <button type="button"
-                            onClick={() => {
-                              setForm({ ...form, template_id: String(t.id) });
-                              setTemplateDropOpen(false);
-                              setTemplateSearch('');
-                              setTemplateVars({}); // reset vars on template change
-                            }}
-                            className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center justify-between gap-2
-                              ${String(t.id) === form.template_id ? 'bg-green-50 text-whatsapp-green font-semibold' : 'text-gray-700'}`}>
-                            <span className="truncate">{t.name}</span>
-                            <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0
-                              ${t.category === 'MARKETING' ? 'bg-orange-100 text-orange-600' :
-                                t.category === 'AUTHENTICATION' ? 'bg-purple-100 text-purple-600' :
-                                'bg-blue-100 text-blue-600'}`}>
-                              {t.category.charAt(0) + t.category.slice(1).toLowerCase()}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
+                    {templates.filter((t) =>
+                      (templateCategory === 'ALL' || t.category === templateCategory) &&
+                      t.name.toLowerCase().includes(templateSearch.toLowerCase())
+                    ).map((t) => (
+                      <li key={t.id}>
+                        <button type="button"
+                          onClick={() => { setForm({ ...form, template_id: String(t.id) }); setTemplateDropOpen(false); setTemplateSearch(''); setTemplateVars({}); setCsvColMap({}); setHeaderMedia(''); }}
+                          className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center justify-between gap-2
+                            ${String(t.id) === form.template_id ? 'bg-green-50 text-whatsapp-green font-semibold' : 'text-gray-700'}`}>
+                          <span className="truncate">{t.name}</span>
+                          <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0
+                            ${t.category === 'MARKETING' ? 'bg-orange-100 text-orange-600' : t.category === 'AUTHENTICATION' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                            {t.category.charAt(0) + t.category.slice(1).toLowerCase()}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
                     {templates.filter((t) =>
                       (templateCategory === 'ALL' || t.category === templateCategory) &&
                       t.name.toLowerCase().includes(templateSearch.toLowerCase())
@@ -631,63 +707,113 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
                 </div>
               )}
             </div>
-            {templates.length === 0 && (
-              <p className="text-xs text-red-500 mt-1">No approved templates. Create and get a template approved first.</p>
-            )}
-            {/* Hidden required input for form validation */}
+            {templates.length === 0 && <p className="text-xs text-red-500 mt-1">No approved templates. Create and get a template approved first.</p>}
             <input type="text" required value={form.template_id} onChange={() => {}} className="sr-only" />
           </div>
 
-          {/* ── Template Variable Inputs (shown when template has {{1}} etc.) ── */}
-          {(() => {
-            if (!form.template_id) return null;
-            const tpl = templates.find((t) => String(t.id) === form.template_id);
-            if (!tpl?.body_text) return null;
-            const varNums = [...new Set(
-              (tpl.body_text.match(/\{\{(\d+)\}\}/g) || []).map((m) => m.replace(/\{\{|\}\}/g, ''))
-            )].sort((a, b) => Number(a) - Number(b));
-            if (varNums.length === 0) return null;
-            return (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
-                <div>
-                  <p className="text-sm font-semibold text-amber-800">Template Variables</p>
-                  <p className="text-xs text-amber-600 mt-0.5">
-                    Use <code className="bg-amber-100 px-1 rounded">{'{{contact_name}}'}</code> or{' '}
-                    <code className="bg-amber-100 px-1 rounded">{'{{contact_phone}}'}</code> for per-contact values.
+          {/* Media Header Upload — shown for Broadcast only when template has IMAGE/VIDEO/DOCUMENT header */}
+          {isBroadcast && hasMediaHeader && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
+              <div>
+                <p className="text-sm font-semibold text-blue-800 flex items-center gap-1.5">
+                  {(selTpl?.header_type || '').toUpperCase() === 'IMAGE' ? '🖼️' :
+                   (selTpl?.header_type || '').toUpperCase() === 'VIDEO' ? '🎥' : '📄'}{' '}
+                  {selTpl?.header_type?.charAt(0) + (selTpl?.header_type || '').slice(1).toLowerCase()} Header
+                </p>
+                {selTpl?.header_content && (
+                  <p className="text-xs text-blue-600 mt-0.5">
+                    Template default: <span className="font-mono">{selTpl.header_content.slice(0, 40)}{selTpl.header_content.length > 40 ? '…' : ''}</span>
                   </p>
-                </div>
-                {/* Preview */}
-                <div className="bg-[#dcf8c6] rounded-xl px-3 py-2 text-xs text-gray-800 whitespace-pre-wrap break-words">
-                  {tpl.body_text.replace(/\{\{(\d+)\}\}/g, (_, n) =>
-                    templateVars[n] ? `[${templateVars[n]}]` : `{{${n}}}`
+                )}
+              </div>
+
+              {/* URL / Upload toggle */}
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setHeaderMediaMode('url')}
+                  className={`flex-1 py-1.5 text-xs font-semibold rounded-lg border-2 transition-colors
+                    ${headerMediaMode === 'url' ? 'border-blue-400 bg-blue-100 text-blue-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                  Enter URL
+                </button>
+                <button type="button" onClick={() => setHeaderMediaMode('upload')}
+                  className={`flex-1 py-1.5 text-xs font-semibold rounded-lg border-2 transition-colors
+                    ${headerMediaMode === 'upload' ? 'border-blue-400 bg-blue-100 text-blue-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                  Upload File
+                </button>
+              </div>
+
+              {headerMediaMode === 'url' && (
+                <input
+                  value={headerMedia.startsWith('media_id:') ? '' : headerMedia}
+                  onChange={(e) => setHeaderMedia(e.target.value)}
+                  placeholder={`Public ${selTpl?.header_type?.toLowerCase()} URL (https://...)`}
+                  className="input text-sm w-full"
+                />
+              )}
+
+              {headerMediaMode === 'upload' && (
+                <div>
+                  <input ref={headerFileRef} type="file"
+                    accept={
+                      (selTpl?.header_type || '').toUpperCase() === 'IMAGE' ? 'image/*' :
+                      (selTpl?.header_type || '').toUpperCase() === 'VIDEO' ? 'video/*' : '*'
+                    }
+                    className="hidden"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadHeaderFile(f); }} />
+                  <button type="button" onClick={() => headerFileRef.current?.click()}
+                    disabled={uploadingHeader}
+                    className="w-full py-2 border-2 border-dashed border-blue-300 hover:border-blue-400 rounded-lg text-sm text-blue-600 font-medium transition-colors disabled:opacity-50">
+                    {uploadingHeader ? 'Uploading…' : headerMedia.startsWith('media_id:') ? '✓ File uploaded — click to replace' : 'Click to upload file'}
+                  </button>
+                  {headerMedia.startsWith('media_id:') && (
+                    <p className="text-xs text-green-600 mt-1 text-center">Media ID: {headerMedia.replace('media_id:', '')}</p>
                   )}
                 </div>
-                {varNums.map((n) => (
-                  <div key={n} className="flex items-center gap-2">
-                    <span className="text-xs font-mono text-amber-700 w-8 shrink-0 text-right">{`{{${n}}}`}</span>
-                    <input
-                      value={templateVars[n] || ''}
-                      onChange={(e) => setTemplateVars((p) => ({ ...p, [n]: e.target.value }))}
-                      placeholder={`Value for {{${n}}} — e.g. "Dear Customer" or {{contact_name}}`}
-                      className="input text-sm flex-1"
-                    />
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
+              )}
 
-          {/* API type: show info box instead of contacts/schedule */}
-          {isApi ? (
+              {!headerMedia && selTpl?.header_content && (
+                <p className="text-xs text-blue-500">Leave blank to use template&apos;s default media.</p>
+              )}
+            </div>
+          )}
+
+          {/* Template Variables — Broadcast only */}
+          {isBroadcast && varNums.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+              <div>
+                <p className="text-sm font-semibold text-amber-800">Template Variables</p>
+                <p className="text-xs text-amber-600 mt-0.5">
+                  Use <code className="bg-amber-100 px-1 rounded">{'{{contact_name}}'}</code> or{' '}
+                  <code className="bg-amber-100 px-1 rounded">{'{{contact_phone}}'}</code> for per-contact values.
+                  {contactMode === 'csv' && ' CSV columns will override these.'}
+                </p>
+              </div>
+              <div className="bg-[#dcf8c6] rounded-xl px-3 py-2 text-xs text-gray-800 whitespace-pre-wrap break-words">
+                {selTpl?.body_text?.replace(/\{\{(\d+)\}\}/g, (_, n) => templateVars[n] ? `[${templateVars[n]}]` : `{{${n}}}`)}
+              </div>
+              {varNums.map((n) => (
+                <div key={n} className="flex items-center gap-2">
+                  <span className="text-xs font-mono text-amber-700 w-8 shrink-0 text-right">{`{{${n}}}`}</span>
+                  <input value={templateVars[n] || ''} onChange={(e) => setTemplateVars((p) => ({ ...p, [n]: e.target.value }))}
+                    placeholder={`Value for {{${n}}} — e.g. "Dear Customer" or {{contact_name}}`} className="input text-sm flex-1" />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* API type */}
+          {isApi && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
               <p className="text-sm font-semibold text-blue-800 flex items-center gap-2">
                 <Zap size={14} /> API Campaign — No contacts needed
               </p>
               <p className="text-xs text-blue-600">
-                After creating the campaign, an API endpoint will be provided. Call it from your backend to send messages to any number — no need to select contacts manually.
+                After creating the campaign, an API endpoint will be provided. You can also use Bulk Send from the campaign detail page.
               </p>
             </div>
-          ) : (
+          )}
+
+          {/* Broadcast: contacts section */}
+          {isBroadcast && (
             <>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Schedule (optional)</label>
@@ -695,30 +821,137 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
                   onChange={(e) => setForm({ ...form, scheduled_at: e.target.value })} className="input" />
               </div>
 
+              {/* Toggle: Select Contacts / Upload CSV */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select Contacts ({selectedIds.length} selected)
-                </label>
-                <div className="border border-gray-200 rounded-lg max-h-48 overflow-y-auto divide-y divide-gray-100">
-                  <label className="flex items-center gap-3 px-3 py-2 bg-gray-50 cursor-pointer hover:bg-gray-100">
-                    <input type="checkbox"
-                      checked={selectedIds.length === contacts.length && contacts.length > 0}
-                      onChange={(e) => setSelectedIds(e.target.checked ? contacts.map((c) => c.id) : [])}
-                    />
-                    <span className="text-sm font-medium">Select All ({contacts.length})</span>
-                  </label>
-                  {contacts.length === 0 && (
-                    <p className="text-xs text-gray-400 px-3 py-4 text-center">
-                      No contacts yet. Add contacts first from the Contacts page.
-                    </p>
-                  )}
-                  {contacts.map((c) => (
-                    <label key={c.id} className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50">
-                      <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleContact(c.id)} />
-                      <span className="text-sm">{c.name || c.phone} <span className="text-gray-400">+{c.phone}</span></span>
-                    </label>
-                  ))}
+                <label className="block text-sm font-medium text-gray-700 mb-2">Contacts *</label>
+                <div className="flex gap-2 mb-3">
+                  <button type="button" onClick={() => setContactMode('select')}
+                    className={`flex-1 py-2 text-sm font-semibold rounded-lg border-2 transition-colors
+                      ${contactMode === 'select' ? 'border-whatsapp-green bg-green-50 text-whatsapp-green' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                    Select Contacts
+                  </button>
+                  <button type="button" onClick={() => setContactMode('csv')}
+                    className={`flex-1 py-2 text-sm font-semibold rounded-lg border-2 transition-colors
+                      ${contactMode === 'csv' ? 'border-whatsapp-green bg-green-50 text-whatsapp-green' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                    Upload CSV
+                  </button>
                 </div>
+
+                {/* Select contacts list */}
+                {contactMode === 'select' && (
+                  <div className="space-y-2">
+                    {/* Search box */}
+                    <div className="relative">
+                      {contactSearchLoading
+                        ? <Loader2 size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 animate-spin" />
+                        : <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />}
+                      <input
+                        value={contactSearch}
+                        onChange={(e) => setContactSearch(e.target.value)}
+                        placeholder="Search by name or phone…"
+                        className="input pl-9 text-sm w-full" />
+                    </div>
+
+                    {/* Selected count + hint */}
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-gray-500">{selectedIds.length} selected</p>
+                      {!contactSearch && (
+                        <p className="text-xs text-gray-400">Showing first 500 — search to find more</p>
+                      )}
+                    </div>
+
+                    <div className="border border-gray-200 rounded-lg max-h-52 overflow-y-auto divide-y divide-gray-100">
+                      {!contactSearch && (
+                        <label className="flex items-center gap-3 px-3 py-2 bg-gray-50 cursor-pointer hover:bg-gray-100">
+                          <input type="checkbox"
+                            checked={contacts.length > 0 && contacts.every((c) => selectedIds.includes(c.id))}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedIds((prev) => [...new Set([...prev, ...contacts.map((c) => c.id)])]);
+                              } else {
+                                const shown = new Set(contacts.map((c) => c.id));
+                                setSelectedIds((prev) => prev.filter((id) => !shown.has(id)));
+                              }
+                            }} />
+                          <span className="text-sm font-medium">Select visible ({contacts.length})</span>
+                        </label>
+                      )}
+                      {contacts.length === 0 && !contactSearchLoading && (
+                        <p className="text-xs text-gray-400 px-3 py-4 text-center">No contacts found.</p>
+                      )}
+                      {contacts.map((c) => (
+                        <label key={c.id} className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50">
+                          <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleContact(c.id)} />
+                          <span className="text-sm">{c.name || c.phone} <span className="text-gray-400">+{c.phone}</span></span>
+                        </label>
+                      ))}
+                    </div>
+
+                    {/* Large list hint */}
+                    <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      💡 Have many contacts? Use the <strong>Upload CSV</strong> option — add all contacts at once.
+                    </p>
+                  </div>
+                )}
+
+                {/* CSV upload */}
+                {contactMode === 'csv' && (
+                  <div className="space-y-3">
+                    <div
+                      className="border-2 border-dashed border-gray-300 hover:border-whatsapp-green rounded-xl p-5 text-center cursor-pointer transition-colors"
+                      onClick={() => fileRef.current?.click()}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleCsvFile(f); }}>
+                      <p className="text-sm font-semibold text-gray-700">Drop CSV here or click to upload</p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        Required: <code className="bg-gray-100 px-1 rounded">phone</code> column — Optional: <code className="bg-gray-100 px-1 rounded">name</code> + variable columns
+                      </p>
+                      <input ref={fileRef} type="file" accept=".csv,.txt" className="hidden"
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCsvFile(f); }} />
+                    </div>
+                    {csvError && <p className="text-xs text-red-500">{csvError}</p>}
+
+                    {/* Column → variable mapping */}
+                    {csvRows.length > 0 && varNums.length > 0 && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2">
+                        <p className="text-xs font-semibold text-amber-800">Map CSV Columns to Template Variables</p>
+                        {varNums.map((n) => (
+                          <div key={n} className="flex items-center gap-2">
+                            <span className="text-xs font-mono text-amber-700 w-8 shrink-0 text-right">{`{{${n}}}`}</span>
+                            <select value={csvColMap[n] ?? ''} onChange={(e) => setCsvColMap((p) => ({ ...p, [n]: e.target.value }))}
+                              className="input text-sm flex-1">
+                              <option value="">— use default value —</option>
+                              {csvHeaders.map((h, i) => <option key={i} value={String(i)}>{h}</option>)}
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Preview */}
+                    {csvRows.length > 0 && (
+                      <div className="border border-gray-200 rounded-xl overflow-hidden">
+                        <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
+                          <p className="text-xs font-semibold text-gray-600">{csvRows.length} contacts loaded</p>
+                        </div>
+                        <div className="max-h-32 overflow-y-auto divide-y divide-gray-50">
+                          {csvRows.slice(0, 50).map((row, i) => (
+                            <div key={i} className="px-3 py-2 flex items-center gap-3">
+                              <p className="text-sm font-medium text-gray-800 w-28 shrink-0 truncate">{row.name || row.phone}</p>
+                              <p className="text-xs text-gray-400">+{row.phone}</p>
+                              {varNums.filter((n) => csvColMap[n]).map((n) => (
+                                <span key={n} className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded-full truncate max-w-[80px]">
+                                  {row.vars[csvColMap[n]] || '—'}
+                                </span>
+                              ))}
+                            </div>
+                          ))}
+                          {csvRows.length > 50 && <p className="text-xs text-gray-400 text-center py-2">+{csvRows.length - 50} more</p>}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </>
           )}
