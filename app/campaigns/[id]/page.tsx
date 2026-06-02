@@ -21,6 +21,7 @@ interface CampaignDetail {
   language: string;
   body_text: string;
   buttons: string;
+  template_vars: string; // JSON object stored as string
   total_contacts: number;
   sent_count: number;
   delivered_count: number;
@@ -58,6 +59,7 @@ const STATUS_COLOR: Record<string, string> = {
   running:   'bg-yellow-100 text-yellow-700',
   completed: 'bg-green-100 text-green-700',
   failed:    'bg-red-100 text-red-700',
+  paused:    'bg-orange-100 text-orange-700',
 };
 const MSG_STATUS: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
   pending:   { label: 'Pending',   color: 'text-gray-400',   icon: <Clock size={13} /> },
@@ -145,7 +147,12 @@ export default function CampaignDetailPage() {
   const [activeTab, setActiveTab]   = useState<TabKey>('all');
   const [loading, setLoading]       = useState(true);
   const [showTest, setShowTest]     = useState(false);
+  const [testPhone, setTestPhone]   = useState('');
+  const [testVars, setTestVars]     = useState<Record<string, string>>({});
+  const [sendingTest, setSendingTest] = useState(false);
   const [launching, setLaunching]   = useState(false);
+  const [stopping, setStopping]     = useState(false);
+  const [processing, setProcessing] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [selected, setSelected]             = useState<Set<number>>(new Set());
   const [selectAllPages, setSelectAllPages] = useState(false);
@@ -231,6 +238,50 @@ export default function CampaignDetailPage() {
       toast.error(err instanceof Error ? err.message : 'Launch failed');
     } finally {
       setLaunching(false);
+    }
+  }
+
+  async function processNow() {
+    setProcessing(true);
+    try {
+      const r = await apiFetch('/api/campaigns/process', { method: 'GET' });
+      toast.success(`Batch processed — ${r.data?.batchSent ?? 0} sent, ${r.data?.batchFailed ?? 0} failed`);
+      load(activeTab, 1, dateFrom, dateTo);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Process failed');
+    } finally {
+      setProcessing(false);
+    }
+  }
+
+  async function stopCampaign() {
+    setStopping(true);
+    try {
+      await apiFetch(`/api/campaigns/${id}/stop`, { method: 'POST' });
+      toast.success('Campaign paused — remaining messages will not be sent');
+      load(activeTab, 1, dateFrom, dateTo);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to stop');
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  async function sendTest() {
+    if (!testPhone.trim()) { toast.error('Phone number required'); return; }
+    setSendingTest(true);
+    try {
+      await apiFetch(`/api/campaigns/${id}/test`, {
+        method: 'POST',
+        body: JSON.stringify({ phone: testPhone.trim(), vars: testVars }),
+      });
+      toast.success('Test message sent!');
+      setShowTest(false);
+      setTestPhone('');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to send test');
+    } finally {
+      setSendingTest(false);
     }
   }
 
@@ -326,10 +377,51 @@ export default function CampaignDetailPage() {
               <Zap size={14} /> Test Campaign
             </button>
           )}
-          {campaign.campaign_type !== 'api' && (campaign.status === 'draft' || campaign.status === 'scheduled') && (
+          {/* Draft / Scheduled — show Test + Launch */}
+          {campaign.campaign_type !== 'api' && ['draft', 'scheduled'].includes(campaign.status) && (
+            <>
+              <button
+                onClick={() => {
+                  try {
+                    const defaultVars = JSON.parse(campaign.template_vars || '{}') as Record<string, string>;
+                    setTestVars(defaultVars);
+                  } catch { setTestVars({}); }
+                  setShowTest(true);
+                }}
+                className="btn-secondary flex items-center gap-1.5 text-sm px-3 py-1.5">
+                <Send size={14} /> Send Test
+              </button>
+              <button onClick={launch} disabled={launching}
+                className="btn-primary flex items-center gap-1.5 text-sm px-3 py-1.5 disabled:opacity-50">
+                <Play size={14} /> {launching ? 'Launching...' : 'Launch'}
+              </button>
+            </>
+          )}
+
+          {/* Running — show Process Now + Stop buttons */}
+          {campaign.campaign_type !== 'api' && campaign.status === 'running' && (
+            <>
+              <button onClick={processNow} disabled={processing}
+                className="btn-primary flex items-center gap-1.5 text-sm px-3 py-1.5 disabled:opacity-50"
+                title="Manually trigger next batch (use this in local dev — on Vercel cron runs automatically)">
+                {processing
+                  ? <><span className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" /> Processing...</>
+                  : <><Play size={14} /> Process Now</>}
+              </button>
+              <button onClick={stopCampaign} disabled={stopping}
+                className="flex items-center gap-1.5 text-sm px-3 py-1.5 bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 rounded-lg font-semibold transition-colors disabled:opacity-50">
+                {stopping
+                  ? <><span className="w-3 h-3 border border-red-400 border-t-transparent rounded-full animate-spin" /> Stopping...</>
+                  : <><AlertCircle size={14} /> Stop</>}
+              </button>
+            </>
+          )}
+
+          {/* Paused — show Resume button */}
+          {campaign.campaign_type !== 'api' && campaign.status === 'paused' && (
             <button onClick={launch} disabled={launching}
               className="btn-primary flex items-center gap-1.5 text-sm px-3 py-1.5 disabled:opacity-50">
-              <Play size={14} /> {launching ? 'Launching...' : 'Launch'}
+              <Play size={14} /> {launching ? 'Resuming...' : 'Resume'}
             </button>
           )}
           <button onClick={() => load(activeTab, 1, dateFrom, dateTo)}
@@ -696,9 +788,85 @@ export default function CampaignDetailPage() {
       )}
 
       {/* ── Test Campaign Panel ─────────────────────────────── */}
-      {showTest && (
+      {showTest && campaign.campaign_type === 'api' && (
         <TestPanel campaign={campaign} onClose={() => setShowTest(false)} />
       )}
+
+      {/* ── Broadcast / Drip Test Send Modal ─────────────────── */}
+      {showTest && campaign.campaign_type !== 'api' && (() => {
+        // Extract {{1}}, {{2}} vars from body_text
+        const varNums = [...new Set(
+          (campaign.body_text?.match(/\{\{(\d+)\}\}/g) || []).map((m) => m.replace(/\{\{|\}\}/g, ''))
+        )].sort((a, b) => Number(a) - Number(b));
+
+        return (
+          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+            onClick={() => setShowTest(false)}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md"
+              onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                  <Send size={16} className="text-whatsapp-green" /> Send Test Message
+                </h3>
+                <button onClick={() => setShowTest(false)} className="text-gray-400 hover:text-gray-600">
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="px-5 py-4 space-y-4">
+                {/* Phone */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">
+                    Phone Number <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    value={testPhone}
+                    onChange={(e) => setTestPhone(e.target.value)}
+                    placeholder="919876543210 (with country code)"
+                    className="input text-sm w-full"
+                  />
+                </div>
+
+                {/* Template variable inputs */}
+                {varNums.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-gray-600">Template Variables</p>
+                    {varNums.map((n) => (
+                      <div key={n} className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400 w-8 shrink-0 text-right">{`{{${n}}}`}</span>
+                        <input
+                          value={testVars[n] || ''}
+                          onChange={(e) => setTestVars((p) => ({ ...p, [n]: e.target.value }))}
+                          placeholder={`Variable ${n}`}
+                          className="input text-sm flex-1"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Preview */}
+                {campaign.body_text && (
+                  <div className="bg-[#dcf8c6] rounded-xl px-4 py-3 text-sm text-gray-800 whitespace-pre-wrap break-words">
+                    {campaign.body_text.replace(/\{\{(\d+)\}\}/g, (_, n) => testVars[n] || `{{${n}}}`)}
+                  </div>
+                )}
+              </div>
+
+              <div className="px-5 pb-5 flex justify-end gap-2">
+                <button onClick={() => setShowTest(false)}
+                  className="btn-secondary text-sm px-4 py-2">Cancel</button>
+                <button onClick={sendTest} disabled={sendingTest || !testPhone.trim()}
+                  className="btn-primary text-sm px-4 py-2 flex items-center gap-1.5 disabled:opacity-50">
+                  {sendingTest
+                    ? <><span className="animate-spin inline-block w-3 h-3 border border-white border-t-transparent rounded-full" /> Sending...</>
+                    : <><Send size={13} /> Send Test</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

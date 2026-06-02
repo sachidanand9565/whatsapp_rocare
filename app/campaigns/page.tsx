@@ -399,6 +399,7 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   const [form, setForm]                 = useState({
     name: '', template_id: '', scheduled_at: '', campaign_type: 'broadcast',
   });
+  const [templateVars, setTemplateVars] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
   const isApi = form.campaign_type === 'api';
@@ -442,6 +443,7 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           scheduled_at:  form.scheduled_at || undefined,
           campaign_type: form.campaign_type,
           contact_ids:   isApi ? [] : selectedIds,
+          template_vars: templateVars,
         }),
       });
       if (isApi) {
@@ -605,6 +607,7 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
                               setForm({ ...form, template_id: String(t.id) });
                               setTemplateDropOpen(false);
                               setTemplateSearch('');
+                              setTemplateVars({}); // reset vars on template change
                             }}
                             className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center justify-between gap-2
                               ${String(t.id) === form.template_id ? 'bg-green-50 text-whatsapp-green font-semibold' : 'text-gray-700'}`}>
@@ -634,6 +637,45 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
             {/* Hidden required input for form validation */}
             <input type="text" required value={form.template_id} onChange={() => {}} className="sr-only" />
           </div>
+
+          {/* ── Template Variable Inputs (shown when template has {{1}} etc.) ── */}
+          {(() => {
+            if (!form.template_id) return null;
+            const tpl = templates.find((t) => String(t.id) === form.template_id);
+            if (!tpl?.body_text) return null;
+            const varNums = [...new Set(
+              (tpl.body_text.match(/\{\{(\d+)\}\}/g) || []).map((m) => m.replace(/\{\{|\}\}/g, ''))
+            )].sort((a, b) => Number(a) - Number(b));
+            if (varNums.length === 0) return null;
+            return (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-amber-800">Template Variables</p>
+                  <p className="text-xs text-amber-600 mt-0.5">
+                    Use <code className="bg-amber-100 px-1 rounded">{'{{contact_name}}'}</code> or{' '}
+                    <code className="bg-amber-100 px-1 rounded">{'{{contact_phone}}'}</code> for per-contact values.
+                  </p>
+                </div>
+                {/* Preview */}
+                <div className="bg-[#dcf8c6] rounded-xl px-3 py-2 text-xs text-gray-800 whitespace-pre-wrap break-words">
+                  {tpl.body_text.replace(/\{\{(\d+)\}\}/g, (_, n) =>
+                    templateVars[n] ? `[${templateVars[n]}]` : `{{${n}}}`
+                  )}
+                </div>
+                {varNums.map((n) => (
+                  <div key={n} className="flex items-center gap-2">
+                    <span className="text-xs font-mono text-amber-700 w-8 shrink-0 text-right">{`{{${n}}}`}</span>
+                    <input
+                      value={templateVars[n] || ''}
+                      onChange={(e) => setTemplateVars((p) => ({ ...p, [n]: e.target.value }))}
+                      placeholder={`Value for {{${n}}} — e.g. "Dear Customer" or {{contact_name}}`}
+                      className="input text-sm flex-1"
+                    />
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
 
           {/* API type: show info box instead of contacts/schedule */}
           {isApi ? (

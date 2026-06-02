@@ -6,6 +6,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { RowDataPacket } from 'mysql2';
 
+export const maxDuration = 30; // Vercel: allow up to 30s for two-hop Meta fetch
+
 export async function GET(
   req: NextRequest,
   { params }: { params: { mediaId: string } }

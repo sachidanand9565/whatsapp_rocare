@@ -36,8 +36,12 @@ export async function POST(req: NextRequest, { params }: Params) {
     if (camp.status === 'running' || camp.status === 'completed') {
       return apiError(`Campaign is already ${camp.status as string}`, 400);
     }
+    // Allow re-launching a paused campaign (resumes from where it stopped)
     if (camp.campaign_type === 'api') {
       return apiError('API campaigns cannot be launched manually. Use the /send endpoint instead.', 400);
+    }
+    if (!['draft', 'scheduled', 'paused', 'failed'].includes(camp.status as string)) {
+      return apiError(`Cannot launch a campaign with status: ${camp.status as string}`, 400);
     }
 
     // Mark as running
@@ -63,15 +67,8 @@ export async function POST(req: NextRequest, { params }: Params) {
       [campaignId]
     );
 
-    // Send in background — don't await, return immediately
-    sendBulk(
-      campaignId,
-      payload.workspaceId,
-      camp,
-      contacts as { contact_id: number; phone: string; cc_id: number }[]
-    ).catch((e) => console.error('[bulk send error]', e));
-
-    return apiSuccess({ message: `Sending to ${contacts.length} contacts`, total: contacts.length });
+    // Cron job (/api/campaigns/process) handles actual sending in batches — just return
+    return apiSuccess({ message: `Campaign queued — sending to ${contacts.length} contacts`, total: contacts.length });
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
     console.error('[launch]', err);
