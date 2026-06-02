@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
        FROM campaigns c
        JOIN templates t ON t.id = c.template_id
        JOIN workspaces w ON w.id = c.workspace_id
-       WHERE c.status = 'running' AND c.campaign_type != 'api'
+       WHERE c.status = 'running'
        ORDER BY c.started_at ASC
        LIMIT 1`,
       []
