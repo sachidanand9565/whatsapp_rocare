@@ -1657,22 +1657,28 @@ export default function InboxPage() {
                         ? 'bg-[#dcf8c6] text-gray-800 rounded-br-sm'
                         : 'bg-white text-gray-800 rounded-bl-sm'}`}>
 
-                      {/* Reply reference — with linked message or fallback to last template */}
-                      {m.type === 'button' && (() => {
-                        const quotedMsg = repliedMsg || messages.slice().reverse().find(
-                          (x) => x.direction === 'outbound' && x.type === 'template' && x.id < m.id
-                        );
-                        const quotedTpl = quotedMsg ? parseTemplateContent(quotedMsg.content) : null;
+                      {/* Reply reference — show for button replies and any message with replied_to_wamid */}
+                      {(m.type === 'button' || repliedMsg) && (() => {
+                        const quotedMsg = m.type === 'button'
+                          ? (repliedMsg || messages.slice().reverse().find(
+                              (x) => x.direction === 'outbound' && x.type === 'template' && x.id < m.id
+                            ))
+                          : repliedMsg;
+                        if (!quotedMsg) return null;
+                        const quotedTpl = parseTemplateContent(quotedMsg.content);
+                        const headerLabel = quotedTpl?.template_name
+                          ? quotedTpl.template_name
+                          : quotedMsg.direction === 'outbound' ? 'You' : 'User';
                         return (
                           <button
-                            onClick={() => quotedMsg?.wamid && scrollToReplied(quotedMsg.wamid)}
+                            onClick={() => quotedMsg.wamid && scrollToReplied(quotedMsg.wamid)}
                             className="w-full text-left bg-black/10 border-l-4 border-whatsapp-green px-3 py-2 hover:bg-black/15 transition-colors">
                             <p className="text-whatsapp-teal font-semibold text-xs flex items-center gap-1 mb-0.5">
-                              ↩ Replied to this message
+                              ↩ {headerLabel}
                             </p>
                             <p className="text-gray-600 text-xs truncate">
-                              {quotedTpl?.body?.slice(0, 55) || quotedMsg?.content?.slice(0, 55) || 'Template message'}
-                              {((quotedTpl?.body?.length || 0) > 55) && '…'}
+                              {quotedTpl?.body?.slice(0, 55) || quotedMsg.content?.slice(0, 55) || 'Template message'}
+                              {((quotedTpl?.body?.length || quotedMsg.content?.length || 0) > 55) && '…'}
                             </p>
                           </button>
                         );
