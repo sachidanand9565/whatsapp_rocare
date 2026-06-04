@@ -93,6 +93,25 @@ export default function TemplatesPage() {
       .finally(() => setLoading(false));
   }
 
+  async function silentSync() {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/templates/sync', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const changes = data.data?.changes || [];
+      if (changes.length > 0) {
+        changes.forEach((c: { name: string; old_status: string; new_status: string }) => {
+          toast.success(`"${c.name}": ${c.old_status} → ${c.new_status}`, { duration: 5000 });
+        });
+        load();
+      }
+    } catch { /* ignore */ }
+  }
+
   async function syncFromMeta() {
     setSyncing(true);
     try {
@@ -150,7 +169,7 @@ export default function TemplatesPage() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); silentSync(); }, []);
 
   // Filter by tab
   const filtered = useMemo(() =>
