@@ -159,7 +159,8 @@ function getNextNode(edges: FlowEdge[], nodes: FlowNode[], sourceId: string, han
   const edge = handle
     ? (edges.find((e) => e.source === sourceId && e.sourceHandle === handle)
       || edges.find((e) => e.source === sourceId && e.sourceHandle === 'default')
-      || edges.find((e) => e.source === sourceId && !e.sourceHandle))
+      || edges.find((e) => e.source === sourceId && !e.sourceHandle)
+      || edges.find((e) => e.source === sourceId)) // fallback: any edge from this node
     : edges.find((e) => e.source === sourceId);
   if (!edge) return null;
   return getNode(nodes, edge.target);
@@ -285,7 +286,7 @@ async function executeFromNode(
         } else {
           // Fallback: agar koi items nahi mile to plain text bhejo
           try {
-            const res = await sendTextMessage(accessToken, phoneNumberId, contactPhone, bodyText + '\n\n(Koi options nahi mile, baad mein try karo)');
+            const res = await sendTextMessage(accessToken, phoneNumberId, contactPhone, bodyText + '\n\n(No options available right now, please try again later)');
             wamid = res?.messages?.[0]?.id || null;
           } catch { /**/ }
         }
@@ -561,13 +562,26 @@ export async function tryResumeFlow(
   const contactRows = await query<RowDataPacket[]>('SELECT name FROM contacts WHERE id = ? LIMIT 1', [contactId]);
   const contactName = (contactRows[0]?.name as string) || '';
 
-  await updateSessionNode(session.id, nextNode.id, session.variables);
-  // For button/list nodes pass the item ID (effectiveMsg) so {{user_message}} = selected ID in next nodes
+  // For button/list/dynamic_list — save selected_id and selected_title into session vars
+  const updatedVars = { ...session.variables };
+  if (
+    currentNode.type === 'button_message' ||
+    currentNode.type === 'list_message'   ||
+    currentNode.type === 'dynamic_list'
+  ) {
+    updatedVars['selected_id']    = effectiveMsg;   // row/button ID
+    updatedVars['selected_title'] = userMessage;    // display text user saw
+  }
+
+  await updateSessionNode(session.id, nextNode.id, updatedVars);
   const msgToPass = (
     currentNode.type === 'button_message' ||
     currentNode.type === 'list_message'   ||
     currentNode.type === 'dynamic_list'
   ) ? effectiveMsg : userMessage;
+
+  // Update session with new vars before executing
+  session.variables = updatedVars;
   await executeFromNode(flow, session, nextNode, accessToken, phoneNumberId, contactPhone, workspaceId, msgToPass, contactName);
   return true;
 }

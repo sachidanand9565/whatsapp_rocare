@@ -262,7 +262,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
   const [dynUrl,         setDynUrl]        = useState(node.data.url||'');
   const [dynMethod,      setDynMethod]     = useState(node.data.method||'GET');
   const [dynTestLoading, setDynTestLoading]= useState(false);
-  const [dynTestResult,  setDynTestResult] = useState<{ ok: boolean; items?: {id:string;title:string;description?:string}[]; error?: string; raw?: string } | null>(null);
+  const [dynTestResult,  setDynTestResult] = useState<{ ok: boolean; items?: {id:string;title:string;description?:string}[]; error?: string; raw?: string; _tab?: string } | null>(null);
   const [dynHeaders,     setDynHeaders]    = useState(node.data.headers||'');
   const [dynReqBody,     setDynReqBody]    = useState(node.data.body||'');
   const [dynItemsPath,   setDynItemsPath]  = useState(node.data.items_path||'');
@@ -487,9 +487,9 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
                       title:       String(item[dynTitleField||'title'] ?? `Item ${idx+1}`),
                       description: dynDescField && item[dynDescField] ? String(item[dynDescField]) : undefined,
                     }));
-                    setDynTestResult({ ok: true, items, raw: JSON.stringify(data, null, 2).slice(0, 500) });
+                    setDynTestResult({ ok: true, items, raw: JSON.stringify(data, null, 2) });
                   } else {
-                    setDynTestResult({ ok: false, error: 'Could not find array at specified path. Check Items Path field.', raw: JSON.stringify(data, null, 2).slice(0, 500) });
+                    setDynTestResult({ ok: false, error: 'Could not find array at specified path. Check Items Path field.', raw: JSON.stringify(data, null, 2) });
                   }
                 } catch (e) {
                   setDynTestResult({ ok: false, error: e instanceof Error ? e.message : 'Request failed. Check URL and network.' });
@@ -505,37 +505,55 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
             </button>
 
             {dynTestResult && (
-              <div className={`rounded-lg border p-3 space-y-2 ${dynTestResult.ok ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                {dynTestResult.ok ? (
-                  <>
-                    <p className="text-[11px] font-semibold text-green-700">✓ Success — {dynTestResult.items?.length} item(s) extracted</p>
-                    <div className="space-y-1">
-                      {dynTestResult.items?.map((item, i) => (
-                        <div key={i} className="bg-white border border-green-200 rounded px-2 py-1">
-                          <p className="text-[10px] font-medium text-gray-800 truncate">{item.title}</p>
-                          {item.description && <p className="text-[9px] text-gray-400 truncate">{item.description}</p>}
-                          <p className="text-[9px] text-gray-300 font-mono">id: {item.id}</p>
+              <div className="rounded-lg border overflow-hidden">
+                {/* Status bar */}
+                <div className={`px-3 py-2 flex items-center gap-2 ${dynTestResult.ok ? 'bg-green-600' : 'bg-red-600'}`}>
+                  <span className="text-white text-[11px] font-semibold">
+                    {dynTestResult.ok ? `✓ Success — ${dynTestResult.items?.length} item(s) extracted` : `✗ ${dynTestResult.error}`}
+                  </span>
+                </div>
+
+                {/* Tabs */}
+                {(() => {
+                  const [tab, setTab] = [dynTestResult._tab||'response', (t: string) => setDynTestResult(p => p ? {...p, _tab: t} : p)];
+                  return (
+                    <>
+                      <div className="flex border-b border-gray-200 bg-gray-50">
+                        {['response', 'items'].map(t => (
+                          <button key={t} onClick={() => setTab(t)}
+                            className={`px-3 py-1.5 text-[10px] font-semibold capitalize border-b-2 transition-colors
+                              ${tab === t ? 'border-violet-500 text-violet-700 bg-white' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                            {t === 'response' ? 'Raw Response' : `Extracted Items (${dynTestResult.items?.length||0})`}
+                          </button>
+                        ))}
+                      </div>
+
+                      {tab === 'response' && (
+                        <div className="bg-gray-900 max-h-52 overflow-y-auto">
+                          <pre className="text-[10px] text-green-400 font-mono p-3 whitespace-pre-wrap leading-relaxed">
+                            {dynTestResult.raw || 'No response body'}
+                          </pre>
                         </div>
-                      ))}
-                    </div>
-                    {dynTestResult.raw && (
-                      <details className="mt-1">
-                        <summary className="text-[10px] text-green-600 cursor-pointer">View raw response</summary>
-                        <pre className="text-[9px] text-gray-600 mt-1 overflow-x-auto bg-white rounded p-2 border border-green-100">{dynTestResult.raw}</pre>
-                      </details>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <p className="text-[11px] font-semibold text-red-700">✗ {dynTestResult.error}</p>
-                    {dynTestResult.raw && (
-                      <details>
-                        <summary className="text-[10px] text-red-600 cursor-pointer">View raw response</summary>
-                        <pre className="text-[9px] text-gray-600 mt-1 overflow-x-auto bg-white rounded p-2 border border-red-100">{dynTestResult.raw}</pre>
-                      </details>
-                    )}
-                  </>
-                )}
+                      )}
+
+                      {tab === 'items' && (
+                        <div className="max-h-52 overflow-y-auto divide-y divide-gray-100">
+                          {dynTestResult.items?.length ? dynTestResult.items.map((item, i) => (
+                            <div key={i} className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50">
+                              <span className="text-[9px] font-mono text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded flex-shrink-0">{item.id}</span>
+                              <div className="min-w-0">
+                                <p className="text-[11px] font-medium text-gray-800 truncate">{item.title}</p>
+                                {item.description && <p className="text-[9px] text-gray-400 truncate">{item.description}</p>}
+                              </div>
+                            </div>
+                          )) : (
+                            <p className="text-[11px] text-gray-400 text-center py-4">No items extracted — check Items Path and field names</p>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
           </div>
