@@ -551,13 +551,25 @@ export async function tryResumeFlow(
     currentNode.type === 'list_message' ||
     currentNode.type === 'dynamic_list'
   ) {
-    // effectiveMsg = button/item id (from interactiveReply.id or buttonPayload)
-    // Try exact handle match first, then fallback to default
     nextNode = getNextNode(edges, nodes, currentNode.id, effectiveMsg)
       || getNextNode(edges, nodes, currentNode.id);
   }
 
-  if (!nextNode) { await endSession(session.id); return false; }
+  if (!nextNode) {
+    // dynamic_list: agar koi next node nahi mila to user ne purani category list se dobara
+    // select kiya — same node ko naye ID se re-run karo (new API call with new category)
+    if (currentNode.type === 'dynamic_list') {
+      const contactRows2 = await query<RowDataPacket[]>('SELECT name FROM contacts WHERE id = ? LIMIT 1', [contactId]);
+      const contactName2 = (contactRows2[0]?.name as string) || '';
+      const rerunVars = { ...session.variables, selected_id: effectiveMsg, selected_title: userMessage };
+      await updateSessionNode(session.id, currentNode.id, rerunVars);
+      session.variables = rerunVars;
+      await executeFromNode(flow, session, currentNode, accessToken, phoneNumberId, contactPhone, workspaceId, effectiveMsg, contactName2);
+      return true;
+    }
+    await endSession(session.id);
+    return false;
+  }
 
   const contactRows = await query<RowDataPacket[]>('SELECT name FROM contacts WHERE id = ? LIMIT 1', [contactId]);
   const contactName = (contactRows[0]?.name as string) || '';
