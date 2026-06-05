@@ -274,10 +274,16 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
   const [dynFooterText,  setDynFooterText] = useState(node.data.footer_text||'');
   const [dynBtnText,     setDynBtnText]    = useState(node.data.list_button_text||'Select');
   const [dynSaveAs,      setDynSaveAs]     = useState(node.data.save_response_as||'');
+  const [dynSaveIdAs,    setDynSaveIdAs]   = useState(node.data.save_id_as||'');
+  const [dynSaveTitleAs, setDynSaveTitleAs]= useState(node.data.save_title_as||'');
   const [listBodyText,   setListBodyText]  = useState(node.data.body_text||'');
   const [listHeaderText, setListHeaderText]= useState(node.data.header_text||'');
   const [listFooterText, setListFooterText]= useState(node.data.footer_text||'');
   const [listButtonText, setListButtonText]= useState(node.data.list_button_text||'View Options');
+  const [listSaveIdAs,   setListSaveIdAs]  = useState(node.data.save_id_as||'');
+  const [listSaveTitleAs,setListSaveTitleAs]=useState(node.data.save_title_as||'');
+  const [btnSaveIdAs,    setBtnSaveIdAs]   = useState(node.data.save_id_as||'');
+  const [btnSaveTitleAs, setBtnSaveTitleAs]= useState(node.data.save_title_as||'');
   const [listSections,   setListSections]  = useState<{ title: string; rows: { id: string; title: string; description?: string }[] }[]>(
     node.data.list_sections || [{ title: '', rows: [] }]
   );
@@ -294,8 +300,9 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
     if (type==='update_contact') { updates.contact_field=contactField; updates.field_value=fieldValue; }
     if (type==='delay')          { updates.seconds=Number(delaySecs); }
     if (type==='template')       { updates.template_name=tplName; updates.language=tplLang; }
-    if (type==='list_message')   { updates.body_text=listBodyText; updates.header_text=listHeaderText; updates.footer_text=listFooterText; updates.list_button_text=listButtonText; updates.list_sections=listSections; }
-    if (type==='dynamic_list')  { updates.url=dynUrl; updates.method=dynMethod; updates.headers=dynHeaders; updates.body=dynReqBody; updates.items_path=dynItemsPath; updates.id_field=dynIdField; updates.title_field=dynTitleField; updates.description_field=dynDescField; updates.body_text=dynBodyText; updates.header_text=dynHeaderText; updates.footer_text=dynFooterText; updates.list_button_text=dynBtnText; updates.save_response_as=dynSaveAs; }
+    if (type==='list_message')   { updates.body_text=listBodyText; updates.header_text=listHeaderText; updates.footer_text=listFooterText; updates.list_button_text=listButtonText; updates.list_sections=listSections; updates.save_id_as=listSaveIdAs; updates.save_title_as=listSaveTitleAs; }
+    if (type==='button_message') { updates.body_text=btnBodyText; updates.header_text=btnHeaderText; updates.footer_text=btnFooterText; updates.buttons=buttons; updates.save_id_as=btnSaveIdAs; updates.save_title_as=btnSaveTitleAs; }
+    if (type==='dynamic_list')  { updates.url=dynUrl; updates.method=dynMethod; updates.headers=dynHeaders; updates.body=dynReqBody; updates.items_path=dynItemsPath; updates.id_field=dynIdField; updates.title_field=dynTitleField; updates.description_field=dynDescField; updates.body_text=dynBodyText; updates.header_text=dynHeaderText; updates.footer_text=dynFooterText; updates.list_button_text=dynBtnText; updates.save_response_as=dynSaveAs; updates.save_id_as=dynSaveIdAs; updates.save_title_as=dynSaveTitleAs; }
     onUpdate(node.id, updates);
     onClose();
   }
@@ -375,6 +382,29 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
             <label className="block font-semibold text-gray-600 mb-1">Footer (optional)</label>
             <input value={btnFooterText} onChange={e=>setBtnFooterText(e.target.value)}
               placeholder="e.g. Powered by Limbu.ai" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-400"/>
+          </div>
+          <div className="bg-teal-50 border border-teal-200 rounded-lg p-3 space-y-2">
+            <p className="font-semibold text-teal-800 text-[11px]">💾 Save Selection as Variable (optional)</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-gray-500 text-[10px] mb-1">Save button ID as</label>
+                <input value={btnSaveIdAs} onChange={e=>setBtnSaveIdAs(e.target.value)}
+                  placeholder="e.g. selected_btn"
+                  className="w-full border border-gray-200 rounded px-2 py-1.5 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-teal-400"/>
+              </div>
+              <div>
+                <label className="block text-gray-500 text-[10px] mb-1">Save button text as</label>
+                <input value={btnSaveTitleAs} onChange={e=>setBtnSaveTitleAs(e.target.value)}
+                  placeholder="e.g. selected_service"
+                  className="w-full border border-gray-200 rounded px-2 py-1.5 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-teal-400"/>
+              </div>
+            </div>
+            {(btnSaveIdAs||btnSaveTitleAs) && (
+              <p className="text-teal-600 text-[10px]">
+                {btnSaveIdAs && <span>Use <code className="bg-teal-100 px-1 rounded">{`{{${btnSaveIdAs}}}`}</code>. </span>}
+                {btnSaveTitleAs && <span>Use <code className="bg-teal-100 px-1 rounded">{`{{${btnSaveTitleAs}}}`}</code>.</span>}
+              </p>
+            )}
           </div>
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 space-y-1">
             <p className="font-semibold text-blue-800 text-[11px]">💡 Separate flow per button:</p>
@@ -614,6 +644,29 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
                 placeholder="Powered by..." className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-400"/>
             </div>
           </div>
+          <div className="bg-teal-50 border border-teal-200 rounded-lg p-3 space-y-2">
+            <p className="font-semibold text-teal-800 text-[11px]">💾 Save Selection as Variable (optional)</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-gray-500 text-[10px] mb-1">Save item ID as</label>
+                <input value={dynSaveIdAs} onChange={e=>setDynSaveIdAs(e.target.value)}
+                  placeholder="e.g. service_id"
+                  className="w-full border border-gray-200 rounded px-2 py-1.5 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-teal-400"/>
+              </div>
+              <div>
+                <label className="block text-gray-500 text-[10px] mb-1">Save item title as</label>
+                <input value={dynSaveTitleAs} onChange={e=>setDynSaveTitleAs(e.target.value)}
+                  placeholder="e.g. service_name"
+                  className="w-full border border-gray-200 rounded px-2 py-1.5 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-teal-400"/>
+              </div>
+            </div>
+            {(dynSaveIdAs||dynSaveTitleAs) && (
+              <p className="text-teal-600 text-[10px]">
+                {dynSaveIdAs && <span>Use <code className="bg-teal-100 px-1 rounded">{`{{${dynSaveIdAs}}}`}</code>. </span>}
+                {dynSaveTitleAs && <span>Use <code className="bg-teal-100 px-1 rounded">{`{{${dynSaveTitleAs}}}`}</code>.</span>}
+              </p>
+            )}
+          </div>
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 space-y-1">
             <p className="font-semibold text-blue-800 text-[11px]">💡 Flow Pattern:</p>
             <p className="text-blue-700 text-[11px] font-mono">Dynamic List → next node (branches by item ID)</p>
@@ -681,6 +734,29 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
             <label className="block font-semibold text-gray-600 mb-1">Footer (optional)</label>
             <input value={listFooterText} onChange={e=>setListFooterText(e.target.value)}
               placeholder="e.g. Powered by Limbu.ai" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"/>
+          </div>
+          <div className="bg-teal-50 border border-teal-200 rounded-lg p-3 space-y-2">
+            <p className="font-semibold text-teal-800 text-[11px]">💾 Save Selection as Variable (optional)</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-gray-500 text-[10px] mb-1">Save ID as</label>
+                <input value={listSaveIdAs} onChange={e=>setListSaveIdAs(e.target.value)}
+                  placeholder="e.g. lead_type"
+                  className="w-full border border-gray-200 rounded px-2 py-1.5 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-teal-400"/>
+              </div>
+              <div>
+                <label className="block text-gray-500 text-[10px] mb-1">Save Title as</label>
+                <input value={listSaveTitleAs} onChange={e=>setListSaveTitleAs(e.target.value)}
+                  placeholder="e.g. category_name"
+                  className="w-full border border-gray-200 rounded px-2 py-1.5 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-teal-400"/>
+              </div>
+            </div>
+            {(listSaveIdAs||listSaveTitleAs) && (
+              <p className="text-teal-600 text-[10px]">
+                {listSaveIdAs && <span>Use <code className="bg-teal-100 px-1 rounded">{`{{${listSaveIdAs}}}`}</code> for ID. </span>}
+                {listSaveTitleAs && <span>Use <code className="bg-teal-100 px-1 rounded">{`{{${listSaveTitleAs}}}`}</code> for title.</span>}
+              </p>
+            )}
           </div>
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5">
             <p className="font-semibold text-blue-800 mb-1 text-[11px]">💡 Connect to separate branches</p>
