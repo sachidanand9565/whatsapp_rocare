@@ -21,7 +21,9 @@ import {
 // ── Node type configs ─────────────────────────────────────────
 const NODE_TYPES_META = {
   message:        { label: 'Message',        color: 'bg-green-500',   icon: MessageSquare,  border: 'border-green-400',   desc: 'Text message bhejo' },
-  button_message: { label: 'Buttons',        color: 'bg-emerald-600', icon: LayoutTemplate, border: 'border-emerald-500', desc: 'WhatsApp clickable buttons bhejo' },
+  button_message: { label: 'Buttons',        color: 'bg-emerald-600', icon: LayoutTemplate, border: 'border-emerald-500', desc: 'WhatsApp clickable buttons bhejo (max 3)' },
+  list_message:   { label: 'List Menu',      color: 'bg-cyan-600',    icon: MessageSquare,  border: 'border-cyan-400',    desc: 'WhatsApp scrollable list bhejo (max 10 items)' },
+  dynamic_list:   { label: 'Dynamic List',   color: 'bg-violet-600',  icon: Globe,          border: 'border-violet-400',  desc: 'API se data fetch karke list banao' },
   wait:           { label: 'Wait',           color: 'bg-yellow-500',  icon: Clock,          border: 'border-yellow-400',  desc: 'User reply ka wait karo' },
   condition:      { label: 'Condition',      color: 'bg-blue-500',    icon: GitBranch,      border: 'border-blue-400',    desc: 'Reply se branch karo' },
   set_variable:   { label: 'Save Reply',     color: 'bg-teal-500',    icon: Database,       border: 'border-teal-400',    desc: 'User reply variable mein save karo' },
@@ -95,6 +97,22 @@ function FlowNode({ data, selected }: NodeProps) {
               <div key={i} className="border border-emerald-300 text-emerald-700 rounded px-2 py-0.5 text-[10px] font-medium text-center bg-emerald-50">{b.title || '...'}</div>
             ))}
             {!(data.buttons?.length) && <div className="border border-dashed border-gray-200 rounded px-2 py-0.5 text-[10px] text-gray-300 text-center">Buttons yahan dikhenge</div>}
+          </div>
+        )}
+        {data.type === 'dynamic_list' && (
+          <div className="space-y-1">
+            <p className="text-violet-600 font-mono text-[10px] truncate">{data.method||'GET'} {data.url||'...'}</p>
+            <p className="line-clamp-1 text-gray-600">{data.body_text || <span className="text-gray-300 italic">Body text…</span>}</p>
+            <div className="border border-dashed border-violet-300 rounded px-2 py-0.5 text-[10px] text-violet-500 text-center">Items API se aayenge</div>
+          </div>
+        )}
+        {data.type === 'list_message' && (
+          <div className="space-y-1">
+            <p className="line-clamp-2 text-gray-700">{data.body_text || <span className="text-gray-300 italic">Click to add message…</span>}</p>
+            {(data.list_sections?.[0]?.rows || []).slice(0, 3).map((r: { id: string; title: string }, i: number) => (
+              <div key={i} className="border border-cyan-300 text-cyan-700 rounded px-2 py-0.5 text-[10px] font-medium bg-cyan-50">{r.title || '...'}</div>
+            ))}
+            {!(data.list_sections?.[0]?.rows?.length) && <div className="border border-dashed border-gray-200 rounded px-2 py-0.5 text-[10px] text-gray-300 text-center">List items yahan dikhenge</div>}
           </div>
         )}
         {data.type === 'wait'      && <p className="text-gray-400 italic">⏳ User reply ka wait…</p>}
@@ -187,6 +205,26 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
   const [delaySecs,      setDelaySecs]     = useState(node.data.seconds||2);
   const [tplName,        setTplName]       = useState(node.data.template_name||'');
   const [tplLang,        setTplLang]       = useState(node.data.language||'en');
+  const [dynUrl,         setDynUrl]        = useState(node.data.url||'');
+  const [dynMethod,      setDynMethod]     = useState(node.data.method||'GET');
+  const [dynHeaders,     setDynHeaders]    = useState(node.data.headers||'');
+  const [dynReqBody,     setDynReqBody]    = useState(node.data.body||'');
+  const [dynItemsPath,   setDynItemsPath]  = useState(node.data.items_path||'');
+  const [dynIdField,     setDynIdField]    = useState(node.data.id_field||'id');
+  const [dynTitleField,  setDynTitleField] = useState(node.data.title_field||'name');
+  const [dynDescField,   setDynDescField]  = useState(node.data.description_field||'');
+  const [dynBodyText,    setDynBodyText]   = useState(node.data.body_text||'');
+  const [dynHeaderText,  setDynHeaderText] = useState(node.data.header_text||'');
+  const [dynFooterText,  setDynFooterText] = useState(node.data.footer_text||'');
+  const [dynBtnText,     setDynBtnText]    = useState(node.data.list_button_text||'Select');
+  const [dynSaveAs,      setDynSaveAs]     = useState(node.data.save_response_as||'');
+  const [listBodyText,   setListBodyText]  = useState(node.data.body_text||'');
+  const [listHeaderText, setListHeaderText]= useState(node.data.header_text||'');
+  const [listFooterText, setListFooterText]= useState(node.data.footer_text||'');
+  const [listButtonText, setListButtonText]= useState(node.data.list_button_text||'View Options');
+  const [listSections,   setListSections]  = useState<{ title: string; rows: { id: string; title: string; description?: string }[] }[]>(
+    node.data.list_sections || [{ title: '', rows: [] }]
+  );
 
   function save() {
     const base = { type: node.data.type };
@@ -200,6 +238,8 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
     if (type==='update_contact') { updates.contact_field=contactField; updates.field_value=fieldValue; }
     if (type==='delay')          { updates.seconds=Number(delaySecs); }
     if (type==='template')       { updates.template_name=tplName; updates.language=tplLang; }
+    if (type==='list_message')   { updates.body_text=listBodyText; updates.header_text=listHeaderText; updates.footer_text=listFooterText; updates.list_button_text=listButtonText; updates.list_sections=listSections; }
+    if (type==='dynamic_list')  { updates.url=dynUrl; updates.method=dynMethod; updates.headers=dynHeaders; updates.body=dynReqBody; updates.items_path=dynItemsPath; updates.id_field=dynIdField; updates.title_field=dynTitleField; updates.description_field=dynDescField; updates.body_text=dynBodyText; updates.header_text=dynHeaderText; updates.footer_text=dynFooterText; updates.list_button_text=dynBtnText; updates.save_response_as=dynSaveAs; }
     onUpdate(node.id, updates);
     onClose();
   }
@@ -280,9 +320,175 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
             <input value={btnFooterText} onChange={e=>setBtnFooterText(e.target.value)}
               placeholder="e.g. Powered by Limbu.ai" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-400"/>
           </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 space-y-1">
+            <p className="font-semibold text-blue-800 text-[11px]">💡 Har button ka alag flow banana:</p>
+            <p className="text-blue-700 text-[11px]">1. Buttons Node → Wait → Condition</p>
+            <p className="text-blue-700 text-[11px]">2. Condition mein har button ka ID dalo (e.g. btn_1, btn_2)</p>
+            <p className="text-blue-700 text-[11px]">3. Har condition ka handle alag next node se connect karo</p>
+          </div>
+        </>}
+
+        {/* DYNAMIC LIST */}
+        {type==='dynamic_list' && <>
+          <div className="bg-violet-50 border border-violet-200 rounded-lg p-3">
+            <p className="font-semibold text-violet-800 mb-1">🌐 Dynamic List Node</p>
+            <p className="text-violet-700">API se data fetch karke automatically WhatsApp list banata hai. User jab item select kare to Condition node se match hoga.</p>
+          </div>
+
+          {/* API Config */}
+          <p className="font-semibold text-gray-700 text-[11px] uppercase tracking-wide">API Settings</p>
+          <div className="flex gap-2">
+            <select value={dynMethod} onChange={e=>setDynMethod(e.target.value)}
+              className="border border-gray-200 rounded-lg px-2 py-2 text-sm focus:outline-none w-20 flex-shrink-0">
+              <option>GET</option><option>POST</option><option>PUT</option>
+            </select>
+            <input value={dynUrl} onChange={e=>setDynUrl(e.target.value)}
+              placeholder="https://api.example.com/products"
+              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-400 font-mono"/>
+          </div>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Headers (JSON, optional)</label>
+            <textarea value={dynHeaders} onChange={e=>setDynHeaders(e.target.value)} rows={2}
+              placeholder={'{"Authorization": "Bearer {{token}}"}'}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-400 resize-none"/>
+          </div>
+          {dynMethod !== 'GET' && <div>
+            <label className="block font-semibold text-gray-600 mb-1">Request Body (JSON, optional)</label>
+            <textarea value={dynReqBody} onChange={e=>setDynReqBody(e.target.value)} rows={2}
+              placeholder={'{"category": "{{user_message}}"}'}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-400 resize-none"/>
+          </div>}
+
+          {/* Response Mapping */}
+          <p className="font-semibold text-gray-700 text-[11px] uppercase tracking-wide">Response → List Items</p>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Items ka path (optional)</label>
+            <input value={dynItemsPath} onChange={e=>setDynItemsPath(e.target.value)}
+              placeholder="e.g. data.products  (khali chhodo agar root array hai)"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-400"/>
+            <p className="text-gray-400 mt-1 text-[10px]">API returns: <code className="bg-gray-100 px-1">{`{ "data": { "products": [...] } }`}</code> → path: <code className="bg-gray-100 px-1">data.products</code></p>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="block font-semibold text-gray-600 mb-1">ID field *</label>
+              <input value={dynIdField} onChange={e=>setDynIdField(e.target.value)}
+                placeholder="id" className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-400"/>
+            </div>
+            <div>
+              <label className="block font-semibold text-gray-600 mb-1">Title field *</label>
+              <input value={dynTitleField} onChange={e=>setDynTitleField(e.target.value)}
+                placeholder="name" className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-400"/>
+            </div>
+            <div>
+              <label className="block font-semibold text-gray-600 mb-1">Desc field</label>
+              <input value={dynDescField} onChange={e=>setDynDescField(e.target.value)}
+                placeholder="desc" className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-400"/>
+            </div>
+          </div>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Response save karo (optional)</label>
+            <input value={dynSaveAs} onChange={e=>setDynSaveAs(e.target.value)}
+              placeholder="e.g. products_data"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-400"/>
+          </div>
+
+          {/* Message Config */}
+          <p className="font-semibold text-gray-700 text-[11px] uppercase tracking-wide">Message Config</p>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Header (optional)</label>
+            <input value={dynHeaderText} onChange={e=>setDynHeaderText(e.target.value)}
+              placeholder="e.g. Available Products"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-400"/>
+          </div>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Body Text *</label>
+            <textarea value={dynBodyText} onChange={e=>setDynBodyText(e.target.value)} rows={3}
+              placeholder="Apna option select karo:"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-400 resize-none"/>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block font-semibold text-gray-600 mb-1">Button Text</label>
+              <input value={dynBtnText} onChange={e=>setDynBtnText(e.target.value.slice(0,20))} maxLength={20}
+                placeholder="Select" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-400"/>
+            </div>
+            <div>
+              <label className="block font-semibold text-gray-600 mb-1">Footer (optional)</label>
+              <input value={dynFooterText} onChange={e=>setDynFooterText(e.target.value)}
+                placeholder="Powered by..." className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-400"/>
+            </div>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 space-y-1">
+            <p className="font-semibold text-blue-800 text-[11px]">💡 Flow Pattern:</p>
+            <p className="text-blue-700 text-[11px] font-mono">Dynamic List → Wait → Condition</p>
+            <p className="text-blue-700 text-[11px]">Condition mein item ka <strong>ID</strong> (id_field) match karo. Har item ke liye alag branch banao.</p>
+          </div>
+        </>}
+
+        {/* LIST MESSAGE */}
+        {type==='list_message' && <>
+          <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-3">
+            <p className="font-semibold text-cyan-800 mb-1">📋 List Menu Node</p>
+            <p className="text-cyan-700">WhatsApp scrollable list bhejta hai. User ek item select kare to Condition node se match hoga (row ID se).</p>
+          </div>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Header (optional)</label>
+            <input value={listHeaderText} onChange={e=>setListHeaderText(e.target.value)}
+              placeholder="e.g. Help Menu" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"/>
+          </div>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Message Body *</label>
+            <textarea value={listBodyText} onChange={e=>setListBodyText(e.target.value)} rows={3}
+              placeholder="Neeche se apna option select karo:"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400 resize-none"/>
+          </div>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Button Text (max 20 chars)</label>
+            <input value={listButtonText} onChange={e=>setListButtonText(e.target.value.slice(0,20))}
+              placeholder="View Options" maxLength={20}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"/>
+          </div>
+          <div className="space-y-2">
+            <label className="block font-semibold text-gray-600">List Items (max 10)</label>
+            {(listSections[0]?.rows || []).map((r, i) => (
+              <div key={i} className="flex gap-2 items-start bg-gray-50 rounded-lg p-2">
+                <div className="flex-1 space-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-gray-400 w-8 flex-shrink-0 text-[11px]">ID:</span>
+                    <input value={r.id} onChange={e=>{const s=[...listSections];s[0].rows[i]={...s[0].rows[i],id:e.target.value};setListSections(s);}}
+                      placeholder="order_status" className="flex-1 border border-gray-200 rounded px-2 py-1 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-cyan-400"/>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-gray-400 w-8 flex-shrink-0 text-[11px]">Title:</span>
+                    <input value={r.title} onChange={e=>{const s=[...listSections];s[0].rows[i]={...s[0].rows[i],title:e.target.value.slice(0,24)};setListSections(s);}}
+                      placeholder="Order Status (max 24)" maxLength={24}
+                      className="flex-1 border border-gray-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-cyan-400"/>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-gray-400 w-8 flex-shrink-0 text-[11px]">Desc:</span>
+                    <input value={r.description||''} onChange={e=>{const s=[...listSections];s[0].rows[i]={...s[0].rows[i],description:e.target.value.slice(0,72)};setListSections(s);}}
+                      placeholder="optional (max 72)" maxLength={72}
+                      className="flex-1 border border-gray-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-cyan-400"/>
+                  </div>
+                </div>
+                <button onClick={()=>{const s=[...listSections];s[0].rows=s[0].rows.filter((_,j)=>j!==i);setListSections(s);}} className="text-gray-300 hover:text-red-500 mt-1"><Trash2 size={12}/></button>
+              </div>
+            ))}
+            {(listSections[0]?.rows?.length||0) < 10 && (
+              <button onClick={()=>{const s=[...listSections];if(!s[0])s[0]={title:'',rows:[]};s[0].rows=[...s[0].rows,{id:`item_${(s[0].rows.length||0)+1}`,title:'',description:''}];setListSections(s);}}
+                className="flex items-center gap-1 text-cyan-600 hover:text-cyan-800 font-medium text-xs">
+                <Plus size={11}/> Item Add Karo
+              </button>
+            )}
+          </div>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Footer (optional)</label>
+            <input value={listFooterText} onChange={e=>setListFooterText(e.target.value)}
+              placeholder="e.g. Powered by Limbu.ai" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"/>
+          </div>
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5">
             <p className="font-semibold text-blue-800 mb-1 text-[11px]">💡 Condition se connect karo</p>
-            <p className="text-blue-700 text-[11px]">Button ID ko Condition node ke "User reply" value se match karo. User jab button dabayega to wo ID match hogi.</p>
+            <p className="text-blue-700 text-[11px]">Row ka ID Condition node ke "User reply" value se match karo. Har item ke liye alag branch banao.</p>
           </div>
         </>}
 

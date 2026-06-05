@@ -151,7 +151,7 @@ export async function POST(req: NextRequest) {
     } else if (msg.type === 'contacts') {
       const list = msg.contacts as Record<string, unknown>[] | undefined;
       content = JSON.stringify({ __type: 'contacts', contacts: list });
-    } else if (msg.type === 'interactive') content = '📋 Interactive reply';
+    } else if (msg.type === 'interactive') content = msg.interactiveReply?.title || '📋 Interactive reply';
     else content = msg.type;
 
     // Store message (try with replied_to_wamid, fallback without)
@@ -255,16 +255,25 @@ export async function POST(req: NextRequest) {
         }
       }
     } else if (msg.type === 'button' && msg.button) {
-      // User clicked an interactive button — resume active flow session with button payload
-      const token        = workspaceAccessToken || '';
-      const pnId         = phoneNumberId || '';
-      const buttonText   = msg.button.text   || '';
+      // Template quick reply button clicked
+      const token         = workspaceAccessToken || '';
+      const pnId          = phoneNumberId || '';
+      const buttonText    = msg.button.text    || '';
       const buttonPayload = msg.button.payload || buttonText;
-      // Show typing indicator while processing button reply
       if (token && pnId && msg.wamid) {
         sendTypingIndicator(token, pnId, msg.wamid).catch(() => {});
       }
       await tryResumeFlow(workspaceId, contactId, phone, buttonText, token, pnId, buttonPayload).catch(() => {});
+    } else if (msg.type === 'interactive' && msg.interactiveReply) {
+      // Interactive button_message / list_message reply — resume active flow
+      const token      = workspaceAccessToken || '';
+      const pnId       = phoneNumberId || '';
+      const replyTitle = msg.interactiveReply.title || '';
+      const replyId    = msg.interactiveReply.id    || replyTitle;
+      if (token && pnId && msg.wamid) {
+        sendTypingIndicator(token, pnId, msg.wamid).catch(() => {});
+      }
+      await tryResumeFlow(workspaceId, contactId, phone, replyTitle, token, pnId, replyId).catch(() => {});
     }
   }
 

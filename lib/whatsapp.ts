@@ -71,6 +71,45 @@ export async function sendButtonMessage(
   return data;
 }
 
+// ---- Send interactive list message (max 10 rows per section) ----
+export async function sendListMessage(
+  accessToken:   string,
+  phoneNumberId: string,
+  to:            string,
+  bodyText:      string,
+  buttonText:    string,
+  sections:      { title: string; rows: { id: string; title: string; description?: string }[] }[],
+  headerText?:   string,
+  footerText?:   string,
+) {
+  const client = createWAClient(accessToken);
+  const interactive: Record<string, unknown> = {
+    type: 'list',
+    body: { text: bodyText },
+    action: {
+      button: (buttonText || 'Select').slice(0, 20),
+      sections: sections.map((s) => ({
+        title: s.title || '',
+        rows: s.rows.slice(0, 10).map((r) => ({
+          id:    String(r.id).slice(0, 200),
+          title: String(r.title).slice(0, 24),
+          ...(r.description ? { description: String(r.description).slice(0, 72) } : {}),
+        })),
+      })),
+    },
+  };
+  if (headerText) interactive.header = { type: 'text', text: headerText };
+  if (footerText) interactive.footer = { text: footerText };
+  const { data } = await client.post(`/${phoneNumberId}/messages`, {
+    messaging_product: 'whatsapp',
+    recipient_type:    'individual',
+    to,
+    type:              'interactive',
+    interactive,
+  });
+  return data;
+}
+
 // ---- Send template message ----
 export async function sendTemplateMessage(
   accessToken:   string,
@@ -245,6 +284,8 @@ export interface IncomingMessage {
   contacts?:       object[];
   interactive?:    object;
   button?:         { text: string; payload: string };
+  // Parsed from interactive: button_reply or list_reply
+  interactiveReply?: { id: string; title: string; replyType: 'button_reply' | 'list_reply' };
   replied_to_wamid?: string;  // context.id from button replies
 }
 
@@ -321,6 +362,20 @@ export function parseWebhookBody(body: Record<string, unknown>): {
     for (const m of msgs) {
       const btn     = m.button  as Record<string, unknown> | undefined;
       const context = m.context as Record<string, unknown> | undefined;
+
+      // Parse interactive button_reply / list_reply
+      let interactiveReply: IncomingMessage['interactiveReply'];
+      if (m.type === 'interactive' && m.interactive) {
+        const ia       = m.interactive as Record<string, unknown>;
+        const btnReply  = ia.button_reply as Record<string, unknown> | undefined;
+        const listReply = ia.list_reply   as Record<string, unknown> | undefined;
+        if (btnReply) {
+          interactiveReply = { id: btnReply.id as string, title: btnReply.title as string, replyType: 'button_reply' };
+        } else if (listReply) {
+          interactiveReply = { id: listReply.id as string, title: listReply.title as string, replyType: 'list_reply' };
+        }
+      }
+
       result.messages.push({
         wamid:            m.id as string,
         from:             m.from as string,
@@ -336,6 +391,7 @@ export function parseWebhookBody(body: Record<string, unknown>): {
         contacts:         m.contacts as object[],
         interactive:      m.interactive as object,
         button:           btn ? { text: btn.text as string, payload: btn.payload as string } : undefined,
+        interactiveReply,
         replied_to_wamid: context?.id as string | undefined,
       });
     }

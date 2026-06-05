@@ -16,7 +16,7 @@
  *   end            — end the flow
  */
 import { query, insert, execute } from '@/lib/db';
-import { sendTextMessage, sendTemplateMessage, sendButtonMessage } from '@/lib/whatsapp';
+import { sendTextMessage, sendTemplateMessage, sendButtonMessage, sendListMessage } from '@/lib/whatsapp';
 import { utcNow } from '@/lib/utils';
 import { emitSSE } from '@/lib/sse';
 import { RowDataPacket } from 'mysql2';
@@ -24,7 +24,7 @@ import { RowDataPacket } from 'mysql2';
 // ── Types ────────────────────────────────────────────────────────
 
 export type FlowNodeType =
-  | 'message' | 'button_message' | 'wait' | 'condition'
+  | 'message' | 'button_message' | 'list_message' | 'dynamic_list' | 'wait' | 'condition'
   | 'set_variable' | 'api_call' | 'update_contact'
   | 'delay' | 'template' | 'transfer' | 'end';
 
@@ -39,6 +39,14 @@ export interface FlowNode {
     header_text?:    string;
     footer_text?:    string;
     buttons?:        { id: string; title: string }[];
+    // list_message
+    list_button_text?: string;
+    list_sections?:    { title: string; rows: { id: string; title: string; description?: string }[] }[];
+    // dynamic_list (API se data fetch karke list banao)
+    items_path?:        string;   // JSON path to array e.g. "data.products"
+    id_field?:          string;   // field name for row id   e.g. "id"
+    title_field?:       string;   // field name for row title e.g. "name"
+    description_field?: string;   // field name for description (optional)
     // condition
     conditions?:     { value: string; label: string }[];
     // set_variable
@@ -194,6 +202,96 @@ async function executeFromNode(
         // Save as interactive type
         const btnContent = JSON.stringify({ __type: 'buttons', body: bodyText, buttons, header: headerText, footer: footerText });
         await saveOutboundMessage(workspaceId, session.contact_id, btnContent, wamid, 'interactive');
+        node = getNextNode(flow.edges, flow.nodes, nodeId);
+        if (node) await updateSessionNode(session.id, node.id, vars);
+        break;
+      }
+
+      // ── List Message: WhatsApp interactive list ───────────────
+      case 'list_message': {
+        const bodyText   = substituteVars(node.data.body_text || '', vars, extras);
+        const headerText = node.data.header_text    ? substituteVars(node.data.header_text, vars, extras) : undefined;
+        const footerText = node.data.footer_text    ? substituteVars(node.data.footer_text, vars, extras) : undefined;
+        const buttonText = node.data.list_button_text || 'Select';
+        const sections   = node.data.list_sections  || [];
+        let wamid: string | null = null;
+        try {
+          const res = await sendListMessage(accessToken, phoneNumberId, contactPhone, bodyText, buttonText, sections, headerText, footerText);
+          wamid = res?.messages?.[0]?.id || null;
+        } catch { /* continue */ }
+        const listContent = JSON.stringify({ __type: 'list', body: bodyText, button: buttonText, sections, header: headerText, footer: footerText });
+        await saveOutboundMessage(workspaceId, session.contact_id, listContent, wamid, 'interactive');
+        node = getNextNode(flow.edges, flow.nodes, nodeId);
+        if (node) await updateSessionNode(session.id, node.id, vars);
+        break;
+      }
+
+      // ── Dynamic List: API se data fetch karke list bhejo ─────────
+      case 'dynamic_list': {
+        const url        = substituteVars(node.data.url     || '', vars, extras);
+        const method     = node.data.method                 || 'GET';
+        const bodyText   = substituteVars(node.data.body_text  || '', vars, extras);
+        const headerText = node.data.header_text ? substituteVars(node.data.header_text, vars, extras) : undefined;
+        const footerText = node.data.footer_text ? substituteVars(node.data.footer_text, vars, extras) : undefined;
+        const btnText    = node.data.list_button_text       || 'Select';
+        const idField    = node.data.id_field               || 'id';
+        const titleField = node.data.title_field            || 'title';
+        const descField  = node.data.description_field      || '';
+        const itemsPath  = node.data.items_path             || '';
+
+        let rows: { id: string; title: string; description?: string }[] = [];
+        try {
+          let headersObj: Record<string, string> = { 'Content-Type': 'application/json' };
+          if (node.data.headers) {
+            try { headersObj = { ...headersObj, ...JSON.parse(substituteVars(node.data.headers, vars, extras)) }; } catch { /**/ }
+          }
+          const reqBody = method !== 'GET' && node.data.body
+            ? substituteVars(node.data.body, vars, extras)
+            : undefined;
+
+          const res  = await fetch(url, { method, headers: headersObj, body: reqBody });
+          let data: unknown = await res.json();
+
+          // Navigate to nested path e.g. "data.products" → obj.data.products
+          if (itemsPath) {
+            for (const key of itemsPath.split('.')) {
+              if (data && typeof data === 'object') data = (data as Record<string, unknown>)[key];
+            }
+          }
+
+          if (Array.isArray(data)) {
+            rows = data.slice(0, 10).map((item: unknown, idx: number) => {
+              const obj = (item || {}) as Record<string, unknown>;
+              return {
+                id:    String(obj[idField]    ?? idx + 1),
+                title: String(obj[titleField] ?? `Item ${idx + 1}`).slice(0, 24),
+                ...(descField && obj[descField] ? { description: String(obj[descField]).slice(0, 72) } : {}),
+              };
+            });
+          }
+
+          // Optionally save raw JSON response as a variable
+          if (node.data.save_response_as) {
+            vars[node.data.save_response_as] = JSON.stringify(data);
+          }
+        } catch { /* API fail — send fallback text */ }
+
+        let wamid: string | null = null;
+        if (rows.length > 0) {
+          try {
+            const res = await sendListMessage(accessToken, phoneNumberId, contactPhone, bodyText, btnText, [{ title: '', rows }], headerText, footerText);
+            wamid = res?.messages?.[0]?.id || null;
+          } catch { /**/ }
+        } else {
+          // Fallback: agar koi items nahi mile to plain text bhejo
+          try {
+            const res = await sendTextMessage(accessToken, phoneNumberId, contactPhone, bodyText + '\n\n(Koi options nahi mile, baad mein try karo)');
+            wamid = res?.messages?.[0]?.id || null;
+          } catch { /**/ }
+        }
+
+        const listContent = JSON.stringify({ __type: 'list', body: bodyText, button: btnText, sections: [{ title: '', rows }], header: headerText, footer: footerText });
+        await saveOutboundMessage(workspaceId, session.contact_id, listContent, wamid, 'interactive');
         node = getNextNode(flow.edges, flow.nodes, nodeId);
         if (node) await updateSessionNode(session.id, node.id, vars);
         break;
