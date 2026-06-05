@@ -562,7 +562,12 @@ export async function tryResumeFlow(
   const contactName = (contactRows[0]?.name as string) || '';
 
   await updateSessionNode(session.id, nextNode.id, session.variables);
-  // Pass button text as userMessage for variable saving (more readable than button id)
-  await executeFromNode(flow, session, nextNode, accessToken, phoneNumberId, contactPhone, workspaceId, userMessage, contactName);
+  // For button/list nodes pass the item ID (effectiveMsg) so {{user_message}} = selected ID in next nodes
+  const msgToPass = (
+    currentNode.type === 'button_message' ||
+    currentNode.type === 'list_message'   ||
+    currentNode.type === 'dynamic_list'
+  ) ? effectiveMsg : userMessage;
+  await executeFromNode(flow, session, nextNode, accessToken, phoneNumberId, contactPhone, workspaceId, msgToPass, contactName);
   return true;
 }
