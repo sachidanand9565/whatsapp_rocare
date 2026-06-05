@@ -952,7 +952,7 @@ export default function FlowBuilderPage() {
       const kws = (f.trigger_value || '').split(',').map((k: string) => k.trim()).filter(Boolean);
       setSettingsKeywords(kws);
       setNodes((f.nodes||[]).map((n:Node) => ({ ...n, type:'flowNode' })));
-      setEdges((f.edges||[]).map((e:Edge) => ({ ...e, type:'deleteEdge', type:'deleteEdge' })));
+      setEdges((f.edges||[]).map((e:Edge) => ({ ...e, type:'deleteEdge' })));
       if (!(f.nodes||[]).length) setShowHelp(true);
     }).catch(()=>toast.error('Flow not found')).finally(()=>setLoading(false));
   }, [flowId, setNodes, setEdges]);
