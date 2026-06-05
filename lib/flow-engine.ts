@@ -199,12 +199,12 @@ async function executeFromNode(
           const res = await sendButtonMessage(accessToken, phoneNumberId, contactPhone, bodyText, buttons, headerText, footerText);
           wamid = res?.messages?.[0]?.id || null;
         } catch { /* continue */ }
-        // Save as interactive type
+        // Save as interactive type, then wait for user to click a button
         const btnContent = JSON.stringify({ __type: 'buttons', body: bodyText, buttons, header: headerText, footer: footerText });
         await saveOutboundMessage(workspaceId, session.contact_id, btnContent, wamid, 'interactive');
-        node = getNextNode(flow.edges, flow.nodes, nodeId);
-        if (node) await updateSessionNode(session.id, node.id, vars);
-        break;
+        // Stay on this node — user ke button click ka wait karo
+        await updateSessionNode(session.id, nodeId, vars);
+        return;
       }
 
       // ── List Message: WhatsApp interactive list ───────────────
@@ -221,9 +221,9 @@ async function executeFromNode(
         } catch { /* continue */ }
         const listContent = JSON.stringify({ __type: 'list', body: bodyText, button: buttonText, sections, header: headerText, footer: footerText });
         await saveOutboundMessage(workspaceId, session.contact_id, listContent, wamid, 'interactive');
-        node = getNextNode(flow.edges, flow.nodes, nodeId);
-        if (node) await updateSessionNode(session.id, node.id, vars);
-        break;
+        // Stay on this node — user ke item select ka wait karo
+        await updateSessionNode(session.id, nodeId, vars);
+        return;
       }
 
       // ── Dynamic List: API se data fetch karke list bhejo ─────────
@@ -292,9 +292,9 @@ async function executeFromNode(
 
         const listContent = JSON.stringify({ __type: 'list', body: bodyText, button: btnText, sections: [{ title: '', rows }], header: headerText, footer: footerText });
         await saveOutboundMessage(workspaceId, session.contact_id, listContent, wamid, 'interactive');
-        node = getNextNode(flow.edges, flow.nodes, nodeId);
-        if (node) await updateSessionNode(session.id, node.id, vars);
-        break;
+        // Stay on this node — user ke item select ka wait karo
+        await updateSessionNode(session.id, nodeId, vars);
+        return;
       }
 
       // ── Message: send text ─────────────────────────────────────
@@ -545,6 +545,15 @@ export async function tryResumeFlow(
     );
     const handle = matched ? matched.value : 'default';
     nextNode = getNextNode(edges, nodes, currentNode.id, handle);
+  } else if (
+    currentNode.type === 'button_message' ||
+    currentNode.type === 'list_message' ||
+    currentNode.type === 'dynamic_list'
+  ) {
+    // effectiveMsg = button/item id (from interactiveReply.id or buttonPayload)
+    // Try exact handle match first, then fallback to default
+    nextNode = getNextNode(edges, nodes, currentNode.id, effectiveMsg)
+      || getNextNode(edges, nodes, currentNode.id);
   }
 
   if (!nextNode) { await endSession(session.id); return false; }

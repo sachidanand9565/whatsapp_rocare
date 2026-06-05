@@ -5,7 +5,7 @@ import ReactFlow, {
   addEdge, useNodesState, useEdgesState,
   type Connection, type Edge, type Node,
   Handle, Position, type NodeProps,
-  MarkerType, BaseEdge, EdgeLabelRenderer, getStraightPath,
+  MarkerType, BaseEdge, EdgeLabelRenderer, getBezierPath,
   type EdgeProps, useReactFlow,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
@@ -20,32 +20,32 @@ import {
 
 // ── Node type configs ─────────────────────────────────────────
 const NODE_TYPES_META = {
-  message:        { label: 'Message',        color: 'bg-green-500',   icon: MessageSquare,  border: 'border-green-400',   desc: 'Text message bhejo' },
-  button_message: { label: 'Buttons',        color: 'bg-emerald-600', icon: LayoutTemplate, border: 'border-emerald-500', desc: 'WhatsApp clickable buttons bhejo (max 3)' },
-  list_message:   { label: 'List Menu',      color: 'bg-cyan-600',    icon: MessageSquare,  border: 'border-cyan-400',    desc: 'WhatsApp scrollable list bhejo (max 10 items)' },
-  dynamic_list:   { label: 'Dynamic List',   color: 'bg-violet-600',  icon: Globe,          border: 'border-violet-400',  desc: 'API se data fetch karke list banao' },
-  wait:           { label: 'Wait',           color: 'bg-yellow-500',  icon: Clock,          border: 'border-yellow-400',  desc: 'User reply ka wait karo' },
-  condition:      { label: 'Condition',      color: 'bg-blue-500',    icon: GitBranch,      border: 'border-blue-400',    desc: 'Reply se branch karo' },
-  set_variable:   { label: 'Save Reply',     color: 'bg-teal-500',    icon: Database,       border: 'border-teal-400',    desc: 'User reply variable mein save karo' },
-  api_call:       { label: 'API Call',       color: 'bg-purple-500',  icon: Globe,          border: 'border-purple-400',  desc: 'External API call karo' },
-  update_contact: { label: 'Update Contact', color: 'bg-indigo-500',  icon: UserCheck,      border: 'border-indigo-400',  desc: 'Contact ki info update karo' },
-  delay:          { label: 'Delay',          color: 'bg-gray-500',    icon: Timer,          border: 'border-gray-400',    desc: 'Kuch seconds wait karo' },
-  template:       { label: 'Template',       color: 'bg-pink-500',    icon: LayoutTemplate, border: 'border-pink-400',    desc: 'WhatsApp template bhejo' },
-  transfer:       { label: 'Transfer',       color: 'bg-orange-500',  icon: ArrowRightLeft, border: 'border-orange-400',  desc: 'Agent ko transfer karo' },
-  end:            { label: 'End',            color: 'bg-red-500',     icon: XCircle,        border: 'border-red-400',     desc: 'Flow khatam karo' },
+  message:        { label: 'Message',        color: 'bg-green-500',   icon: MessageSquare,  border: 'border-green-400',   desc: 'Send a text message' },
+  button_message: { label: 'Buttons',        color: 'bg-emerald-600', icon: LayoutTemplate, border: 'border-emerald-500', desc: 'Send WhatsApp interactive buttons (max 3)' },
+  list_message:   { label: 'List Menu',      color: 'bg-cyan-600',    icon: MessageSquare,  border: 'border-cyan-400',    desc: 'Send WhatsApp scrollable list (max 10 items)' },
+  dynamic_list:   { label: 'Dynamic List',   color: 'bg-violet-600',  icon: Globe,          border: 'border-violet-400',  desc: 'Fetch items from API and send as list' },
+  wait:           { label: 'Wait',           color: 'bg-yellow-500',  icon: Clock,          border: 'border-yellow-400',  desc: 'Wait for user reply' },
+  condition:      { label: 'Condition',      color: 'bg-blue-500',    icon: GitBranch,      border: 'border-blue-400',    desc: 'Branch based on user reply' },
+  set_variable:   { label: 'Save Reply',     color: 'bg-teal-500',    icon: Database,       border: 'border-teal-400',    desc: 'Save user reply into a variable' },
+  api_call:       { label: 'API Call',       color: 'bg-purple-500',  icon: Globe,          border: 'border-purple-400',  desc: 'Make an external API request' },
+  update_contact: { label: 'Update Contact', color: 'bg-indigo-500',  icon: UserCheck,      border: 'border-indigo-400',  desc: 'Update contact information' },
+  delay:          { label: 'Delay',          color: 'bg-gray-500',    icon: Timer,          border: 'border-gray-400',    desc: 'Wait N seconds before continuing' },
+  template:       { label: 'Template',       color: 'bg-pink-500',    icon: LayoutTemplate, border: 'border-pink-400',    desc: 'Send a WhatsApp approved template' },
+  transfer:       { label: 'Transfer',       color: 'bg-orange-500',  icon: ArrowRightLeft, border: 'border-orange-400',  desc: 'Transfer chat to a human agent' },
+  end:            { label: 'End',            color: 'bg-red-500',     icon: XCircle,        border: 'border-red-400',     desc: 'End the flow' },
 };
 type NodeType = keyof typeof NODE_TYPES_META;
 
 // ── Example Flow ──────────────────────────────────────────────
 const EXAMPLE_NODES: Node[] = [
   { id: 'ex-1', type: 'flowNode', position: { x: 260, y: 40 },
-    data: { type: 'message', text: 'Namaste! 👋 Aapka naam kya hai?' } },
+    data: { type: 'message', text: 'Hi! 👋 What is your name?' } },
   { id: 'ex-2', type: 'flowNode', position: { x: 260, y: 180 },
     data: { type: 'wait' } },
   { id: 'ex-3', type: 'flowNode', position: { x: 260, y: 310 },
     data: { type: 'set_variable', variable_name: 'user_name' } },
   { id: 'ex-4', type: 'flowNode', position: { x: 260, y: 440 },
-    data: { type: 'message', text: 'Namaste {{user_name}}! 🙏\n\nKya help chahiye?\n1️⃣ Order Status\n2️⃣ Support\n3️⃣ Agent se baat' } },
+    data: { type: 'message', text: 'Hello {{user_name}}! 🙏\n\nHow can we help you?\n1️⃣ Order Status\n2️⃣ Support\n3️⃣ Talk to Agent' } },
   { id: 'ex-5', type: 'flowNode', position: { x: 260, y: 590 },
     data: { type: 'wait' } },
   { id: 'ex-6', type: 'flowNode', position: { x: 260, y: 720 },
@@ -54,9 +54,9 @@ const EXAMPLE_NODES: Node[] = [
     data: { type: 'api_call', url: 'https://yourcrm.com/api/order', method: 'POST',
             body: '{"phone":"{{contact_phone}}","name":"{{user_name}}"}' } },
   { id: 'ex-8', type: 'flowNode', position: { x: 270, y: 900 },
-    data: { type: 'message', text: '🛠️ Support team jald contact karega {{user_name}}!' } },
+    data: { type: 'message', text: '🛠️ Our support team will contact you shortly, {{user_name}}!' } },
   { id: 'ex-9', type: 'flowNode', position: { x: 500, y: 900 },
-    data: { type: 'transfer', transferNote: '{{user_name}} ko agent chahiye' } },
+    data: { type: 'transfer', transferNote: '{{user_name}} needs agent assistance' } },
   { id: 'ex-10', type: 'flowNode', position: { x: 30,  y: 1060 },
     data: { type: 'update_contact', contact_field: 'name', field_value: '{{user_name}}' } },
   { id: 'ex-11', type: 'flowNode', position: { x: 30,  y: 1190 },
@@ -65,17 +65,17 @@ const EXAMPLE_NODES: Node[] = [
     data: { type: 'end' } },
 ];
 const EXAMPLE_EDGES: Edge[] = [
-  { id:'ee1', source:'ex-1',  target:'ex-2',  markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} },
-  { id:'ee2', source:'ex-2',  target:'ex-3',  markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} },
-  { id:'ee3', source:'ex-3',  target:'ex-4',  markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} },
-  { id:'ee4', source:'ex-4',  target:'ex-5',  markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} },
-  { id:'ee5', source:'ex-5',  target:'ex-6',  markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} },
-  { id:'ee6', source:'ex-6',  target:'ex-7',  sourceHandle:'1', markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} },
-  { id:'ee7', source:'ex-6',  target:'ex-8',  sourceHandle:'2', markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} },
-  { id:'ee8', source:'ex-6',  target:'ex-9',  sourceHandle:'3', markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} },
-  { id:'ee9', source:'ex-7',  target:'ex-10', markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} },
-  { id:'ee10',source:'ex-10', target:'ex-11', markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} },
-  { id:'ee11',source:'ex-8',  target:'ex-12', markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} },
+  { id:'ee1', source:'ex-1',  target:'ex-2',  type:'deleteEdge' },
+  { id:'ee2', source:'ex-2',  target:'ex-3',  type:'deleteEdge' },
+  { id:'ee3', source:'ex-3',  target:'ex-4',  type:'deleteEdge' },
+  { id:'ee4', source:'ex-4',  target:'ex-5',  type:'deleteEdge' },
+  { id:'ee5', source:'ex-5',  target:'ex-6',  type:'deleteEdge' },
+  { id:'ee6', source:'ex-6',  target:'ex-7',  sourceHandle:'1', type:'deleteEdge' },
+  { id:'ee7', source:'ex-6',  target:'ex-8',  sourceHandle:'2', type:'deleteEdge' },
+  { id:'ee8', source:'ex-6',  target:'ex-9',  sourceHandle:'3', type:'deleteEdge' },
+  { id:'ee9', source:'ex-7',  target:'ex-10', type:'deleteEdge' },
+  { id:'ee10',source:'ex-10', target:'ex-11', type:'deleteEdge' },
+  { id:'ee11',source:'ex-8',  target:'ex-12', type:'deleteEdge' },
 ];
 
 // ── Custom Node Component ─────────────────────────────────────
@@ -83,60 +83,108 @@ function FlowNode({ data, selected }: NodeProps) {
   const meta = NODE_TYPES_META[data.type as NodeType] || NODE_TYPES_META.message;
   const Icon = meta.icon;
   return (
-    <div className={`bg-white rounded-xl shadow-md border-2 min-w-[200px] max-w-[250px]
+    <div className={`bg-white rounded-xl shadow-md border-2 min-w-[220px] max-w-[270px]
       ${selected ? 'border-whatsapp-green ring-2 ring-whatsapp-green/30' : meta.border}`}>
       <div className={`${meta.color} text-white text-xs font-semibold px-3 py-2 rounded-t-xl flex items-center gap-1.5`}>
         <Icon size={12}/>{meta.label}
       </div>
       <div className="px-3 py-2 text-xs text-gray-600 min-h-[32px]">
-        {data.type === 'message'   && <p className="line-clamp-3 whitespace-pre-wrap">{data.text || <span className="text-gray-300 italic">Click to add message…</span>}</p>}
-        {data.type === 'button_message' && (
-          <div className="space-y-1">
-            <p className="line-clamp-2 text-gray-700">{data.body_text || <span className="text-gray-300 italic">Click to add message…</span>}</p>
-            {(data.buttons || []).map((b: { id: string; title: string }, i: number) => (
-              <div key={i} className="border border-emerald-300 text-emerald-700 rounded px-2 py-0.5 text-[10px] font-medium text-center bg-emerald-50">{b.title || '...'}</div>
-            ))}
-            {!(data.buttons?.length) && <div className="border border-dashed border-gray-200 rounded px-2 py-0.5 text-[10px] text-gray-300 text-center">Buttons yahan dikhenge</div>}
+
+        {/* MESSAGE */}
+        {data.type === 'message' && (
+          <div>
+            <p className="line-clamp-3 whitespace-pre-wrap text-gray-700">{data.text || <span className="text-gray-300 italic">Click to add message…</span>}</p>
+            {data.text && <p className="text-gray-300 text-[9px] text-right mt-1">{(data.text||'').length}/1024</p>}
           </div>
         )}
+
+        {/* BUTTON MESSAGE */}
+        {data.type === 'button_message' && (
+          <div className="space-y-1">
+            <p className="line-clamp-2 text-gray-700 text-[11px]">{data.body_text || <span className="text-gray-300 italic">Click to add message…</span>}</p>
+            {data.body_text && <p className="text-gray-300 text-[9px] text-right">{(data.body_text||'').length}/1024</p>}
+            <div className="border-t border-gray-100 pt-1 space-y-1">
+              {(data.buttons || []).map((b: { id: string; title: string }, i: number) => (
+                <div key={i} className="relative flex items-center justify-between bg-white border border-emerald-200 rounded-lg px-2 py-1.5 pr-5">
+                  <span className="text-[10px] text-emerald-700 font-medium truncate flex-1">{b.title || '...'}</span>
+                  <span className="text-[9px] text-gray-300 mr-2 flex-shrink-0">{(b.title||'').length}/20</span>
+                  <Handle type="source" position={Position.Right} id={b.id}
+                    style={{ right: -10, top: '50%', transform: 'translateY(-50%)' }}
+                    className="!w-3.5 !h-3.5 !bg-emerald-500 !border-2 !border-white !rounded-full"/>
+                </div>
+              ))}
+              {!(data.buttons?.length) && (
+                <div className="border border-dashed border-gray-200 rounded-lg px-2 py-1.5 text-[10px] text-gray-300 text-center">+ Add Button</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* LIST MESSAGE */}
+        {data.type === 'list_message' && (
+          <div className="space-y-1">
+            <p className="line-clamp-2 text-gray-700 text-[11px]">{data.body_text || <span className="text-gray-300 italic">Click to add message…</span>}</p>
+            <div className="border-t border-gray-100 pt-1 space-y-1">
+              {(data.list_sections?.[0]?.rows || []).map((r: { id: string; title: string }, i: number) => (
+                <div key={i} className="relative flex items-center justify-between bg-white border border-cyan-200 rounded-lg px-2 py-1.5 pr-5">
+                  <span className="text-[10px] text-cyan-700 font-medium truncate flex-1">{r.title || '...'}</span>
+                  <span className="text-[9px] text-gray-300 mr-2 flex-shrink-0">{(r.title||'').length}/24</span>
+                  <Handle type="source" position={Position.Right} id={r.id}
+                    style={{ right: -10, top: '50%', transform: 'translateY(-50%)' }}
+                    className="!w-3.5 !h-3.5 !bg-cyan-500 !border-2 !border-white !rounded-full"/>
+                </div>
+              ))}
+              {!(data.list_sections?.[0]?.rows?.length) && (
+                <div className="border border-dashed border-gray-200 rounded-lg px-2 py-1.5 text-[10px] text-gray-300 text-center">+ Add Items</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* DYNAMIC LIST */}
         {data.type === 'dynamic_list' && (
           <div className="space-y-1">
             <p className="text-violet-600 font-mono text-[10px] truncate">{data.method||'GET'} {data.url||'...'}</p>
-            <p className="line-clamp-1 text-gray-600">{data.body_text || <span className="text-gray-300 italic">Body text…</span>}</p>
-            <div className="border border-dashed border-violet-300 rounded px-2 py-0.5 text-[10px] text-violet-500 text-center">Items API se aayenge</div>
+            <p className="line-clamp-1 text-gray-700 text-[11px]">{data.body_text || <span className="text-gray-300 italic">Body text…</span>}</p>
+            <div className="border-t border-gray-100 pt-1 space-y-1">
+              {[1, 2, 3].map((n) => (
+                <div key={n} className="flex items-center justify-between bg-violet-50 border border-violet-200 rounded-lg px-2 py-1">
+                  <div className="min-w-0">
+                    <p className="text-[10px] text-violet-700 font-medium truncate">{data.title_field||'title'}: Sample {n}</p>
+                    {data.description_field && (
+                      <p className="text-[9px] text-violet-400 truncate">{data.description_field}: Description {n}</p>
+                    )}
+                  </div>
+                  <span className="text-[9px] text-violet-300 ml-2 flex-shrink-0 font-mono">{data.id_field||'id'}{n}</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-[9px] text-violet-400 text-center">⚡ Real items replace these at runtime</p>
           </div>
         )}
-        {data.type === 'list_message' && (
-          <div className="space-y-1">
-            <p className="line-clamp-2 text-gray-700">{data.body_text || <span className="text-gray-300 italic">Click to add message…</span>}</p>
-            {(data.list_sections?.[0]?.rows || []).slice(0, 3).map((r: { id: string; title: string }, i: number) => (
-              <div key={i} className="border border-cyan-300 text-cyan-700 rounded px-2 py-0.5 text-[10px] font-medium bg-cyan-50">{r.title || '...'}</div>
-            ))}
-            {!(data.list_sections?.[0]?.rows?.length) && <div className="border border-dashed border-gray-200 rounded px-2 py-0.5 text-[10px] text-gray-300 text-center">List items yahan dikhenge</div>}
-          </div>
-        )}
-        {data.type === 'wait'      && <p className="text-gray-400 italic">⏳ User reply ka wait…</p>}
-        {data.type === 'set_variable' && <p className="text-teal-600 font-mono">save → <strong>{data.variable_name || '?'}</strong></p>}
+
+        {data.type === 'wait'      && <p className="text-gray-400 italic text-[11px]">⏳ Waiting for user reply…</p>}
+        {data.type === 'set_variable' && <p className="text-teal-600 font-mono text-[11px]">save → <strong>{data.variable_name || '?'}</strong></p>}
         {data.type === 'api_call'  && <p className="text-purple-600 truncate font-mono text-[10px]">{data.method||'POST'} {data.url||'...'}</p>}
-        {data.type === 'update_contact' && <p className="text-indigo-600">{data.contact_field||'?'} = <span className="font-mono">{data.field_value||'...'}</span></p>}
-        {data.type === 'delay'     && <p className="text-gray-500">⏱️ {data.seconds||1}s wait</p>}
+        {data.type === 'update_contact' && <p className="text-indigo-600 text-[11px]">{data.contact_field||'?'} = <span className="font-mono">{data.field_value||'...'}</span></p>}
+        {data.type === 'delay'     && <p className="text-gray-500 text-[11px]">⏱️ {data.seconds||1}s wait</p>}
         {data.type === 'template'  && <p className="text-pink-600 font-mono text-[10px]">{data.template_name||'...'}</p>}
-        {data.type === 'transfer'  && <p className="text-orange-600 italic">{data.transferNote||'Agent ko transfer'}</p>}
-        {data.type === 'end'       && <p className="text-red-500 italic">✅ Flow khatam</p>}
+        {data.type === 'transfer'  && <p className="text-orange-600 italic text-[11px]">{data.transferNote||'Transfer to agent'}</p>}
+        {data.type === 'end'       && <p className="text-red-500 italic text-[11px]">✅ Flow ended</p>}
         {data.type === 'condition' && (
-          <div className="space-y-0.5">
-            {(data.conditions||[]).slice(0,3).map((c:{value:string;label:string},i:number)=>(
-              <div key={i} className="flex items-center gap-1">
-                <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 text-[9px] font-bold flex items-center justify-center flex-shrink-0">{c.value}</span>
-                <span className="truncate text-[10px]">{c.label}</span>
+          <div className="space-y-1">
+            {(data.conditions||[]).slice(0,4).map((c:{value:string;label:string},i:number)=>(
+              <div key={i} className="flex items-center gap-1.5 bg-blue-50 border border-blue-100 rounded-lg px-2 py-1">
+                <span className="w-4 h-4 rounded-full bg-blue-500 text-white text-[9px] font-bold flex items-center justify-center flex-shrink-0">{c.value}</span>
+                <span className="truncate text-[10px] text-blue-700">{c.label}</span>
               </div>
             ))}
-            {!data.conditions?.length && <p className="text-gray-300 italic">Click to add conditions…</p>}
+            {!data.conditions?.length && <p className="text-gray-300 italic text-[11px]">Click to add conditions…</p>}
           </div>
         )}
       </div>
       {/* Handles */}
-      <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-gray-400 !border-2 !border-white"/>
+      <Handle type="target" position={Position.Top} className="!w-3.5 !h-3.5 !bg-gray-400 !border-2 !border-white"/>
       {data.type !== 'end' && data.type !== 'transfer' && (
         data.type === 'condition'
           ? <>
@@ -148,25 +196,31 @@ function FlowNode({ data, selected }: NodeProps) {
               <Handle type="source" position={Position.Bottom} id="default"
                 style={{left:'92%'}} className="!w-3 !h-3 !bg-gray-300 !border-2 !border-white"/>
             </>
+          : (data.type === 'button_message' || data.type === 'list_message')
+          ? null  // handles are inline with each button/row above
           : <Handle type="source" position={Position.Bottom} className="!w-3 !h-3 !bg-gray-400 !border-2 !border-white"/>
       )}
     </div>
   );
 }
-// ── Custom Edge with Delete Button ───────────────────────────
-function DeleteEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, style }: EdgeProps) {
+// ── Custom Edge with Delete Button + Label ───────────────────
+function DeleteEdge({ id, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition }: EdgeProps) {
   const { setEdges } = useReactFlow();
-  const [edgePath, labelX, labelY] = getStraightPath({ sourceX, sourceY, targetX, targetY });
+  const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
   return (
     <>
-      <BaseEdge path={edgePath} markerEnd={markerEnd} style={style}/>
+      <BaseEdge
+        path={edgePath}
+        markerEnd="url(#teal-arrow)"
+        style={{ stroke: '#0d9488', strokeWidth: 2, strokeDasharray: '6 3' }}
+      />
       <EdgeLabelRenderer>
         <div
           style={{ position:'absolute', transform:`translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents:'all' }}
           className="nodrag nopan group">
           <button
             onClick={() => setEdges((eds) => eds.filter((e) => e.id !== id))}
-            className="w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity shadow-md hover:bg-red-700">
+            className="w-4 h-4 rounded-full bg-red-500 text-white flex items-center justify-center text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity shadow hover:bg-red-700">
             ×
           </button>
         </div>
@@ -207,6 +261,8 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
   const [tplLang,        setTplLang]       = useState(node.data.language||'en');
   const [dynUrl,         setDynUrl]        = useState(node.data.url||'');
   const [dynMethod,      setDynMethod]     = useState(node.data.method||'GET');
+  const [dynTestLoading, setDynTestLoading]= useState(false);
+  const [dynTestResult,  setDynTestResult] = useState<{ ok: boolean; items?: {id:string;title:string;description?:string}[]; error?: string; raw?: string } | null>(null);
   const [dynHeaders,     setDynHeaders]    = useState(node.data.headers||'');
   const [dynReqBody,     setDynReqBody]    = useState(node.data.body||'');
   const [dynItemsPath,   setDynItemsPath]  = useState(node.data.items_path||'');
@@ -260,12 +316,12 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
           <div>
             <label className="block font-semibold text-gray-600 mb-1">Message Text</label>
             <textarea value={text} onChange={e=>setText(e.target.value)} rows={5}
-              placeholder="User ko bhejne wala message…"
+              placeholder="Type the message to send…"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-whatsapp-green resize-none text-sm"/>
           </div>
           <div className="bg-green-50 border border-green-200 rounded-lg p-2.5 space-y-1">
-            <p className="font-semibold text-green-800">Variables use kar sakte ho:</p>
-            {['{{user_message}}','{{contact_phone}}','{{contact_name}}','{{koi_bhi_variable}}'].map(v=>(
+            <p className="font-semibold text-green-800">Available variables:</p>
+            {['{{user_message}}','{{contact_phone}}','{{contact_name}}','{{any_variable}}'].map(v=>(
               <p key={v} className="font-mono text-green-700">{v}</p>
             ))}
           </div>
@@ -275,7 +331,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
         {type==='button_message' && <>
           <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
             <p className="font-semibold text-emerald-800 mb-1">🔘 Button Message Node</p>
-            <p className="text-emerald-700">WhatsApp ke clickable buttons bhejta hai (max 3). User button dabaye to condition se match hoga.</p>
+            <p className="text-emerald-700">Sends WhatsApp interactive buttons (max 3). Each button has its own output handle — connect each to a different next node.</p>
           </div>
           <div>
             <label className="block font-semibold text-gray-600 mb-1">Header (optional)</label>
@@ -285,7 +341,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
           <div>
             <label className="block font-semibold text-gray-600 mb-1">Message Body *</label>
             <textarea value={btnBodyText} onChange={e=>setBtnBodyText(e.target.value)} rows={3}
-              placeholder="Kya help chahiye? Neeche se select karo:"
+              placeholder="How can we help you? Please select an option:"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-400 resize-none"/>
           </div>
           <div className="space-y-2">
@@ -311,7 +367,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
             {buttons.length < 3 && (
               <button onClick={()=>setButtons([...buttons,{id:`btn_${buttons.length+1}`,title:''}])}
                 className="flex items-center gap-1 text-emerald-600 hover:text-emerald-800 font-medium text-xs">
-                <Plus size={11}/> Button Add Karo
+                <Plus size={11}/> Add Button
               </button>
             )}
           </div>
@@ -321,10 +377,8 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
               placeholder="e.g. Powered by Limbu.ai" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-400"/>
           </div>
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 space-y-1">
-            <p className="font-semibold text-blue-800 text-[11px]">💡 Har button ka alag flow banana:</p>
-            <p className="text-blue-700 text-[11px]">1. Buttons Node → Wait → Condition</p>
-            <p className="text-blue-700 text-[11px]">2. Condition mein har button ka ID dalo (e.g. btn_1, btn_2)</p>
-            <p className="text-blue-700 text-[11px]">3. Har condition ka handle alag next node se connect karo</p>
+            <p className="font-semibold text-blue-800 text-[11px]">💡 Separate flow per button:</p>
+            <p className="text-blue-700 text-[11px]">Connect each button handle directly to its next node. The button ID is used to route the flow.</p>
           </div>
         </>}
 
@@ -332,7 +386,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
         {type==='dynamic_list' && <>
           <div className="bg-violet-50 border border-violet-200 rounded-lg p-3">
             <p className="font-semibold text-violet-800 mb-1">🌐 Dynamic List Node</p>
-            <p className="text-violet-700">API se data fetch karke automatically WhatsApp list banata hai. User jab item select kare to Condition node se match hoga.</p>
+            <p className="text-violet-700">Fetches items from an API and sends them as a WhatsApp list. When the user selects an item, the flow branches by item ID.</p>
           </div>
 
           {/* API Config */}
@@ -362,9 +416,9 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
           {/* Response Mapping */}
           <p className="font-semibold text-gray-700 text-[11px] uppercase tracking-wide">Response → List Items</p>
           <div>
-            <label className="block font-semibold text-gray-600 mb-1">Items ka path (optional)</label>
+            <label className="block font-semibold text-gray-600 mb-1">Items path (optional)</label>
             <input value={dynItemsPath} onChange={e=>setDynItemsPath(e.target.value)}
-              placeholder="e.g. data.products  (khali chhodo agar root array hai)"
+              placeholder="e.g. data.products  (leave empty if response is a root array)"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-400"/>
             <p className="text-gray-400 mt-1 text-[10px]">API returns: <code className="bg-gray-100 px-1">{`{ "data": { "products": [...] } }`}</code> → path: <code className="bg-gray-100 px-1">data.products</code></p>
           </div>
@@ -386,10 +440,128 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
             </div>
           </div>
           <div>
-            <label className="block font-semibold text-gray-600 mb-1">Response save karo (optional)</label>
+            <label className="block font-semibold text-gray-600 mb-1">Save response as (optional)</label>
             <input value={dynSaveAs} onChange={e=>setDynSaveAs(e.target.value)}
               placeholder="e.g. products_data"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-400"/>
+          </div>
+
+          {/* Test API */}
+          <div className="space-y-2">
+            <button
+              onClick={async () => {
+                if (!dynUrl) return;
+                setDynTestLoading(true);
+                setDynTestResult(null);
+                try {
+                  let headersObj: Record<string,string> = { 'Content-Type': 'application/json' };
+                  if (dynHeaders) {
+                    try { headersObj = { ...headersObj, ...JSON.parse(dynHeaders) }; } catch { /**/ }
+                  }
+                  const res = await fetch(dynUrl, {
+                    method: dynMethod,
+                    headers: headersObj,
+                    body: dynMethod !== 'GET' && dynReqBody ? dynReqBody : undefined,
+                  });
+                  const rawText = await res.text();
+                  let data: unknown;
+                  try { data = JSON.parse(rawText); } catch { data = rawText; }
+
+                  // Navigate to items path
+                  let arr: unknown = data;
+                  if (dynItemsPath) {
+                    for (const key of dynItemsPath.split('.')) {
+                      if (arr && typeof arr === 'object') arr = (arr as Record<string,unknown>)[key];
+                    }
+                  }
+
+                  if (Array.isArray(arr)) {
+                    const items = (arr as Record<string,unknown>[]).slice(0, 5).map((item, idx) => ({
+                      id:          String(item[dynIdField||'id']    ?? idx + 1),
+                      title:       String(item[dynTitleField||'title'] ?? `Item ${idx+1}`),
+                      description: dynDescField && item[dynDescField] ? String(item[dynDescField]) : undefined,
+                    }));
+                    setDynTestResult({ ok: true, items, raw: JSON.stringify(data, null, 2).slice(0, 500) });
+                  } else {
+                    setDynTestResult({ ok: false, error: 'Could not find array at specified path. Check Items Path field.', raw: JSON.stringify(data, null, 2).slice(0, 500) });
+                  }
+                } catch (e) {
+                  setDynTestResult({ ok: false, error: e instanceof Error ? e.message : 'Request failed' });
+                } finally {
+                  setDynTestLoading(false);
+                }
+              }}
+              disabled={!dynUrl || dynTestLoading}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-40">
+              {dynTestLoading
+                ? <><Loader2 size={13} className="animate-spin"/> Testing…</>
+                : <><Zap size={13}/> Test API</>}
+            </button>
+
+            {dynTestResult && (
+              <div className={`rounded-lg border p-3 space-y-2 ${dynTestResult.ok ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                {dynTestResult.ok ? (
+                  <>
+                    <p className="text-[11px] font-semibold text-green-700">✓ Success — {dynTestResult.items?.length} item(s) extracted</p>
+                    <div className="space-y-1">
+                      {dynTestResult.items?.map((item, i) => (
+                        <div key={i} className="bg-white border border-green-200 rounded px-2 py-1">
+                          <p className="text-[10px] font-medium text-gray-800 truncate">{item.title}</p>
+                          {item.description && <p className="text-[9px] text-gray-400 truncate">{item.description}</p>}
+                          <p className="text-[9px] text-gray-300 font-mono">id: {item.id}</p>
+                        </div>
+                      ))}
+                    </div>
+                    {dynTestResult.raw && (
+                      <details className="mt-1">
+                        <summary className="text-[10px] text-green-600 cursor-pointer">View raw response</summary>
+                        <pre className="text-[9px] text-gray-600 mt-1 overflow-x-auto bg-white rounded p-2 border border-green-100">{dynTestResult.raw}</pre>
+                      </details>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[11px] font-semibold text-red-700">✗ {dynTestResult.error}</p>
+                    {dynTestResult.raw && (
+                      <details>
+                        <summary className="text-[10px] text-red-600 cursor-pointer">View raw response</summary>
+                        <pre className="text-[9px] text-gray-600 mt-1 overflow-x-auto bg-white rounded p-2 border border-red-100">{dynTestResult.raw}</pre>
+                      </details>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Expected Response Format Preview */}
+          <div className="bg-gray-900 rounded-lg p-3 space-y-1">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Expected API Response Format</p>
+            <pre className="text-[10px] text-green-400 font-mono whitespace-pre-wrap leading-relaxed overflow-x-auto">{(() => {
+              const idF    = dynIdField    || 'id';
+              const titleF = dynTitleField || 'title';
+              const descF  = dynDescField  || null;
+              const path   = dynItemsPath  ? dynItemsPath.split('.') : null;
+
+              const item: Record<string, string> = {
+                [idF]:    '\"abc123\"',
+                [titleF]: '\"Sample Item\"',
+                ...(descF ? { [descF]: '\"Optional description\"' } : {}),
+              };
+              const itemStr = '{\n' + Object.entries(item).map(([k,v]) => `          "${k}": ${v}`).join(',\n') + '\n        }';
+              const arr = `[\n        ${itemStr},\n        { ... }\n      ]`;
+
+              if (!path) {
+                return arr;
+              }
+              // Build nested object from path e.g. ["data","products"]
+              let result = arr;
+              for (let i = path.length - 1; i >= 0; i--) {
+                const indent = '  '.repeat(i + 1);
+                result = `{\n${indent}"${path[i]}": ${result.split('\n').map((l, li) => li === 0 ? l : indent + l).join('\n')}\n${'  '.repeat(i)}}`;
+              }
+              return result;
+            })()}</pre>
           </div>
 
           {/* Message Config */}
@@ -403,7 +575,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
           <div>
             <label className="block font-semibold text-gray-600 mb-1">Body Text *</label>
             <textarea value={dynBodyText} onChange={e=>setDynBodyText(e.target.value)} rows={3}
-              placeholder="Apna option select karo:"
+              placeholder="Please select an option:"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-400 resize-none"/>
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -420,8 +592,8 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
           </div>
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 space-y-1">
             <p className="font-semibold text-blue-800 text-[11px]">💡 Flow Pattern:</p>
-            <p className="text-blue-700 text-[11px] font-mono">Dynamic List → Wait → Condition</p>
-            <p className="text-blue-700 text-[11px]">Condition mein item ka <strong>ID</strong> (id_field) match karo. Har item ke liye alag branch banao.</p>
+            <p className="text-blue-700 text-[11px] font-mono">Dynamic List → next node (branches by item ID)</p>
+            <p className="text-blue-700 text-[11px]">Connect each item's ID to a separate branch. The item ID routes the flow.</p>
           </div>
         </>}
 
@@ -429,7 +601,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
         {type==='list_message' && <>
           <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-3">
             <p className="font-semibold text-cyan-800 mb-1">📋 List Menu Node</p>
-            <p className="text-cyan-700">WhatsApp scrollable list bhejta hai. User ek item select kare to Condition node se match hoga (row ID se).</p>
+            <p className="text-cyan-700">Sends a WhatsApp scrollable list. When user selects an item, flow branches by row ID.</p>
           </div>
           <div>
             <label className="block font-semibold text-gray-600 mb-1">Header (optional)</label>
@@ -439,7 +611,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
           <div>
             <label className="block font-semibold text-gray-600 mb-1">Message Body *</label>
             <textarea value={listBodyText} onChange={e=>setListBodyText(e.target.value)} rows={3}
-              placeholder="Neeche se apna option select karo:"
+              placeholder="Please select an option below:"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400 resize-none"/>
           </div>
           <div>
@@ -477,7 +649,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
             {(listSections[0]?.rows?.length||0) < 10 && (
               <button onClick={()=>{const s=[...listSections];if(!s[0])s[0]={title:'',rows:[]};s[0].rows=[...s[0].rows,{id:`item_${(s[0].rows.length||0)+1}`,title:'',description:''}];setListSections(s);}}
                 className="flex items-center gap-1 text-cyan-600 hover:text-cyan-800 font-medium text-xs">
-                <Plus size={11}/> Item Add Karo
+                <Plus size={11}/> Add Item
               </button>
             )}
           </div>
@@ -487,22 +659,22 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
               placeholder="e.g. Powered by Limbu.ai" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"/>
           </div>
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5">
-            <p className="font-semibold text-blue-800 mb-1 text-[11px]">💡 Condition se connect karo</p>
-            <p className="text-blue-700 text-[11px]">Row ka ID Condition node ke "User reply" value se match karo. Har item ke liye alag branch banao.</p>
+            <p className="font-semibold text-blue-800 mb-1 text-[11px]">💡 Connect to separate branches</p>
+            <p className="text-blue-700 text-[11px]">Each row handle connects directly to its own next node. The row ID routes the flow.</p>
           </div>
         </>}
 
         {/* WAIT */}
         {type==='wait' && <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
           <p className="font-semibold text-yellow-800 mb-1">⏳ Wait Node</p>
-          <p className="text-yellow-700">Flow yahan rukta hai aur user ke reply ka wait karta hai. Agle node se connect karo.</p>
+          <p className="text-yellow-700">Flow pauses here and waits for the user to reply. Connect to the next node to continue.</p>
         </div>}
 
         {/* CONDITION */}
         {type==='condition' && <>
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
             <p className="font-semibold text-blue-800 mb-1">🔀 Condition Node</p>
-            <p className="text-blue-700">User ne jo reply kiya us value se match karke alag branch pe jayega.</p>
+            <p className="text-blue-700">Branches the flow based on the user's reply value.</p>
           </div>
           <div className="space-y-2">
             {conditions.map((c,i)=>(
@@ -524,24 +696,24 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
             ))}
             <button onClick={()=>setConditions([...conditions,{value:'',label:''}])}
               className="flex items-center gap-1 text-blue-600 hover:text-blue-800 font-medium">
-              <Plus size={11}/> Condition Add Karo
+              <Plus size={11}/> Add Condition
             </button>
           </div>
-          <p className="text-gray-400">💡 <strong>default</strong> = koi match na ho</p>
+          <p className="text-gray-400">💡 <strong>default</strong> = no match found</p>
         </>}
 
         {/* SET VARIABLE */}
         {type==='set_variable' && <>
           <div className="bg-teal-50 border border-teal-200 rounded-lg p-3">
             <p className="font-semibold text-teal-800 mb-1">💾 Save Reply Node</p>
-            <p className="text-teal-700">User ne jo reply kiya wo ek variable mein save ho jayega. Baad mein <code className="bg-teal-100 px-1 rounded">{'{{variable_name}}'}</code> se use kar sakte ho.</p>
+            <p className="text-teal-700">The user's reply is saved into a variable. Use it later with <code className="bg-teal-100 px-1 rounded">{'{{variable_name}}'}</code>.</p>
           </div>
           <div>
-            <label className="block font-semibold text-gray-600 mb-1">Variable ka naam</label>
+            <label className="block font-semibold text-gray-600 mb-1">Variable name</label>
             <input value={varName} onChange={e=>setVarName(e.target.value)}
               placeholder="e.g. user_name, order_id, phone"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400 text-sm font-mono"/>
-            <p className="text-gray-400 mt-1">Baad mein: <code className="bg-gray-100 px-1">{`{{${varName||'variable_name'}}}`}</code></p>
+            <p className="text-gray-400 mt-1">Use later as: <code className="bg-gray-100 px-1">{`{{${varName||'variable_name'}}}`}</code></p>
           </div>
         </>}
 
@@ -549,7 +721,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
         {type==='api_call' && <>
           <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
             <p className="font-semibold text-purple-800 mb-1">🌐 API Call Node</p>
-            <p className="text-purple-700">External URL pe request bhejta hai. Variables use kar sakte ho.</p>
+            <p className="text-purple-700">Makes an HTTP request to an external URL. Variables are supported.</p>
           </div>
           <div>
             <label className="block font-semibold text-gray-600 mb-1">URL *</label>
@@ -571,19 +743,19 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
               className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-purple-400 text-sm font-mono resize-none"/>
           </div>
           {apiMethod !== 'GET' && <div>
-            <label className="block font-semibold text-gray-600 mb-1">Body (JSON, variables use kar sakte ho)</label>
+            <label className="block font-semibold text-gray-600 mb-1">Body (JSON, variables supported)</label>
             <textarea value={apiBody} onChange={e=>setApiBody(e.target.value)} rows={4}
               placeholder={'{\n  "phone": "{{contact_phone}}",\n  "name": "{{user_name}}",\n  "message": "{{user_message}}"\n}'}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-purple-400 text-sm font-mono resize-none"/>
           </div>}
           <div>
-            <label className="block font-semibold text-gray-600 mb-1">Response save karo (optional)</label>
+            <label className="block font-semibold text-gray-600 mb-1">Save response as (optional)</label>
             <input value={apiSaveAs} onChange={e=>setApiSaveAs(e.target.value)}
               placeholder="e.g. api_response (variable name)"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-purple-400 text-sm font-mono"/>
           </div>
           <div className="bg-gray-50 rounded-lg p-2 text-gray-500">
-            Available vars: <code className="bg-gray-200 px-1">{'{{contact_phone}}'}</code> <code className="bg-gray-200 px-1">{'{{contact_name}}'}</code> <code className="bg-gray-200 px-1">{'{{user_message}}'}</code> aur koi bhi saved variable
+            Available vars: <code className="bg-gray-200 px-1">{'{{contact_phone}}'}</code> <code className="bg-gray-200 px-1">{'{{contact_name}}'}</code> <code className="bg-gray-200 px-1">{'{{user_message}}'}</code> and any saved variable
           </div>
         </>}
 
@@ -591,7 +763,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
         {type==='update_contact' && <>
           <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
             <p className="font-semibold text-indigo-800 mb-1">👤 Update Contact Node</p>
-            <p className="text-indigo-700">Contact ki information DB mein update karta hai.</p>
+            <p className="text-indigo-700">Updates the contact's information in the database.</p>
           </div>
           <div>
             <label className="block font-semibold text-gray-600 mb-1">Field</label>
@@ -605,9 +777,9 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
             </select>
           </div>
           <div>
-            <label className="block font-semibold text-gray-600 mb-1">Value (variables use kar sakte ho)</label>
+            <label className="block font-semibold text-gray-600 mb-1">Value (variables supported)</label>
             <input value={fieldValue} onChange={e=>setFieldValue(e.target.value)}
-              placeholder="e.g. {{user_name}} ya {{user_message}}"
+              placeholder="e.g. {{user_name}} or {{user_message}}"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400 text-sm font-mono"/>
           </div>
         </>}
@@ -616,7 +788,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
         {type==='delay' && <>
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
             <p className="font-semibold text-gray-700 mb-1">⏱️ Delay Node</p>
-            <p className="text-gray-500">Flow N seconds ke liye ruk jayega. Max 30 seconds.</p>
+            <p className="text-gray-500">Flow will pause for N seconds before continuing. Max 30 seconds.</p>
           </div>
           <div>
             <label className="block font-semibold text-gray-600 mb-1">Seconds</label>
@@ -629,7 +801,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
         {type==='template' && <>
           <div className="bg-pink-50 border border-pink-200 rounded-lg p-3">
             <p className="font-semibold text-pink-800 mb-1">📄 Template Node</p>
-            <p className="text-pink-700">Approved WhatsApp template message bhejta hai.</p>
+            <p className="text-pink-700">Sends an approved WhatsApp template message.</p>
           </div>
           <div>
             <label className="block font-semibold text-gray-600 mb-1">Template Name *</label>
@@ -649,12 +821,12 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
         {type==='transfer' && <>
           <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
             <p className="font-semibold text-orange-800 mb-1">👤 Transfer Node</p>
-            <p className="text-orange-700">Chat agent ke paas chali jayegi, flow band ho jayega.</p>
+            <p className="text-orange-700">Transfers the chat to a human agent and ends the flow.</p>
           </div>
           <div>
             <label className="block font-semibold text-gray-600 mb-1">Note (optional)</label>
             <input value={transferNote} onChange={e=>setTransferNote(e.target.value)}
-              placeholder="e.g. {{user_name}} ko billing help chahiye"
+              placeholder="e.g. {{user_name}} needs billing help"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 text-sm"/>
           </div>
         </>}
@@ -662,7 +834,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
         {/* END */}
         {type==='end' && <div className="bg-red-50 border border-red-200 rounded-lg p-3">
           <p className="font-semibold text-red-800 mb-1">🔚 End Node</p>
-          <p className="text-red-700">Flow yahan khatam ho jayega. Session complete mark hoga.</p>
+          <p className="text-red-700">The flow ends here. The session is marked as completed.</p>
         </div>}
       </div>
 
@@ -692,10 +864,10 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
       <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
         <div className="space-y-3">
           {[
-            { i:'1️⃣', t:'Node add karo',     d:'Upar toolbar se koi bhi node button click karo.' },
-            { i:'2️⃣', t:'Connect karo',       d:'Node ke neeche wale circle ko pakdo aur doosre node ke upar waale circle tak khicho.' },
-            { i:'3️⃣', t:'Configure karo',     d:'Node pe click karo → right panel mein settings set karo → Apply karo.' },
-            { i:'4️⃣', t:'Save karo',          d:'"Save Flow" button dabao. Turant live ho jayega.' },
+            { i:'1️⃣', t:'Add a node',       d:'Click any node button in the top toolbar.' },
+            { i:'2️⃣', t:'Connect nodes',    d:'Drag from the bottom circle of one node to the top circle of another.' },
+            { i:'3️⃣', t:'Configure',        d:'Click a node → set options in the right panel → click Apply.' },
+            { i:'4️⃣', t:'Save',             d:'Click "Save Flow". Changes go live immediately.' },
           ].map(s=>(
             <div key={s.i} className="flex gap-2.5">
               <span className="text-lg flex-shrink-0">{s.i}</span>
@@ -705,7 +877,7 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="border-t border-gray-100 pt-3 space-y-2">
-          <p className="font-semibold text-gray-700">Sab Node Types:</p>
+          <p className="font-semibold text-gray-700">All Node Types:</p>
           {(Object.entries(NODE_TYPES_META) as [NodeType, typeof NODE_TYPES_META[NodeType]][]).map(([t,m])=>{
             const Icon=m.icon;
             return (
@@ -726,15 +898,15 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
           <p className="font-semibold text-blue-800 mb-2">💡 Common Patterns:</p>
           <div className="space-y-2 text-blue-700">
             <div>
-              <p className="font-semibold">User ka naam lena:</p>
+              <p className="font-semibold">Collect user name:</p>
               <p className="font-mono text-[10px]">Message → Wait → Save Reply → Message</p>
             </div>
             <div>
-              <p className="font-semibold">Menu banana:</p>
-              <p className="font-mono text-[10px]">Message → Wait → Condition → branches</p>
+              <p className="font-semibold">Build a menu:</p>
+              <p className="font-mono text-[10px]">Buttons / List → branches</p>
             </div>
             <div>
-              <p className="font-semibold">CRM mein save karna:</p>
+              <p className="font-semibold">Save to CRM:</p>
               <p className="font-mono text-[10px]">Save Reply → API Call / Update Contact</p>
             </div>
           </div>
@@ -780,13 +952,13 @@ export default function FlowBuilderPage() {
       const kws = (f.trigger_value || '').split(',').map((k: string) => k.trim()).filter(Boolean);
       setSettingsKeywords(kws);
       setNodes((f.nodes||[]).map((n:Node) => ({ ...n, type:'flowNode' })));
-      setEdges((f.edges||[]).map((e:Edge) => ({ ...e, type:'deleteEdge', markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} })));
+      setEdges((f.edges||[]).map((e:Edge) => ({ ...e, type:'deleteEdge', type:'deleteEdge' })));
       if (!(f.nodes||[]).length) setShowHelp(true);
     }).catch(()=>toast.error('Flow not found')).finally(()=>setLoading(false));
   }, [flowId, setNodes, setEdges]);
 
-  const onConnect = useCallback((p:Connection) => {
-    setEdges(eds => addEdge({ ...p, type:'deleteEdge', markerEnd:{type:MarkerType.ArrowClosed}, style:{strokeWidth:2} }, eds));
+  const onConnect = useCallback((p: Connection) => {
+    setEdges(eds => addEdge({ ...p, type: 'deleteEdge' }, eds));
   }, [setEdges]);
 
   function addNode(type: NodeType) {
@@ -798,11 +970,11 @@ export default function FlowBuilderPage() {
   }
 
   function loadExample() {
-    if (nodes.length > 0 && !confirm('Canvas clear ho jayega. Example load karo?')) return;
+    if (nodes.length > 0 && !confirm('Canvas will be cleared. Load example flow?')) return;
     setNodes(EXAMPLE_NODES);
     setEdges(EXAMPLE_EDGES);
     setShowHelp(false);
-    toast.success('Example flow load hua! Nodes pe click karke configure karo.');
+    toast.success('Example flow loaded! Click any node to configure it.');
   }
 
   function updateNodeData(id:string, data:Record<string,unknown>) {
@@ -893,7 +1065,7 @@ export default function FlowBuilderPage() {
         </div>
 
         <button onClick={()=>{setShowSettings(v=>!v);setSelectedNode(null);setShowHelp(false);}}
-          title="Flow Settings — keywords, name edit karo"
+          title="Flow Settings — edit name and trigger keywords"
           className={`p-1.5 rounded-lg transition-colors flex-shrink-0 ${showSettings?'bg-orange-50 text-orange-600':'text-gray-400 hover:bg-gray-100'}`}>
           <Settings size={16}/>
         </button>
@@ -917,7 +1089,15 @@ export default function FlowBuilderPage() {
             onPaneClick={()=>setSelectedNode(null)}
             deleteKeyCode={['Backspace','Delete']}
             fitView
-            defaultEdgeOptions={{type:'deleteEdge', markerEnd:{type:MarkerType.ArrowClosed},style:{strokeWidth:2}}}>
+            defaultEdgeOptions={{ type: 'deleteEdge' }}>
+            {/* Custom teal arrowhead */}
+            <svg style={{ position:'absolute', width:0, height:0 }}>
+              <defs>
+                <marker id="teal-arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                  <polygon points="0 0, 10 3.5, 0 7" fill="#0d9488"/>
+                </marker>
+              </defs>
+            </svg>
             <Background color="#e5e7eb" gap={20}/>
             <Controls/>
             <MiniMap nodeColor={n=>{
@@ -932,7 +1112,7 @@ export default function FlowBuilderPage() {
                 <div className="text-center space-y-3 pointer-events-auto">
                   <div className="text-5xl">🤖</div>
                   <p className="text-gray-500 font-semibold">Flow abhi khali hai</p>
-                  <p className="text-gray-400 text-sm">Upar se node add karo ya example dekho</p>
+                  <p className="text-gray-400 text-sm">Add a node from the toolbar above or load an example</p>
                   <div className="flex gap-2 justify-center">
                     <button onClick={loadExample}
                       className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700">
@@ -1011,7 +1191,7 @@ export default function FlowBuilderPage() {
                       className="flex-1 min-w-[100px] outline-none text-sm bg-transparent"
                     />
                   </div>
-                  <p className="text-gray-400 mt-1">In keywords mein se koi bhi aane pe flow trigger hoga</p>
+                  <p className="text-gray-400 mt-1">Flow triggers when any of these keywords are received</p>
                 </div>
               )}
             </div>
