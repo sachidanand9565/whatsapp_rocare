@@ -559,23 +559,17 @@ export async function tryResumeFlow(
   }
 
   if (!nextNode) {
-    if (currentNode.type === 'dynamic_list') {
-      if (buttonPayload) {
-        // Interactive selection — re-run with new category ID
-        const contactRows2 = await query<RowDataPacket[]>('SELECT name FROM contacts WHERE id = ? LIMIT 1', [contactId]);
-        const contactName2 = (contactRows2[0]?.name as string) || '';
-        const rerunVars = { ...session.variables, selected_id: effectiveMsg, selected_title: userMessage };
-        await updateSessionNode(session.id, currentNode.id, rerunVars);
-        session.variables = rerunVars;
-        await executeFromNode(flow, session, currentNode, accessToken, phoneNumberId, contactPhone, workspaceId, effectiveMsg, contactName2);
-      }
-      // Plain text (trigger keyword etc.) — session alive rakho, tryStartFlow block karo
+    // dynamic_list: sirf interactive selection (buttonPayload) pe re-run karo
+    if (currentNode.type === 'dynamic_list' && buttonPayload) {
+      const contactRows2 = await query<RowDataPacket[]>('SELECT name FROM contacts WHERE id = ? LIMIT 1', [contactId]);
+      const contactName2 = (contactRows2[0]?.name as string) || '';
+      const rerunVars = { ...session.variables, selected_id: effectiveMsg, selected_title: userMessage };
+      await updateSessionNode(session.id, currentNode.id, rerunVars);
+      session.variables = rerunVars;
+      await executeFromNode(flow, session, currentNode, accessToken, phoneNumberId, contactPhone, workspaceId, effectiveMsg, contactName2);
       return true;
     }
-    // button_message / list_message pe bhi plain text aaye to session alive rakho
-    if (currentNode.type === 'button_message' || currentNode.type === 'list_message') {
-      return true;
-    }
+    // Koi match nahi — session end karo, tryStartFlow trigger keyword handle karega
     await endSession(session.id);
     return false;
   }
