@@ -54,7 +54,7 @@ export default function DashboardPage() {
   const [statusLoading, setStatusLoading] = useState(true);
   const [userRole, setUserRole]     = useState('');
 
-  const isConnected = !!(workspace?.phone_number_id && workspace?.waba_id);
+  const isConnected = !!(workspace?.phone_number_id && workspace?.waba_id && workspace?.is_active);
 
   useEffect(() => {
     setUserRole(localStorage.getItem('userRole') || '');
