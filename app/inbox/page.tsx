@@ -156,6 +156,80 @@ function MediaBubble({ data, msgType }: { data: MediaContent; msgType: string })
   );
 }
 
+// ── Interactive List message (from flow engine) ───────────────
+interface ListContent {
+  __type: 'list';
+  body:     string;
+  button?:  string;
+  header?:  string;
+  footer?:  string;
+  sections: { title: string; rows: { id: string; title: string; description?: string }[] }[];
+}
+function parseListContent(c: string): ListContent | null {
+  try { const p = JSON.parse(c); if (p.__type === 'list') return p; } catch { /**/ } return null;
+}
+function ListBubble({ data }: { data: ListContent }) {
+  const rows = data.sections?.flatMap((s) => s.rows) || [];
+  return (
+    <div className="space-y-1 min-w-[200px]">
+      {data.header && <p className="font-semibold text-gray-800 text-sm">{data.header}</p>}
+      <p className="text-sm text-gray-800 whitespace-pre-wrap">{data.body}</p>
+      {data.footer && <p className="text-xs text-gray-400">{data.footer}</p>}
+      <div className="border-t border-gray-200 mt-1 pt-1 space-y-0.5">
+        {rows.map((r, i) => (
+          <div key={i} className="flex items-start gap-2 py-1 border-b border-gray-100 last:border-0">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-gray-800">{r.title}</p>
+              {r.description && <p className="text-[10px] text-gray-400">{r.description}</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+      {data.button && (
+        <div className="text-center text-xs text-[#00a5f4] font-medium border-t border-gray-200 pt-1.5">
+          ☰ {data.button}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Interactive Buttons message (from flow engine) ────────────
+interface ButtonsContent {
+  __type:   'buttons';
+  body:     string;
+  header?:  string;
+  footer?:  string;
+  buttons:  { id: string; title: string }[];
+}
+function parseButtonsContent(c: string): ButtonsContent | null {
+  try { const p = JSON.parse(c); if (p.__type === 'buttons') return p; } catch { /**/ } return null;
+}
+function ButtonsBubble({ data, status, time }: { data: ButtonsContent; status: string; time: string }) {
+  return (
+    <div className="w-72 rounded-2xl rounded-br-sm overflow-hidden shadow-sm border border-green-100">
+      <div className="bg-[#dcf8c6] px-4 py-2.5">
+        {data.header && <p className="font-semibold text-gray-800 text-sm mb-1">{data.header}</p>}
+        <p className="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed">{data.body}</p>
+        {data.footer && <p className="text-xs text-gray-400 mt-1">{data.footer}</p>}
+        <p className="text-xs text-gray-400 text-right mt-1">
+          {time}
+          <span className={`ml-1 ${status === 'read' ? 'text-blue-500' : 'text-gray-400'}`}>
+            {status === 'read' || status === 'delivered' ? '✓✓' : '✓'}
+          </span>
+        </p>
+      </div>
+      {data.buttons?.length > 0 && (
+        <div className="divide-y divide-gray-200 border-t border-gray-200">
+          {data.buttons.map((btn, i) => (
+            <div key={i} className="bg-white px-4 py-2 text-center text-sm font-medium text-[#00a5f4]">{btn.title}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Location message ─────────────────────────────────────────
 interface LocationContent { __type: 'location'; latitude: number; longitude: number; name?: string; address?: string }
 function parseLocationContent(c: string): LocationContent | null {
@@ -1589,6 +1663,8 @@ export default function InboxPage() {
               const media    = parseMediaContent(m.content);
               const location = parseLocationContent(m.content);
               const contacts = parseContactsContent(m.content);
+              const listMsg  = parseListContent(m.content);
+              const btnsMsg  = parseButtonsContent(m.content);
               const repliedMsg = m.replied_to_wamid ? messages.find((x) => x.wamid === m.replied_to_wamid) : null;
               const msgDate  = toLocalDate(m.created_at);
               const timeStr  = msgDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
@@ -1651,6 +1727,18 @@ export default function InboxPage() {
                   className={`flex transition-all ${m.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
                   {tpl ? (
                     <TemplateBubble data={tpl} status={m.status} time={timeStr} />
+                  ) : btnsMsg ? (
+                    <ButtonsBubble data={btnsMsg} status={m.status} time={timeStr} />
+                  ) : listMsg ? (
+                    <div className={`max-w-xs lg:max-w-sm rounded-2xl text-sm shadow-sm overflow-hidden bg-[#dcf8c6] px-4 py-2.5`}>
+                      <ListBubble data={listMsg} />
+                      <p className="text-xs text-gray-400 text-right mt-1">
+                        {timeStr}
+                        <span className={`ml-1 ${m.status === 'read' ? 'text-blue-500' : 'text-gray-400'}`}>
+                          {m.status === 'read' || m.status === 'delivered' ? '✓✓' : '✓'}
+                        </span>
+                      </p>
+                    </div>
                   ) : (
                     <div className={`max-w-xs lg:max-w-sm rounded-2xl text-sm shadow-sm overflow-hidden
                       ${m.direction === 'outbound'
