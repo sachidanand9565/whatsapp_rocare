@@ -454,18 +454,24 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
                 setDynTestLoading(true);
                 setDynTestResult(null);
                 try {
-                  let headersObj: Record<string,string> = { 'Content-Type': 'application/json' };
+                  let headersObj: Record<string,string> = {};
                   if (dynHeaders) {
-                    try { headersObj = { ...headersObj, ...JSON.parse(dynHeaders) }; } catch { /**/ }
+                    try { headersObj = JSON.parse(dynHeaders); } catch { /**/ }
                   }
-                  const res = await fetch(dynUrl, {
-                    method: dynMethod,
-                    headers: headersObj,
-                    body: dynMethod !== 'GET' && dynReqBody ? dynReqBody : undefined,
+                  // Use server-side proxy to avoid CORS issues
+                  const token = localStorage.getItem('token');
+                  const proxyRes = await fetch('/api/proxy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                    body: JSON.stringify({
+                      url:     dynUrl,
+                      method:  dynMethod,
+                      headers: headersObj,
+                      body:    dynMethod !== 'GET' && dynReqBody ? dynReqBody : undefined,
+                    }),
                   });
-                  const rawText = await res.text();
-                  let data: unknown;
-                  try { data = JSON.parse(rawText); } catch { data = rawText; }
+                  const proxyData = await proxyRes.json();
+                  const data: unknown = proxyData.data;
 
                   // Navigate to items path
                   let arr: unknown = data;
@@ -486,7 +492,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
                     setDynTestResult({ ok: false, error: 'Could not find array at specified path. Check Items Path field.', raw: JSON.stringify(data, null, 2).slice(0, 500) });
                   }
                 } catch (e) {
-                  setDynTestResult({ ok: false, error: e instanceof Error ? e.message : 'Request failed' });
+                  setDynTestResult({ ok: false, error: e instanceof Error ? e.message : 'Request failed. Check URL and network.' });
                 } finally {
                   setDynTestLoading(false);
                 }
