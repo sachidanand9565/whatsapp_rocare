@@ -146,20 +146,7 @@ function FlowNode({ data, selected }: NodeProps) {
           <div className="space-y-1">
             <p className="text-violet-600 font-mono text-[10px] truncate">{data.method||'GET'} {data.url||'...'}</p>
             <p className="line-clamp-1 text-gray-700 text-[11px]">{data.body_text || <span className="text-gray-300 italic">Body text…</span>}</p>
-            <div className="border-t border-gray-100 pt-1 space-y-1">
-              {[1, 2, 3].map((n) => (
-                <div key={n} className="flex items-center justify-between bg-violet-50 border border-violet-200 rounded-lg px-2 py-1">
-                  <div className="min-w-0">
-                    <p className="text-[10px] text-violet-700 font-medium truncate">{data.title_field||'title'}: Sample {n}</p>
-                    {data.description_field && (
-                      <p className="text-[9px] text-violet-400 truncate">{data.description_field}: Description {n}</p>
-                    )}
-                  </div>
-                  <span className="text-[9px] text-violet-300 ml-2 flex-shrink-0 font-mono">{data.id_field||'id'}{n}</span>
-                </div>
-              ))}
-            </div>
-            <p className="text-[9px] text-violet-400 text-center">⚡ Real items replace these at runtime</p>
+            <p className="text-[9px] text-violet-400 text-center pt-1">⚡ Items fetched from API at runtime</p>
           </div>
         )}
 
