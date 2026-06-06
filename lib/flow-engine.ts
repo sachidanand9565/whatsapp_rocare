@@ -355,10 +355,36 @@ async function executeFromNode(
         return;
       }
 
-      // ── Condition: branch on user reply ───────────────────────
+      // ── Condition: evaluate immediately and branch to true/false ──
       case 'condition': {
-        await updateSessionNode(session.id, nodeId, vars);
-        return;
+        const cVar = (node.data.condition_variable as string) || 'user_message';
+        const cOp  = (node.data.condition_operator as string) || 'equal';
+        const cVal = ((node.data.condition_value   as string) || '').toLowerCase();
+
+        const varVal = (
+          cVar === 'user_message'   ? userMessage :
+          cVar === 'contact_phone'  ? contactPhone :
+          cVar === 'contact_name'   ? contactName :
+          cVar === 'current_date'   ? new Date().toISOString().slice(0, 10) :
+          cVar === 'current_time'   ? new Date().toTimeString().slice(0, 5) :
+          cVar === 'current_day'    ? ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][new Date().getDay()] :
+          cVar === 'current_hour'   ? String(new Date().getHours()) :
+          (vars[cVar] || '')
+        ).toLowerCase();
+
+        let condMet = false;
+        switch (cOp) {
+          case 'equal':       condMet = varVal === cVal; break;
+          case 'not_equal':   condMet = varVal !== cVal; break;
+          case 'contains':    condMet = varVal.includes(cVal); break;
+          case 'starts_with': condMet = varVal.startsWith(cVal); break;
+          case 'any':         condMet = true; break;
+          default:            condMet = varVal === cVal;
+        }
+        const handle = condMet ? 'true' : 'false';
+        node = getNextNode(flow.edges, flow.nodes, nodeId, handle);
+        if (node) await updateSessionNode(session.id, node.id, vars);
+        break;
       }
 
       // ── Set Variable: store user reply ────────────────────────
