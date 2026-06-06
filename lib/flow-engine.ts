@@ -16,7 +16,7 @@
  *   end            — end the flow
  */
 import { query, insert, execute } from '@/lib/db';
-import { sendTextMessage, sendTemplateMessage, sendButtonMessage, sendListMessage } from '@/lib/whatsapp';
+import { sendTextMessage, sendTemplateMessage, sendButtonMessage, sendListMessage, sendMediaButtonMessage } from '@/lib/whatsapp';
 import { utcNow } from '@/lib/utils';
 import { emitSSE } from '@/lib/sse';
 import { RowDataPacket } from 'mysql2';
@@ -24,7 +24,7 @@ import { RowDataPacket } from 'mysql2';
 // ── Types ────────────────────────────────────────────────────────
 
 export type FlowNodeType =
-  | 'message' | 'button_message' | 'list_message' | 'dynamic_list' | 'wait' | 'condition'
+  | 'message' | 'button_message' | 'list_message' | 'dynamic_list' | 'media_message' | 'wait' | 'condition'
   | 'set_variable' | 'api_call' | 'update_contact'
   | 'delay' | 'template' | 'transfer' | 'end';
 
@@ -50,8 +50,12 @@ export interface FlowNode {
     id_field?:          string;   // field name for row id   e.g. "id"
     title_field?:       string;   // field name for row title e.g. "name"
     description_field?: string;   // field name for description (optional)
+    // media_message
+    media_type?:     'IMAGE' | 'VIDEO' | 'DOCUMENT';
+    media_url?:      string;
+    caption?:        string;
     // condition
-    conditions?:     { value: string; label: string }[];
+    conditions?:     { value: string; label: string; variable?: string; operator?: string; compare_value?: string }[];
     // set_variable
     variable_name?:  string;
     // api_call
@@ -70,6 +74,10 @@ export interface FlowNode {
     language?:       string;
     // transfer
     transferNote?:   string;
+    // condition (true/false)
+    condition_variable?: string;
+    condition_operator?: string;
+    condition_value?:    string;
   };
   position: { x: number; y: number };
 }
@@ -209,6 +217,32 @@ async function executeFromNode(
         // Stay on this node — user ke button click ka wait karo
         await updateSessionNode(session.id, nodeId, vars);
         return;
+      }
+
+      // ── Media Message: image/video/document with optional buttons ─
+      case 'media_message': {
+        const mediaType  = (node.data.media_type || 'IMAGE') as 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+        const mediaUrl   = substituteVars(node.data.media_url || '', vars, extras);
+        const caption    = substituteVars(node.data.caption   || '', vars, extras);
+        const buttons    = (node.data.buttons || []) as { id: string; title: string }[];
+        let wamid: string | null = null;
+        try {
+          const res = await sendMediaButtonMessage(accessToken, phoneNumberId, contactPhone, mediaType, mediaUrl, caption, buttons);
+          wamid = res?.messages?.[0]?.id || null;
+        } catch { /* continue */ }
+        const msgContent = JSON.stringify({ __type: 'media_button', media_type: mediaType, media_url: mediaUrl, caption, buttons });
+        await saveOutboundMessage(workspaceId, session.contact_id, msgContent, wamid, 'interactive');
+        if (buttons.length > 0) {
+          // Wait for user to click a button
+          await updateSessionNode(session.id, nodeId, vars);
+          return;
+        }
+        // No buttons — advance to next node automatically
+        const nextN = getNextNode(flow.edges, flow.nodes, nodeId);
+        if (!nextN) { await endSession(session.id); return; }
+        await updateSessionNode(session.id, nextN.id, vars);
+        node = nextN;
+        continue;
       }
 
       // ── List Message: WhatsApp interactive list ───────────────
@@ -540,16 +574,39 @@ export async function tryResumeFlow(
   // Effective match value: button payload (id) takes priority over text
   const effectiveMsg = (buttonPayload || userMessage).trim().toLowerCase();
 
+  const contactRows0 = await query<RowDataPacket[]>('SELECT name FROM contacts WHERE id = ? LIMIT 1', [contactId]);
+  const contactName  = (contactRows0[0]?.name as string) || '';
+
   if (currentNode.type === 'wait' || currentNode.type === 'set_variable') {
     nextNode = getNextNode(edges, nodes, currentNode.id);
   } else if (currentNode.type === 'condition') {
-    const conditions = currentNode.data.conditions || [];
-    const matched = conditions.find((c) =>
-      effectiveMsg === c.value.toLowerCase() || effectiveMsg.includes(c.value.toLowerCase())
-    );
-    const handle = matched ? matched.value : 'default';
+    const cVariable = (currentNode.data.condition_variable as string) || 'user_message';
+    const cOperator = (currentNode.data.condition_operator as string) || 'equal';
+    const cValue    = ((currentNode.data.condition_value as string) || '').toLowerCase();
+
+    const varVal = (
+      cVariable === 'user_message'   ? userMessage :
+      cVariable === 'contact_phone'  ? contactPhone :
+      cVariable === 'contact_name'   ? contactName :
+      cVariable === 'current_date'   ? new Date().toISOString().slice(0,10) :
+      cVariable === 'current_time'   ? new Date().toTimeString().slice(0,5) :
+      cVariable === 'current_day'    ? ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][new Date().getDay()] :
+      cVariable === 'current_hour'   ? String(new Date().getHours()) :
+      (session.variables[cVariable] || '')
+    ).toLowerCase();
+
+    let conditionMet = false;
+    switch (cOperator) {
+      case 'equal':       conditionMet = varVal === cValue; break;
+      case 'not_equal':   conditionMet = varVal !== cValue; break;
+      case 'contains':    conditionMet = varVal.includes(cValue); break;
+      case 'starts_with': conditionMet = varVal.startsWith(cValue); break;
+      case 'any':         conditionMet = true; break;
+      default:            conditionMet = varVal === cValue;
+    }
+    const handle = conditionMet ? 'true' : 'false';
     nextNode = getNextNode(edges, nodes, currentNode.id, handle);
-  } else if (currentNode.type === 'button_message' || currentNode.type === 'list_message') {
+  } else if (currentNode.type === 'button_message' || currentNode.type === 'list_message' || currentNode.type === 'media_message') {
     if (buttonPayload) {
       // User clicked a button/list item (interactive reply) — advance based on button ID
       nextNode = getNextNode(edges, nodes, currentNode.id, effectiveMsg)
@@ -587,9 +644,6 @@ export async function tryResumeFlow(
     await endSession(session.id);
     return false;
   }
-
-  const contactRows = await query<RowDataPacket[]>('SELECT name FROM contacts WHERE id = ? LIMIT 1', [contactId]);
-  const contactName = (contactRows[0]?.name as string) || '';
 
   // For button/list/dynamic_list — save selected_id and selected_title into session vars
   const updatedVars = { ...session.variables };

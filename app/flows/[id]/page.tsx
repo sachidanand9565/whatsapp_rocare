@@ -15,15 +15,17 @@ import toast from 'react-hot-toast';
 import {
   MessageSquare, Clock, GitBranch, ArrowRightLeft, XCircle,
   Save, ArrowLeft, Plus, Trash2, X, Loader2, HelpCircle,
-  Zap, Globe, Database, UserCheck, Timer, LayoutTemplate, Settings,
+  Zap, Globe, Database, UserCheck, Timer, LayoutTemplate, Settings, Image,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react';
 
 // ── Node type configs ─────────────────────────────────────────
 const NODE_TYPES_META = {
   message:        { label: 'Message',        color: 'bg-green-500',   icon: MessageSquare,  border: 'border-green-400',   desc: 'Send a text message' },
-  button_message: { label: 'Buttons',        color: 'bg-emerald-600', icon: LayoutTemplate, border: 'border-emerald-500', desc: 'Send WhatsApp interactive buttons (max 3)' },
+  button_message: { label: 'Text & Buttons',        color: 'bg-emerald-600', icon: LayoutTemplate, border: 'border-emerald-500', desc: 'Send WhatsApp interactive buttons (max 3)' },
   list_message:   { label: 'List Menu',      color: 'bg-cyan-600',    icon: MessageSquare,  border: 'border-cyan-400',    desc: 'Send WhatsApp scrollable list (max 10 items)' },
   dynamic_list:   { label: 'Dynamic List',   color: 'bg-violet-600',  icon: Globe,          border: 'border-violet-400',  desc: 'Fetch items from API and send as list' },
+  media_message:  { label: 'Media + Buttons',color: 'bg-rose-500',    icon: Image,          border: 'border-rose-400',    desc: 'Send image/video/document with optional buttons' },
   wait:           { label: 'Wait',           color: 'bg-yellow-500',  icon: Clock,          border: 'border-yellow-400',  desc: 'Wait for user reply' },
   condition:      { label: 'Condition',      color: 'bg-blue-500',    icon: GitBranch,      border: 'border-blue-400',    desc: 'Branch based on user reply' },
   set_variable:   { label: 'Save Reply',     color: 'bg-teal-500',    icon: Database,       border: 'border-teal-400',    desc: 'Save user reply into a variable' },
@@ -156,36 +158,58 @@ function FlowNode({ data, selected }: NodeProps) {
         {data.type === 'update_contact' && <p className="text-indigo-600 text-[11px]">{data.contact_field||'?'} = <span className="font-mono">{data.field_value||'...'}</span></p>}
         {data.type === 'delay'     && <p className="text-gray-500 text-[11px]">⏱️ {data.seconds||1}s wait</p>}
         {data.type === 'template'  && <p className="text-pink-600 font-mono text-[10px]">{data.template_name||'...'}</p>}
+        {data.type === 'media_message' && (
+          <div className="space-y-1">
+            <div className="flex items-center gap-1">
+              <span className="text-[9px] font-bold bg-rose-100 text-rose-600 px-1.5 py-0.5 rounded">{data.media_type||'IMAGE'}</span>
+              {data.media_url && <span className="text-[9px] text-gray-400 truncate">{data.media_url}</span>}
+            </div>
+            {data.caption && <p className="text-[11px] text-gray-600 line-clamp-2">{data.caption}</p>}
+            {(data.buttons||[]).length > 0 && (
+              <div className="space-y-0.5 pt-0.5">
+                {(data.buttons as {id:string;title:string}[]).map((b,i)=>(
+                  <div key={i} className="text-[10px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-0.5 truncate">{b.title}</div>
+                ))}
+              </div>
+            )}
+            {!data.media_url && <p className="text-gray-300 italic text-[11px]">Click to add media…</p>}
+          </div>
+        )}
         {data.type === 'transfer'  && <p className="text-orange-600 italic text-[11px]">{data.transferNote||'Transfer to agent'}</p>}
         {data.type === 'end'       && <p className="text-red-500 italic text-[11px]">✅ Flow ended</p>}
         {data.type === 'condition' && (
-          <div className="space-y-1">
-            {(data.conditions||[]).slice(0,4).map((c:{value:string;label:string},i:number)=>(
-              <div key={i} className="flex items-center gap-1.5 bg-blue-50 border border-blue-100 rounded-lg px-2 py-1">
-                <span className="w-4 h-4 rounded-full bg-blue-500 text-white text-[9px] font-bold flex items-center justify-center flex-shrink-0">{c.value}</span>
-                <span className="truncate text-[10px] text-blue-700">{c.label}</span>
-              </div>
-            ))}
-            {!data.conditions?.length && <p className="text-gray-300 italic text-[11px]">Click to add conditions…</p>}
+          <div className="space-y-1.5">
+            <div className="text-[10px] text-gray-500 font-mono bg-gray-50 rounded-lg px-2 py-1.5 leading-tight">
+              <span className="text-blue-600 font-semibold">{`{{${data.condition_variable||'user_message'}}}`}</span>
+              <span className="text-gray-400 mx-1">{
+                data.condition_operator==='equal'       ? '='   :
+                data.condition_operator==='not_equal'   ? '≠'   :
+                data.condition_operator==='contains'    ? 'contains' :
+                data.condition_operator==='starts_with' ? 'starts with' :
+                data.condition_operator==='any'         ? '(any)' : '='
+              }</span>
+              <span className="text-gray-700">{data.condition_value||<span className="italic text-gray-300">value</span>}</span>
+            </div>
+            <div className="relative flex items-center justify-between bg-green-50 border border-green-200 rounded-lg px-2 py-1.5 pr-5">
+              <span className="text-[10px] text-green-700 font-semibold">✓ True</span>
+              <Handle type="source" position={Position.Right} id="true"
+                style={{ right: -10, top: '50%', transform: 'translateY(-50%)' }}
+                className="!w-3.5 !h-3.5 !bg-green-500 !border-2 !border-white !rounded-full"/>
+            </div>
+            <div className="relative flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-2 py-1.5 pr-5">
+              <span className="text-[10px] text-red-700 font-semibold">✗ False</span>
+              <Handle type="source" position={Position.Right} id="false"
+                style={{ right: -10, top: '50%', transform: 'translateY(-50%)' }}
+                className="!w-3.5 !h-3.5 !bg-red-400 !border-2 !border-white !rounded-full"/>
+            </div>
           </div>
         )}
       </div>
       {/* Handles */}
       <Handle type="target" position={Position.Left} className="!w-3.5 !h-3.5 !bg-gray-400 !border-2 !border-white"/>
-      {data.type !== 'end' && data.type !== 'transfer' && (
-        data.type === 'condition'
-          ? <>
-              {(data.conditions||[]).map((c:{value:string},i:number)=>(
-                <Handle key={i} type="source" position={Position.Right} id={c.value}
-                  style={{top:`${((i+1)/((data.conditions?.length||1)+1))*100}%`}}
-                  className="!w-3 !h-3 !bg-blue-400 !border-2 !border-white"/>
-              ))}
-              <Handle type="source" position={Position.Right} id="default"
-                style={{top:'92%'}} className="!w-3 !h-3 !bg-gray-300 !border-2 !border-white"/>
-            </>
-          : (data.type === 'button_message' || data.type === 'list_message')
-          ? null  // handles are inline with each button/row above
-          : <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-gray-400 !border-2 !border-white"/>
+      {data.type !== 'end' && data.type !== 'transfer' && data.type !== 'condition' &&
+        data.type !== 'button_message' && data.type !== 'list_message' && (
+          <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-gray-400 !border-2 !border-white"/>
       )}
     </div>
   );
@@ -219,9 +243,26 @@ function DeleteEdge({ id, sourceX, sourceY, sourcePosition, targetX, targetY, ta
 const nodeTypes = { flowNode: FlowNode };
 const edgeTypes = { deleteEdge: DeleteEdge };
 
+// ── Extract flow variables from all nodes ─────────────────────
+function extractFlowVars(allNodes: Node[]): string[] {
+  const vars = new Set<string>([
+    'user_message','contact_phone','contact_name','selected_id','selected_title',
+    'current_date','current_time','current_day','current_hour',
+  ]);
+  for (const n of allNodes) {
+    const d = n.data as Record<string,string>;
+    if (d.variable_name?.trim())   vars.add(d.variable_name.trim());
+    if (d.save_id_as?.trim())      vars.add(d.save_id_as.trim());
+    if (d.save_title_as?.trim())   vars.add(d.save_title_as.trim());
+    if (d.save_response_as?.trim())vars.add(d.save_response_as.trim());
+  }
+  return Array.from(vars);
+}
+
 // ── Config Panel ──────────────────────────────────────────────
-function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
-  node: Node; onUpdate:(id:string,data:Record<string,unknown>)=>void;
+function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose }: {
+  node: Node; allNodes: Node[];
+  onUpdate:(id:string,data:Record<string,unknown>)=>void;
   onDelete:(id:string)=>void; onClose:()=>void;
 }) {
   const type = node.data.type as NodeType;
@@ -234,7 +275,14 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
   const [btnFooterText,  setBtnFooterText] = useState(node.data.footer_text||'');
   const [buttons,        setButtons]       = useState<{ id: string; title: string }[]>(node.data.buttons||[]);
   const [transferNote,   setTransferNote]  = useState(node.data.transferNote||'');
-  const [conditions,     setConditions]    = useState<{value:string;label:string}[]>(node.data.conditions||[]);
+  const [condVar,        setCondVar]       = useState(node.data.condition_variable||'user_message');
+  const [condOp,         setCondOp]        = useState(node.data.condition_operator||'equal');
+  const [condVal,        setCondVal]       = useState(node.data.condition_value||'');
+  const flowVars = extractFlowVars(allNodes);
+  const [mediaType,    setMediaType]    = useState<'IMAGE'|'VIDEO'|'DOCUMENT'|'AUDIO'>((node.data.media_type as 'IMAGE'|'VIDEO'|'DOCUMENT'|'AUDIO')||'IMAGE');
+  const [mediaUrl,     setMediaUrl]     = useState(node.data.media_url||'');
+  const [mediaCaption, setMediaCaption] = useState(node.data.caption||'');
+  const [mediaButtons, setMediaButtons] = useState<{id:string;title:string}[]>(node.data.buttons&&node.data.media_type?node.data.buttons:[]);
   const [varName,        setVarName]       = useState(node.data.variable_name||'');
   const [apiUrl,         setApiUrl]        = useState(node.data.url||'');
   const [apiMethod,      setApiMethod]     = useState(node.data.method||'POST');
@@ -281,7 +329,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
     if (type==='message')        { updates.text = text; }
     if (type==='button_message') { updates.body_text=btnBodyText; updates.header_text=btnHeaderText; updates.footer_text=btnFooterText; updates.buttons=buttons; }
     if (type==='transfer')       { updates.transferNote = transferNote; }
-    if (type==='condition')      { updates.conditions = conditions; }
+    if (type==='condition')      { updates.condition_variable = condVar; updates.condition_operator = condOp; updates.condition_value = condVal; }
     if (type==='set_variable')   { updates.variable_name = varName; }
     if (type==='api_call')       { updates.url=apiUrl; updates.method=apiMethod; updates.headers=apiHeaders; updates.body=apiBody; updates.save_response_as=apiSaveAs; }
     if (type==='update_contact') { updates.contact_field=contactField; updates.field_value=fieldValue; }
@@ -290,6 +338,7 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
     if (type==='list_message')   { updates.body_text=listBodyText; updates.header_text=listHeaderText; updates.footer_text=listFooterText; updates.list_button_text=listButtonText; updates.list_sections=listSections; updates.save_id_as=listSaveIdAs; updates.save_title_as=listSaveTitleAs; }
     if (type==='button_message') { updates.body_text=btnBodyText; updates.header_text=btnHeaderText; updates.footer_text=btnFooterText; updates.buttons=buttons; updates.save_id_as=btnSaveIdAs; updates.save_title_as=btnSaveTitleAs; }
     if (type==='dynamic_list')  { updates.url=dynUrl; updates.method=dynMethod; updates.headers=dynHeaders; updates.body=dynReqBody; updates.items_path=dynItemsPath; updates.id_field=dynIdField; updates.title_field=dynTitleField; updates.description_field=dynDescField; updates.body_text=dynBodyText; updates.header_text=dynHeaderText; updates.footer_text=dynFooterText; updates.list_button_text=dynBtnText; updates.save_response_as=dynSaveAs; updates.save_id_as=dynSaveIdAs; updates.save_title_as=dynSaveTitleAs; }
+    if (type==='media_message') { updates.media_type=mediaType; updates.media_url=mediaUrl; updates.caption=mediaCaption; updates.buttons=mediaButtons; }
     onUpdate(node.id, updates);
     onClose();
   }
@@ -759,34 +808,62 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
 
         {/* CONDITION */}
         {type==='condition' && <>
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-            <p className="font-semibold text-blue-800 mb-1">🔀 Condition Node</p>
-            <p className="text-blue-700">Branches the flow based on the user's reply value.</p>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5">
+            <p className="font-semibold text-blue-800 text-[11px]">🔀 Condition node — True branch chalega agar condition match kare, warna False.</p>
           </div>
-          <div className="space-y-2">
-            {conditions.map((c,i)=>(
-              <div key={i} className="bg-gray-50 rounded-lg p-2 flex gap-2">
-                <div className="flex-1 space-y-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-gray-400 w-14 flex-shrink-0">User reply:</span>
-                    <input value={c.value} onChange={e=>{const n=[...conditions];n[i]={...n[i],value:e.target.value};setConditions(n);}}
-                      placeholder="1" className="flex-1 border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"/>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-gray-400 w-14 flex-shrink-0">Label:</span>
-                    <input value={c.label} onChange={e=>{const n=[...conditions];n[i]={...n[i],label:e.target.value};setConditions(n);}}
-                      placeholder="Order Status" className="flex-1 border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"/>
-                  </div>
-                </div>
-                <button onClick={()=>setConditions(conditions.filter((_,j)=>j!==i))} className="text-gray-300 hover:text-red-500"><Trash2 size={12}/></button>
-              </div>
-            ))}
-            <button onClick={()=>setConditions([...conditions,{value:'',label:''}])}
-              className="flex items-center gap-1 text-blue-600 hover:text-blue-800 font-medium">
-              <Plus size={11}/> Add Condition
-            </button>
+          {/* Variable */}
+          <div>
+            <label className="block text-[10px] font-semibold text-gray-500 mb-1">Select Condition</label>
+            <select value={condOp} onChange={e=>setCondOp(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+              <option value="equal">Equal</option>
+              <option value="not_equal">Not Equal</option>
+              <option value="contains">Contains</option>
+              <option value="starts_with">Starts With</option>
+              <option value="any">Any value (always True)</option>
+            </select>
           </div>
-          <p className="text-gray-400">💡 <strong>default</strong> = no match found</p>
+          {/* Variable / Attribute */}
+          <div>
+            <label className="block text-[10px] font-semibold text-gray-500 mb-1">Select Attribute</label>
+            <select value={condVar} onChange={e=>setCondVar(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-2 py-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+              {flowVars.map(v=>{
+                const labels: Record<string,string> = {
+                  current_date:'current_date (YYYY-MM-DD)',
+                  current_time:'current_time (HH:mm)',
+                  current_day: 'current_day (monday…)',
+                  current_hour:'current_hour (0–23)',
+                  user_message:'user_message',
+                  contact_phone:'contact_phone',
+                  contact_name:'contact_name',
+                };
+                return <option key={v} value={v}>{labels[v] ?? `${v}`}</option>;
+              })}
+            </select>
+          </div>
+          {/* Value */}
+          {condOp !== 'any' && (
+            <div>
+              <label className="block text-[10px] font-semibold text-gray-500 mb-1">Value</label>
+              <input value={condVal} onChange={e=>setCondVal(e.target.value)}
+                placeholder="e.g. yes, 1, Water Purifier"
+                className="w-full border border-gray-200 rounded-lg px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+            </div>
+          )}
+          {/* True / False preview */}
+          <div className="space-y-2 pt-1">
+            <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+              <div className="w-3 h-3 rounded-full bg-green-500 flex-shrink-0"/>
+              <span className="text-xs font-semibold text-green-700">True</span>
+              <span className="text-[10px] text-green-500 ml-auto">→ connect this to next node</span>
+            </div>
+            <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              <div className="w-3 h-3 rounded-full bg-red-400 flex-shrink-0"/>
+              <span className="text-xs font-semibold text-red-700">False</span>
+              <span className="text-[10px] text-red-400 ml-auto">→ connect this to next node</span>
+            </div>
+          </div>
         </>}
 
         {/* SET VARIABLE */}
@@ -918,6 +995,76 @@ function ConfigPanel({ node, onUpdate, onDelete, onClose }: {
           </div>
         </>}
 
+        {/* MEDIA + BUTTONS */}
+        {type==='media_message' && <>
+          <div className="bg-rose-50 border border-rose-200 rounded-lg p-2.5">
+            <p className="font-semibold text-rose-800 text-[11px]">🖼️ Send image/video/document with optional reply buttons.</p>
+          </div>
+          {/* Media type */}
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1 text-xs">Media Type</label>
+            <select value={mediaType} onChange={e=>setMediaType(e.target.value as 'IMAGE'|'VIDEO'|'DOCUMENT'|'AUDIO')}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rose-400 bg-white">
+              <option value="IMAGE">Image</option>
+              <option value="VIDEO">Video</option>
+              <option value="DOCUMENT">Document</option>
+              <option value="AUDIO">Audio</option>
+            </select>
+          </div>
+          {/* Media URL */}
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1 text-xs">Media URL *</label>
+            <input value={mediaUrl} onChange={e=>setMediaUrl(e.target.value)}
+              placeholder="https://example.com/image.jpg"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-rose-400"/>
+            {/* Preview */}
+            {mediaType==='IMAGE' && mediaUrl && (
+              <div className="mt-2 rounded-lg overflow-hidden border border-gray-200 max-h-32">
+                <img src={mediaUrl} alt="preview" className="w-full object-cover max-h-32"
+                  onError={e=>{(e.target as HTMLImageElement).style.display='none';}}/>
+              </div>
+            )}
+          </div>
+          {/* Caption — not supported for audio */}
+          {mediaType !== 'AUDIO' && (
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1 text-xs">Caption / Body text</label>
+            <textarea value={mediaCaption} onChange={e=>setMediaCaption(e.target.value.slice(0,1024))} rows={3}
+              placeholder="Description below the media…"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rose-400 resize-none"/>
+            <p className="text-[10px] text-gray-400 text-right">{mediaCaption.length}/1024</p>
+          </div>
+          )}
+          {mediaType === 'AUDIO' && (
+            <p className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">⚠️ Audio messages do not support captions or buttons in WhatsApp.</p>
+          )}
+          {/* Buttons — not supported for audio */}
+          {mediaType !== 'AUDIO' && <div>
+            <label className="block font-semibold text-gray-600 mb-1 text-xs">Reply Buttons (optional, max 3)</label>
+            <div className="space-y-2">
+              {mediaButtons.map((b,i)=>(
+                <div key={i} className="flex items-center gap-2 bg-gray-50 rounded-lg p-2">
+                  <div className="flex-1 space-y-1">
+                    <input value={b.id} onChange={e=>{const n=[...mediaButtons];n[i]={...n[i],id:e.target.value};setMediaButtons(n);}}
+                      placeholder="ID e.g. book_call" className="w-full border border-gray-200 rounded px-2 py-1 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-rose-400"/>
+                    <input value={b.title} onChange={e=>{const n=[...mediaButtons];n[i]={...n[i],title:e.target.value.slice(0,20)};setMediaButtons(n);}}
+                      placeholder="Label (max 20)" maxLength={20}
+                      className="w-full border border-gray-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-rose-400"/>
+                  </div>
+                  <button onClick={()=>setMediaButtons(mediaButtons.filter((_,j)=>j!==i))} className="text-gray-300 hover:text-red-500"><Trash2 size={12}/></button>
+                </div>
+              ))}
+              {mediaButtons.length < 3 && (
+                <button onClick={()=>setMediaButtons([...mediaButtons,{id:`mbtn_${mediaButtons.length+1}`,title:''}])}
+                  className="flex items-center gap-1 text-rose-600 hover:text-rose-800 font-medium text-xs w-full justify-center py-1.5 border border-dashed border-rose-300 rounded-lg">
+                  <Plus size={11}/> Add Button
+                </button>
+              )}
+            </div>
+            {mediaButtons.length > 0 && <p className="text-[10px] text-gray-400 mt-1">Each button has its own output handle on the right.</p>}
+          </div>}
+        </>}
+
         {/* END */}
         {type==='end' && <div className="bg-red-50 border border-red-200 rounded-lg p-3">
           <p className="font-semibold text-red-800 mb-1">🔚 End Node</p>
@@ -1023,6 +1170,7 @@ export default function FlowBuilderPage() {
   const [viewport, setViewport]          = useState({ x: 0, y: 0, zoom: 1 });
 
   // Flow settings (trigger edit)
+  const [showNodeSidebar, setShowNodeSidebar] = useState(true);
   const [showSettings, setShowSettings]     = useState(false);
   const [settingsTriggerType, setSettingsTriggerType] = useState('keyword');
   const [settingsKeywords, setSettingsKeywords]       = useState<string[]>([]);
@@ -1058,7 +1206,7 @@ export default function FlowBuilderPage() {
     setNodes(nds => [...nds, {
       id: uid(), type:'flowNode',
       position: { x: cx - 110 + (Math.random()*60 - 30), y: cy - 60 + (Math.random()*60 - 30) },
-      data: { type, text:'', conditions:[], transferNote:'', variable_name:'', url:'', method:'POST', headers:'', body:'', seconds:2, template_name:'', language:'en', contact_field:'name', field_value:'', body_text:'', header_text:'', footer_text:'', buttons:[] },
+      data: { type, text:'', conditions:[], transferNote:'', variable_name:'', url:'', method:'POST', headers:'', body:'', seconds:2, template_name:'', language:'en', contact_field:'name', field_value:'', body_text:'', header_text:'', footer_text:'', buttons:[], media_type:'IMAGE', media_url:'', caption:'' },
     }]);
   }
 
@@ -1144,19 +1292,6 @@ export default function FlowBuilderPage() {
           <Zap size={11}/> Example
         </button>
 
-        {/* Node add buttons */}
-        <div className="flex items-center gap-1 flex-wrap">
-          {(Object.entries(NODE_TYPES_META) as [NodeType, typeof NODE_TYPES_META[NodeType]][]).map(([type,meta])=>{
-            const Icon=meta.icon;
-            return (
-              <button key={type} onClick={()=>addNode(type)} title={meta.desc}
-                className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-medium text-white ${meta.color} hover:opacity-90 flex-shrink-0`}>
-                <Icon size={10}/> {meta.label}
-              </button>
-            );
-          })}
-        </div>
-
         <button onClick={()=>{setShowSettings(v=>!v);setSelectedNode(null);setShowHelp(false);}}
           title="Flow Settings — edit name and trigger keywords"
           className={`p-1.5 rounded-lg transition-colors flex-shrink-0 ${showSettings?'bg-orange-50 text-orange-600':'text-gray-400 hover:bg-gray-100'}`}>
@@ -1174,6 +1309,35 @@ export default function FlowBuilderPage() {
 
       {/* Canvas + Panel */}
       <div className="flex flex-1 min-h-0">
+
+        {/* Left Node Sidebar */}
+        <div className={`relative flex-shrink-0 bg-white border-r border-gray-200 flex flex-col transition-all duration-200 ${showNodeSidebar ? 'w-48' : 'w-8'}`}>
+          {/* Toggle button */}
+          <button onClick={()=>setShowNodeSidebar(v=>!v)}
+            className="absolute -right-3 top-4 z-10 w-6 h-6 bg-white border border-gray-200 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 shadow-sm">
+            {showNodeSidebar ? <ChevronLeft size={12}/> : <ChevronRight size={12}/>}
+          </button>
+          {showNodeSidebar && (
+            <div className="flex-1 overflow-y-auto p-2">
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-2">Node Types</p>
+              <div className="grid grid-cols-2 gap-1.5">
+                {(Object.entries(NODE_TYPES_META) as [NodeType, typeof NODE_TYPES_META[NodeType]][]).map(([type, meta])=>{
+                  const Icon = meta.icon;
+                  return (
+                    <button key={type} onClick={()=>addNode(type)} title={meta.desc}
+                      className="flex flex-col items-center gap-1 p-2 rounded-lg border border-gray-100 hover:border-gray-300 hover:bg-gray-50 text-center transition-colors group">
+                      <div className={`w-8 h-8 rounded-lg ${meta.color} flex items-center justify-center`}>
+                        <Icon size={14} className="text-white"/>
+                      </div>
+                      <span className="text-[10px] font-medium text-gray-600 leading-tight">{meta.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
         <div className="flex-1" ref={wrapper}>
           <ReactFlow nodes={nodes} edges={edges}
             onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
@@ -1206,7 +1370,7 @@ export default function FlowBuilderPage() {
                 <div className="text-center space-y-3 pointer-events-auto">
                   <div className="text-5xl">🤖</div>
                   <p className="text-gray-500 font-semibold">Flow abhi khali hai</p>
-                  <p className="text-gray-400 text-sm">Add a node from the toolbar above or load an example</p>
+                  <p className="text-gray-400 text-sm">Left panel se node add karo ya example load karo</p>
                   <div className="flex gap-2 justify-center">
                     <button onClick={loadExample}
                       className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700">
@@ -1224,7 +1388,7 @@ export default function FlowBuilderPage() {
         </div>
 
         {rightPanel==='config' && selectedNode && (
-          <ConfigPanel node={selectedNode} onUpdate={updateNodeData} onDelete={deleteNode} onClose={()=>setSelectedNode(null)}/>
+          <ConfigPanel node={selectedNode} allNodes={nodes} onUpdate={updateNodeData} onDelete={deleteNode} onClose={()=>setSelectedNode(null)}/>
         )}
         {rightPanel==='help' && <HelpPanel onClose={()=>setShowHelp(false)}/>}
 

@@ -210,6 +210,57 @@ export async function uploadMedia(
   return json.id;
 }
 
+// ---- Send media message with optional buttons (interactive header) ----
+export async function sendMediaButtonMessage(
+  accessToken:   string,
+  phoneNumberId: string,
+  to:            string,
+  mediaType:     'IMAGE' | 'VIDEO' | 'DOCUMENT',
+  mediaUrl:      string,
+  caption:       string,
+  buttons:       { id: string; title: string }[],
+) {
+  const client = createWAClient(accessToken);
+  const mt = mediaType.toLowerCase() as 'image' | 'video' | 'document';
+
+  if (buttons.length > 0) {
+    // Interactive message with media header
+    const header: Record<string, unknown> = { type: mt };
+    header[mt] = { link: mediaUrl };
+
+    const interactive: Record<string, unknown> = {
+      type:   'button',
+      header,
+      body:   { text: caption || ' ' },
+      action: {
+        buttons: buttons.slice(0, 3).map((b) => ({
+          type:  'reply',
+          reply: { id: b.id.slice(0, 256), title: b.title.slice(0, 20) },
+        })),
+      },
+    };
+    const { data } = await client.post(`/${phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      recipient_type:    'individual',
+      to,
+      type:        'interactive',
+      interactive,
+    });
+    return data;
+  } else {
+    // Plain media message with caption
+    const payload: Record<string, unknown> = {
+      messaging_product: 'whatsapp',
+      recipient_type:    'individual',
+      to,
+      type: mt,
+      [mt]: { link: mediaUrl, caption },
+    };
+    const { data } = await client.post(`/${phoneNumberId}/messages`, payload);
+    return data;
+  }
+}
+
 // ---- Send typing indicator — same status pattern as markAsRead ----
 export async function sendTypingIndicator(
   accessToken:   string,
