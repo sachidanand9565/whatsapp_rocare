@@ -1020,6 +1020,7 @@ export default function FlowBuilderPage() {
   const [loading, setLoading]            = useState(true);
   const [showHelp, setShowHelp]          = useState(false);
   const wrapper                          = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport]          = useState({ x: 0, y: 0, zoom: 1 });
 
   // Flow settings (trigger edit)
   const [showSettings, setShowSettings]     = useState(false);
@@ -1049,9 +1050,14 @@ export default function FlowBuilderPage() {
   }, [setEdges]);
 
   function addNode(type: NodeType) {
+    const rect  = wrapper.current?.getBoundingClientRect();
+    const canvasW = rect?.width  ?? window.innerWidth;
+    const canvasH = rect?.height ?? window.innerHeight;
+    const cx = (canvasW / 2 - viewport.x) / viewport.zoom;
+    const cy = (canvasH / 2 - viewport.y) / viewport.zoom;
     setNodes(nds => [...nds, {
       id: uid(), type:'flowNode',
-      position: { x: 220 + Math.random()*80, y: 80 + nds.length*140 },
+      position: { x: cx - 110 + (Math.random()*60 - 30), y: cy - 60 + (Math.random()*60 - 30) },
       data: { type, text:'', conditions:[], transferNote:'', variable_name:'', url:'', method:'POST', headers:'', body:'', seconds:2, template_name:'', language:'en', contact_field:'name', field_value:'', body_text:'', header_text:'', footer_text:'', buttons:[] },
     }]);
   }
@@ -1174,6 +1180,7 @@ export default function FlowBuilderPage() {
             onConnect={onConnect} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
             onNodeClick={(_,n)=>{setSelectedNode(n);setShowHelp(false);setShowSettings(false);}}
             onPaneClick={()=>setSelectedNode(null)}
+            onMove={(_,vp)=>setViewport(vp)}
             deleteKeyCode={['Backspace','Delete']}
             fitView
             defaultEdgeOptions={{ type: 'deleteEdge' }}>
