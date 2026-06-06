@@ -549,27 +549,41 @@ export async function tryResumeFlow(
     );
     const handle = matched ? matched.value : 'default';
     nextNode = getNextNode(edges, nodes, currentNode.id, handle);
-  } else if (
-    currentNode.type === 'button_message' ||
-    currentNode.type === 'list_message' ||
-    currentNode.type === 'dynamic_list'
-  ) {
-    nextNode = getNextNode(edges, nodes, currentNode.id, effectiveMsg)
-      || getNextNode(edges, nodes, currentNode.id);
+  } else if (currentNode.type === 'button_message' || currentNode.type === 'list_message') {
+    if (buttonPayload) {
+      // User clicked a button/list item (interactive reply) — advance based on button ID
+      nextNode = getNextNode(edges, nodes, currentNode.id, effectiveMsg)
+        || getNextNode(edges, nodes, currentNode.id);
+    } else {
+      // Plain text received while waiting for interactive click — end session so trigger keyword can restart flow
+      await endSession(session.id);
+      return false;
+    }
+  } else if (currentNode.type === 'dynamic_list') {
+    if (buttonPayload) {
+      // Pehle check: kya dynamic_list ka koi connected output node hai?
+      const anyNext = getNextNode(edges, nodes, currentNode.id);
+      if (anyNext) {
+        // Output connected hai → user ne service select ki → aage jao
+        nextNode = anyNext;
+      } else {
+        // Output nahi → user ne purani category list se re-select kiya → re-run
+        const contactRows2 = await query<RowDataPacket[]>('SELECT name FROM contacts WHERE id = ? LIMIT 1', [contactId]);
+        const contactName2 = (contactRows2[0]?.name as string) || '';
+        const rerunVars: Record<string, string> = { ...session.variables };
+        rerunVars['selected_id']    = effectiveMsg;
+        rerunVars['selected_title'] = userMessage;
+        if (currentNode.data.save_id_as?.trim())    rerunVars[currentNode.data.save_id_as.trim()]    = effectiveMsg;
+        if (currentNode.data.save_title_as?.trim()) rerunVars[currentNode.data.save_title_as.trim()] = userMessage;
+        await updateSessionNode(session.id, currentNode.id, rerunVars);
+        session.variables = rerunVars;
+        await executeFromNode(flow, session, currentNode, accessToken, phoneNumberId, contactPhone, workspaceId, effectiveMsg, contactName2);
+        return true;
+      }
+    }
   }
 
   if (!nextNode) {
-    // dynamic_list: sirf interactive selection (buttonPayload) pe re-run karo
-    if (currentNode.type === 'dynamic_list' && buttonPayload) {
-      const contactRows2 = await query<RowDataPacket[]>('SELECT name FROM contacts WHERE id = ? LIMIT 1', [contactId]);
-      const contactName2 = (contactRows2[0]?.name as string) || '';
-      const rerunVars = { ...session.variables, selected_id: effectiveMsg, selected_title: userMessage };
-      await updateSessionNode(session.id, currentNode.id, rerunVars);
-      session.variables = rerunVars;
-      await executeFromNode(flow, session, currentNode, accessToken, phoneNumberId, contactPhone, workspaceId, effectiveMsg, contactName2);
-      return true;
-    }
-    // Koi match nahi — session end karo, tryStartFlow trigger keyword handle karega
     await endSession(session.id);
     return false;
   }
