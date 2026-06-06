@@ -171,21 +171,21 @@ function FlowNode({ data, selected }: NodeProps) {
         )}
       </div>
       {/* Handles */}
-      <Handle type="target" position={Position.Top} className="!w-3.5 !h-3.5 !bg-gray-400 !border-2 !border-white"/>
+      <Handle type="target" position={Position.Left} className="!w-3.5 !h-3.5 !bg-gray-400 !border-2 !border-white"/>
       {data.type !== 'end' && data.type !== 'transfer' && (
         data.type === 'condition'
           ? <>
               {(data.conditions||[]).map((c:{value:string},i:number)=>(
-                <Handle key={i} type="source" position={Position.Bottom} id={c.value}
-                  style={{left:`${((i+1)/((data.conditions?.length||1)+1))*100}%`}}
+                <Handle key={i} type="source" position={Position.Right} id={c.value}
+                  style={{top:`${((i+1)/((data.conditions?.length||1)+1))*100}%`}}
                   className="!w-3 !h-3 !bg-blue-400 !border-2 !border-white"/>
               ))}
-              <Handle type="source" position={Position.Bottom} id="default"
-                style={{left:'92%'}} className="!w-3 !h-3 !bg-gray-300 !border-2 !border-white"/>
+              <Handle type="source" position={Position.Right} id="default"
+                style={{top:'92%'}} className="!w-3 !h-3 !bg-gray-300 !border-2 !border-white"/>
             </>
           : (data.type === 'button_message' || data.type === 'list_message')
           ? null  // handles are inline with each button/row above
-          : <Handle type="source" position={Position.Bottom} className="!w-3 !h-3 !bg-gray-400 !border-2 !border-white"/>
+          : <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-gray-400 !border-2 !border-white"/>
       )}
     </div>
   );
