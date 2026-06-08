@@ -346,12 +346,20 @@ async function executeFromNode(
         const footerText = node.data.footer_text ? substituteVars(node.data.footer_text, vars, extras) : undefined;
         const products   = (node.data.products || []) as { id: string; name: string; price?: string; description?: string; image_url?: string; media_id?: string }[];
         
+        console.log('[flow-engine] Multi Product Node:');
+        console.log('  Header:', headerText);
+        console.log('  Body:', bodyText);
+        console.log('  Products:', JSON.stringify(products, null, 2));
+        
         let wamid: string | null = null;
         if (products.length > 0) {
           try {
             const res = await sendProductMessage(accessToken, phoneNumberId, contactPhone, headerText, bodyText, products, footerText);
             wamid = res?.messages?.[0]?.id || null;
-          } catch { /**/ }
+            console.log('[flow-engine] Product message sent, wamid:', wamid);
+          } catch (err) {
+            console.error('[flow-engine] Product message send failed:', err);
+          }
         } else {
           // Fallback: agar koi products nahi to plain text bhejo
           try {
