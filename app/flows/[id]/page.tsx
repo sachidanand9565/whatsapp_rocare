@@ -17,7 +17,7 @@ import {
   MessageSquare, Clock, GitBranch, ArrowRightLeft, XCircle,
   Save, ArrowLeft, Plus, Trash2, X, Loader2, HelpCircle,
   Zap, Globe, Database, UserCheck, Timer, LayoutTemplate, Settings, Image,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, ShoppingCart,
 } from 'lucide-react';
 
 // ── Node type configs ─────────────────────────────────────────
@@ -27,6 +27,7 @@ const NODE_TYPES_META = {
   list_message:   { label: 'List Menu',      color: 'bg-cyan-600',    icon: MessageSquare,  border: 'border-cyan-400',    desc: 'Send WhatsApp scrollable list (max 10 items)' },
   dynamic_list:   { label: 'Dynamic List',   color: 'bg-violet-600',  icon: Globe,          border: 'border-violet-400',  desc: 'Fetch items from API and send as list' },
   media_message:  { label: 'Media + Buttons',color: 'bg-rose-500',    icon: Image,          border: 'border-rose-400',    desc: 'Send image/video/document with optional buttons' },
+  multi_product:  { label: 'Multi Product',  color: 'bg-blue-600',    icon: ShoppingCart,   border: 'border-blue-500',    desc: 'Display multiple products with images & prices' },
   wait:           { label: 'Wait',           color: 'bg-yellow-500',  icon: Clock,          border: 'border-yellow-400',  desc: 'Wait for user reply' },
   condition:      { label: 'Condition',      color: 'bg-blue-500',    icon: GitBranch,      border: 'border-blue-400',    desc: 'Branch based on user reply' },
   set_variable:   { label: 'Save Reply',     color: 'bg-teal-500',    icon: Database,       border: 'border-teal-400',    desc: 'Save user reply into a variable' },
@@ -182,6 +183,26 @@ function FlowNode({ data, selected }: NodeProps) {
             {!data.media_id && !data.media_url && <p className="text-gray-300 italic text-[11px]">Click to add media…</p>}
           </div>
         )}
+        {data.type === 'multi_product' && (
+          <div className="space-y-1">
+            <p className="text-blue-600 font-semibold text-[10px]">{data.header_text || 'Our Products:'}</p>
+            {(data.products || []).slice(0, 3).map((p: { id: string; name: string; price?: string }, i: number) => (
+              <div key={i} className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-lg px-2 py-1">
+                <span className="text-[10px] text-blue-700 font-medium flex-1 truncate">{p.name || '...'}</span>
+                {p.price && <span className="text-[9px] text-blue-500 flex-shrink-0">₹{p.price}</span>}
+                <Handle type="source" position={Position.Right} id={p.id}
+                  style={{ right: -10, top: '50%', transform: 'translateY(-50%)' }}
+                  className="!w-3.5 !h-3.5 !bg-blue-500 !border-2 !border-white !rounded-full"/>
+              </div>
+            ))}
+            {(data.products || []).length === 0 && (
+              <div className="border border-dashed border-gray-200 rounded-lg px-2 py-1.5 text-[10px] text-gray-300 text-center">+ Add Products</div>
+            )}
+            {(data.products || []).length > 3 && (
+              <p className="text-[9px] text-gray-400 text-center">+{(data.products || []).length - 3} more</p>
+            )}
+          </div>
+        )}
         {data.type === 'transfer'  && <p className="text-orange-600 italic text-[11px]">{data.transferNote||'Transfer to agent'}</p>}
         {data.type === 'end'       && <p className="text-red-500 italic text-[11px]">✅ Flow ended</p>}
         {data.type === 'condition' && (
@@ -215,7 +236,7 @@ function FlowNode({ data, selected }: NodeProps) {
       {/* Handles */}
       <Handle type="target" position={Position.Left} className="!w-3.5 !h-3.5 !bg-gray-400 !border-2 !border-white"/>
       {data.type !== 'end' && data.type !== 'transfer' && data.type !== 'condition' &&
-        data.type !== 'button_message' && data.type !== 'list_message' &&
+        data.type !== 'button_message' && data.type !== 'list_message' && data.type !== 'multi_product' &&
         !(data.type === 'media_message' && (data.buttons||[]).length > 0) && (
           <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-gray-400 !border-2 !border-white"/>
       )}
@@ -336,12 +357,24 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
   const [listSections,   setListSections]  = useState<{ title: string; rows: { id: string; title: string; description?: string }[] }[]>(
     node.data.list_sections || [{ title: '', rows: [] }]
   );
+  
+  // Multi Product state
+  const [prodHeaderText, setProdHeaderText] = useState(node.data.header_text || 'Our Products');
+  const [prodBodyText,   setProdBodyText]   = useState(node.data.body_text || 'Select a product');
+  const [prodFooterText, setProdFooterText] = useState(node.data.footer_text || '');
+  const [products,       setProducts]       = useState<{ id: string; name: string; price?: string; description?: string; image_url?: string; media_id?: string; media_filename?: string; media_mime?: string }[]>(
+    node.data.products || []
+  );
+  const [prodSaveIdAs,   setProdSaveIdAs]   = useState(node.data.save_id_as || '');
+  const [prodSaveTitleAs,setProdSaveTitleAs]= useState(node.data.save_title_as || '');
+  const [prodMediaLibIdx, setProdMediaLibIdx] = useState<number | null>(null);
+  const [showProdMediaLib, setShowProdMediaLib] = useState(false);
 
   function save() {
     const base = { type: node.data.type };
     const updates: Record<string,unknown> = { ...base };
     if (type==='message')        { updates.text = text; }
-    if (type==='button_message') { updates.body_text=btnBodyText; updates.header_text=btnHeaderText; updates.footer_text=btnFooterText; updates.buttons=buttons; }
+    if (type==='button_message') { updates.body_text=btnBodyText; updates.header_text=btnHeaderText; updates.footer_text=btnFooterText; updates.buttons=buttons; updates.save_id_as=btnSaveIdAs; updates.save_title_as=btnSaveTitleAs; }
     if (type==='transfer')       { updates.transferNote = transferNote; }
     if (type==='condition')      { updates.condition_variable = condVar; updates.condition_operator = condOp; updates.condition_value = condVal; }
     if (type==='set_variable')   { updates.variable_name = varName; }
@@ -350,9 +383,9 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
     if (type==='delay')          { updates.seconds=Number(delaySecs); }
     if (type==='template')       { updates.template_name=tplName; updates.language=tplLang; }
     if (type==='list_message')   { updates.body_text=listBodyText; updates.header_text=listHeaderText; updates.footer_text=listFooterText; updates.list_button_text=listButtonText; updates.list_sections=listSections; updates.save_id_as=listSaveIdAs; updates.save_title_as=listSaveTitleAs; }
-    if (type==='button_message') { updates.body_text=btnBodyText; updates.header_text=btnHeaderText; updates.footer_text=btnFooterText; updates.buttons=buttons; updates.save_id_as=btnSaveIdAs; updates.save_title_as=btnSaveTitleAs; }
-    if (type==='dynamic_list')  { updates.url=dynUrl; updates.method=dynMethod; updates.headers=dynHeaders; updates.body=dynReqBody; updates.items_path=dynItemsPath; updates.id_field=dynIdField; updates.title_field=dynTitleField; updates.description_field=dynDescField; updates.body_text=dynBodyText; updates.header_text=dynHeaderText; updates.footer_text=dynFooterText; updates.list_button_text=dynBtnText; updates.save_response_as=dynSaveAs; updates.save_id_as=dynSaveIdAs; updates.save_title_as=dynSaveTitleAs; }
+    if (type==='dynamic_list')   { updates.url=dynUrl; updates.method=dynMethod; updates.headers=dynHeaders; updates.body=dynReqBody; updates.items_path=dynItemsPath; updates.id_field=dynIdField; updates.title_field=dynTitleField; updates.description_field=dynDescField; updates.body_text=dynBodyText; updates.header_text=dynHeaderText; updates.footer_text=dynFooterText; updates.list_button_text=dynBtnText; updates.save_response_as=dynSaveAs; updates.save_id_as=dynSaveIdAs; updates.save_title_as=dynSaveTitleAs; }
     if (type==='media_message') { updates.media_type=mediaType; updates.media_url=mediaUrl; updates.media_id=mediaId; updates.caption=mediaCaption; updates.buttons=mediaButtons; }
+    if (type==='multi_product') { updates.header_text=prodHeaderText; updates.body_text=prodBodyText; updates.footer_text=prodFooterText; updates.products=products; updates.save_id_as=prodSaveIdAs; updates.save_title_as=prodSaveTitleAs; }
     onUpdate(node.id, updates);
     onClose();
   }
@@ -1144,6 +1177,143 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
           )}
         </>}
 
+        {/* MULTI PRODUCT */}
+        {type==='multi_product' && <>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <p className="font-semibold text-blue-800 mb-1">🛍️ Multi Product Node</p>
+            <p className="text-blue-700 text-[11px]">Display multiple products with images, prices & descriptions. User selects one to branch the flow.</p>
+          </div>
+
+          {/* Header & Body Text */}
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Header (optional)</label>
+            <input value={prodHeaderText} onChange={e=>setProdHeaderText(e.target.value)}
+              placeholder="e.g. Our Products"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+          </div>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Body Text</label>
+            <textarea value={prodBodyText} onChange={e=>setProdBodyText(e.target.value)} rows={2}
+              placeholder="e.g. Select a product from below"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none"/>
+          </div>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Footer (optional)</label>
+            <input value={prodFooterText} onChange={e=>setProdFooterText(e.target.value)}
+              placeholder="e.g. Contact us for bulk orders"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+          </div>
+
+          {/* Products List */}
+          <p className="font-semibold text-gray-700 text-[11px] uppercase tracking-wide pt-2">Products (max 10)</p>
+          <div className="space-y-2 max-h-48 overflow-y-auto bg-gray-50 p-2 rounded-lg border border-gray-200">
+            {products.map((prod, i) => (
+              <div key={i} className="flex items-start gap-2 bg-white border border-blue-200 rounded-lg p-2">
+                <div className="flex-1 space-y-1.5 min-w-0">
+                  <input value={prod.id} onChange={e=>{const n=[...products];n[i]={...n[i],id:e.target.value};setProducts(n);}}
+                    placeholder="ID e.g. prod_1" className="w-full border border-gray-200 rounded px-2 py-1 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+                  <input value={prod.name} onChange={e=>{const n=[...products];n[i]={...n[i],name:e.target.value};setProducts(n);}}
+                    placeholder="Product name" maxLength={30}
+                    className="w-full border border-gray-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+                  <input value={prod.price||''} onChange={e=>{const n=[...products];n[i]={...n[i],price:e.target.value};setProducts(n);}}
+                    placeholder="Price (optional)" maxLength={10}
+                    className="w-full border border-gray-200 rounded px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+                  <input value={prod.description||''} onChange={e=>{const n=[...products];n[i]={...n[i],description:e.target.value.slice(0,100)};setProducts(n);}}
+                    placeholder="Description (max 100)" 
+                    className="w-full border border-gray-200 rounded px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+                  
+                  {/* Image selection */}
+                  <div className="space-y-1">
+                    {prod.media_id ? (
+                      <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-2 py-1">
+                        <Image size={12} className="text-blue-500 flex-shrink-0"/>
+                        <span className="text-[10px] text-blue-700 font-medium truncate flex-1">{prod.media_filename || 'Selected from library'}</span>
+                        <button onClick={()=>{const n=[...products];n[i]={...n[i],media_id:'',media_filename:'',media_mime:''};setProducts(n);}} className="text-gray-400 hover:text-red-500 flex-shrink-0"><X size={11}/></button>
+                      </div>
+                    ) : (
+                      <>
+                        <input value={prod.image_url||''} onChange={e=>{const n=[...products];n[i]={...n[i],image_url:e.target.value};setProducts(n);}}
+                          placeholder="Image URL (optional)" 
+                          className="w-full border border-gray-200 rounded px-2 py-1 text-[9px] font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+                        <button onClick={()=>{setProdMediaLibIdx(i);setShowProdMediaLib(true);}}
+                          className="w-full flex items-center justify-center gap-1 text-blue-600 hover:text-blue-800 font-medium text-[9px] py-1 border border-dashed border-blue-300 rounded bg-blue-50">
+                          <Image size={10}/> Media Library
+                        </button>
+                      </>
+                    )}
+                    {/* Image preview */}
+                    {prod.image_url && !prod.media_id && (
+                      <div className="rounded-lg overflow-hidden border border-gray-200 max-h-20">
+                        <img src={prod.image_url} alt="preview" className="w-full object-cover max-h-20"
+                          onError={e=>{(e.target as HTMLImageElement).style.display='none';}}/>
+                      </div>
+                    )}
+                    {prod.media_id && prod.media_mime?.startsWith('image/') && (
+                      <div className="rounded-lg overflow-hidden border border-gray-200 max-h-20">
+                        <img src={`/api/media/${prod.media_id}?workspaceId=${getWorkspaceId()}`} alt={prod.media_filename}
+                          className="w-full object-cover max-h-20"
+                          onError={e=>{(e.target as HTMLImageElement).style.display='none';}}/>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <button onClick={()=>setProducts(products.filter((_,j)=>j!==i))} className="text-gray-300 hover:text-red-500 flex-shrink-0 mt-1"><Trash2 size={12}/></button>
+              </div>
+            ))}
+          </div>
+          
+          {/* Media Library Modal for Products */}
+          {showProdMediaLib && prodMediaLibIdx !== null && (
+            <MediaLibrary
+              onSelect={(item: MediaItem)=>{ 
+                const n=[...products];
+                n[prodMediaLibIdx]={...n[prodMediaLibIdx],media_id:item.media_id,media_filename:item.filename,media_mime:item.mime_type||'',image_url:''}; 
+                setProducts(n);
+                setShowProdMediaLib(false);
+                setProdMediaLibIdx(null);
+              }}
+              onClose={()=>{setShowProdMediaLib(false);setProdMediaLibIdx(null);}}
+            />
+          )}
+          
+          {products.length < 10 && (
+            <button onClick={()=>setProducts([...products,{id:`prod_${products.length+1}`,name:'',price:'',description:'',image_url:'',media_id:'',media_filename:'',media_mime:''}])}
+              className="w-full flex items-center justify-center gap-1.5 text-blue-600 hover:text-blue-800 font-medium text-xs py-2 border border-dashed border-blue-300 rounded-lg bg-blue-50">
+              <Plus size={12}/> Add Product
+            </button>
+          )}
+
+          {/* Save Variables */}
+          <div className="bg-teal-50 border border-teal-200 rounded-lg p-3 space-y-2">
+            <p className="font-semibold text-teal-800 text-[11px]">💾 Save Selection as Variable (optional)</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-gray-500 text-[10px] mb-1">Save product ID as</label>
+                <input value={prodSaveIdAs} onChange={e=>setProdSaveIdAs(e.target.value)}
+                  placeholder="e.g. selected_product"
+                  className="w-full border border-gray-200 rounded px-2 py-1.5 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-teal-400"/>
+              </div>
+              <div>
+                <label className="block text-gray-500 text-[10px] mb-1">Save product name as</label>
+                <input value={prodSaveTitleAs} onChange={e=>setProdSaveTitleAs(e.target.value)}
+                  placeholder="e.g. selected_product_name"
+                  className="w-full border border-gray-200 rounded px-2 py-1.5 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-teal-400"/>
+              </div>
+            </div>
+            {(prodSaveIdAs||prodSaveTitleAs) && (
+              <p className="text-teal-600 text-[10px]">
+                {prodSaveIdAs && <span>Use <code className="bg-teal-100 px-1 rounded">{`{{${prodSaveIdAs}}}`}</code> for product ID. </span>}
+                {prodSaveTitleAs && <span>Use <code className="bg-teal-100 px-1 rounded">{`{{${prodSaveTitleAs}}}`}</code> for product name.</span>}
+              </p>
+            )}
+          </div>
+
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 space-y-1">
+            <p className="font-semibold text-blue-800 text-[11px]">💡 Connect to separate branches:</p>
+            <p className="text-blue-700 text-[11px]">Each product has a <strong>right side handle</strong> — drag it to connect to the next node for that product. Each product can have its own flow.</p>
+          </div>
+        </>}
+
         {/* END */}
         {type==='end' && <div className="bg-red-50 border border-red-200 rounded-lg p-3">
           <p className="font-semibold text-red-800 mb-1">🔚 End Node</p>
@@ -1285,7 +1455,7 @@ export default function FlowBuilderPage() {
     setNodes(nds => [...nds, {
       id: uid(), type:'flowNode',
       position: { x: cx - 110 + (Math.random()*60 - 30), y: cy - 60 + (Math.random()*60 - 30) },
-      data: { type, text:'', conditions:[], transferNote:'', variable_name:'', url:'', method:'POST', headers:'', body:'', seconds:2, template_name:'', language:'en', contact_field:'name', field_value:'', body_text:'', header_text:'', footer_text:'', buttons:[], media_type:'IMAGE', media_url:'', media_id:'', caption:'' },
+      data: { type, text:'', conditions:[], transferNote:'', variable_name:'', url:'', method:'POST', headers:'', body:'', seconds:2, template_name:'', language:'en', contact_field:'name', field_value:'', body_text:'', header_text:'', footer_text:'', buttons:[], media_type:'IMAGE', media_url:'', media_id:'', caption:'', products:[], list_sections:[] },
     }]);
   }
 
@@ -1306,7 +1476,7 @@ export default function FlowBuilderPage() {
       : { x: 200, y: 200 };
     setNodes(nds => [...nds, {
       id: newId, type:'flowNode', position: pos,
-      data: { type, text:'', conditions:[], transferNote:'', variable_name:'', url:'', method:'POST', headers:'', body:'', seconds:2, template_name:'', language:'en', contact_field:'name', field_value:'', body_text:'', header_text:'', footer_text:'', buttons:[], media_type:'IMAGE', media_url:'', media_id:'', caption:'' },
+      data: { type, text:'', conditions:[], transferNote:'', variable_name:'', url:'', method:'POST', headers:'', body:'', seconds:2, template_name:'', language:'en', contact_field:'name', field_value:'', body_text:'', header_text:'', footer_text:'', buttons:[], media_type:'IMAGE', media_url:'', media_id:'', caption:'', products:[], list_sections:[] },
     }]);
     setEdges(eds => addEdge({
       id: `e-${sourceId}-${newId}-${Date.now()}`,
@@ -1460,7 +1630,7 @@ export default function FlowBuilderPage() {
             <MiniMap nodeColor={n=>{
               const c:Record<string,string>={message:'#22c55e',wait:'#eab308',condition:'#3b82f6',
                 set_variable:'#14b8a6',api_call:'#a855f7',update_contact:'#6366f1',
-                delay:'#6b7280',template:'#ec4899',transfer:'#f97316',end:'#ef4444'};
+                delay:'#6b7280',template:'#ec4899',transfer:'#f97316',multi_product:'#2563eb',end:'#ef4444'};
               return c[n.data?.type]||'#9ca3af';
             }}/>
 
