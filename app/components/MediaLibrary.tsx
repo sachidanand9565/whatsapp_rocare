@@ -31,7 +31,7 @@ function fmtSize(bytes: number): string {
   return bytes + ' B';
 }
 
-function getWorkspaceId(): number {
+export function getWorkspaceId(): number {
   try {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
     if (!token) return 0;

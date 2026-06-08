@@ -12,6 +12,7 @@ import 'reactflow/dist/style.css';
 import { apiFetch } from '@/hooks/useApi';
 import { useParams, useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
+import MediaLibrary, { type MediaItem, getWorkspaceId } from '@/app/components/MediaLibrary';
 import {
   MessageSquare, Clock, GitBranch, ArrowRightLeft, XCircle,
   Save, ArrowLeft, Plus, Trash2, X, Loader2, HelpCircle,
@@ -162,7 +163,8 @@ function FlowNode({ data, selected }: NodeProps) {
           <div className="space-y-1">
             <div className="flex items-center gap-1">
               <span className="text-[9px] font-bold bg-rose-100 text-rose-600 px-1.5 py-0.5 rounded">{data.media_type||'IMAGE'}</span>
-              {data.media_url && <span className="text-[9px] text-gray-400 truncate">{data.media_url}</span>}
+              {data.media_id && <span className="text-[9px] text-gray-400 truncate">📁 from library</span>}
+              {!data.media_id && data.media_url && <span className="text-[9px] text-gray-400 truncate">{data.media_url}</span>}
             </div>
             {data.caption && <p className="text-[11px] text-gray-600 line-clamp-2">{data.caption}</p>}
             {(data.buttons||[]).length > 0 && (
@@ -172,7 +174,7 @@ function FlowNode({ data, selected }: NodeProps) {
                 ))}
               </div>
             )}
-            {!data.media_url && <p className="text-gray-300 italic text-[11px]">Click to add media…</p>}
+            {!data.media_id && !data.media_url && <p className="text-gray-300 italic text-[11px]">Click to add media…</p>}
           </div>
         )}
         {data.type === 'transfer'  && <p className="text-orange-600 italic text-[11px]">{data.transferNote||'Transfer to agent'}</p>}
@@ -281,6 +283,10 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose }: {
   const flowVars = extractFlowVars(allNodes);
   const [mediaType,    setMediaType]    = useState<'IMAGE'|'VIDEO'|'DOCUMENT'|'AUDIO'>((node.data.media_type as 'IMAGE'|'VIDEO'|'DOCUMENT'|'AUDIO')||'IMAGE');
   const [mediaUrl,     setMediaUrl]     = useState(node.data.media_url||'');
+  const [mediaId,      setMediaId]      = useState(node.data.media_id||'');
+  const [mediaFilename,setMediaFilename]= useState('');
+  const [mediaMime,    setMediaMime]    = useState('');
+  const [showMediaLib, setShowMediaLib] = useState(false);
   const [mediaCaption, setMediaCaption] = useState(node.data.caption||'');
   const [mediaButtons, setMediaButtons] = useState<{id:string;title:string}[]>(node.data.buttons&&node.data.media_type?node.data.buttons:[]);
   const [varName,        setVarName]       = useState(node.data.variable_name||'');
@@ -338,7 +344,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose }: {
     if (type==='list_message')   { updates.body_text=listBodyText; updates.header_text=listHeaderText; updates.footer_text=listFooterText; updates.list_button_text=listButtonText; updates.list_sections=listSections; updates.save_id_as=listSaveIdAs; updates.save_title_as=listSaveTitleAs; }
     if (type==='button_message') { updates.body_text=btnBodyText; updates.header_text=btnHeaderText; updates.footer_text=btnFooterText; updates.buttons=buttons; updates.save_id_as=btnSaveIdAs; updates.save_title_as=btnSaveTitleAs; }
     if (type==='dynamic_list')  { updates.url=dynUrl; updates.method=dynMethod; updates.headers=dynHeaders; updates.body=dynReqBody; updates.items_path=dynItemsPath; updates.id_field=dynIdField; updates.title_field=dynTitleField; updates.description_field=dynDescField; updates.body_text=dynBodyText; updates.header_text=dynHeaderText; updates.footer_text=dynFooterText; updates.list_button_text=dynBtnText; updates.save_response_as=dynSaveAs; updates.save_id_as=dynSaveIdAs; updates.save_title_as=dynSaveTitleAs; }
-    if (type==='media_message') { updates.media_type=mediaType; updates.media_url=mediaUrl; updates.caption=mediaCaption; updates.buttons=mediaButtons; }
+    if (type==='media_message') { updates.media_type=mediaType; updates.media_url=mediaUrl; updates.media_id=mediaId; updates.caption=mediaCaption; updates.buttons=mediaButtons; }
     onUpdate(node.id, updates);
     onClose();
   }
@@ -1011,20 +1017,48 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose }: {
               <option value="AUDIO">Audio</option>
             </select>
           </div>
-          {/* Media URL */}
+          {/* Media URL or Library */}
           <div>
             <label className="block font-semibold text-gray-600 mb-1 text-xs">Media URL *</label>
-            <input value={mediaUrl} onChange={e=>setMediaUrl(e.target.value)}
-              placeholder="https://example.com/image.jpg"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-rose-400"/>
-            {/* Preview */}
-            {mediaType==='IMAGE' && mediaUrl && (
+            {mediaId ? (
+              <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+                <Image size={14} className="text-rose-500 flex-shrink-0"/>
+                <span className="text-xs text-rose-700 font-medium truncate flex-1">{mediaFilename || 'Selected from library'}</span>
+                <button onClick={()=>{setMediaId('');setMediaFilename('');setMediaMime('');}} className="text-gray-400 hover:text-red-500 flex-shrink-0"><X size={13}/></button>
+              </div>
+            ) : (
+              <input value={mediaUrl} onChange={e=>setMediaUrl(e.target.value)}
+                placeholder="https://example.com/image.jpg"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-rose-400"/>
+            )}
+            {!mediaId && (
+              <button onClick={()=>setShowMediaLib(true)}
+                className="mt-1.5 w-full flex items-center justify-center gap-1.5 text-rose-600 hover:text-rose-800 font-medium text-xs py-1.5 border border-dashed border-rose-300 rounded-lg">
+                <Image size={11}/> Select from Media Library
+              </button>
+            )}
+            {/* Preview — manual URL */}
+            {mediaType==='IMAGE' && mediaUrl && !mediaId && (
               <div className="mt-2 rounded-lg overflow-hidden border border-gray-200 max-h-32">
                 <img src={mediaUrl} alt="preview" className="w-full object-cover max-h-32"
                   onError={e=>{(e.target as HTMLImageElement).style.display='none';}}/>
               </div>
             )}
+            {/* Preview — selected from library */}
+            {mediaId && mediaMime.startsWith('image/') && (
+              <div className="mt-2 rounded-lg overflow-hidden border border-gray-200 max-h-32">
+                <img src={`/api/media/${mediaId}?workspaceId=${getWorkspaceId()}`} alt={mediaFilename}
+                  className="w-full object-cover max-h-32"
+                  onError={e=>{(e.target as HTMLImageElement).style.display='none';}}/>
+              </div>
+            )}
           </div>
+          {showMediaLib && (
+            <MediaLibrary
+              onSelect={(item: MediaItem)=>{ setMediaId(item.media_id); setMediaFilename(item.filename); setMediaMime(item.mime_type||''); setMediaUrl(''); setShowMediaLib(false); }}
+              onClose={()=>setShowMediaLib(false)}
+            />
+          )}
           {/* Caption — not supported for audio */}
           {mediaType !== 'AUDIO' && (
           <div>
@@ -1206,7 +1240,7 @@ export default function FlowBuilderPage() {
     setNodes(nds => [...nds, {
       id: uid(), type:'flowNode',
       position: { x: cx - 110 + (Math.random()*60 - 30), y: cy - 60 + (Math.random()*60 - 30) },
-      data: { type, text:'', conditions:[], transferNote:'', variable_name:'', url:'', method:'POST', headers:'', body:'', seconds:2, template_name:'', language:'en', contact_field:'name', field_value:'', body_text:'', header_text:'', footer_text:'', buttons:[], media_type:'IMAGE', media_url:'', caption:'' },
+      data: { type, text:'', conditions:[], transferNote:'', variable_name:'', url:'', method:'POST', headers:'', body:'', seconds:2, template_name:'', language:'en', contact_field:'name', field_value:'', body_text:'', header_text:'', footer_text:'', buttons:[], media_type:'IMAGE', media_url:'', media_id:'', caption:'' },
     }]);
   }
 

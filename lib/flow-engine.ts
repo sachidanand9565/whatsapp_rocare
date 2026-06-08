@@ -51,8 +51,9 @@ export interface FlowNode {
     title_field?:       string;   // field name for row title e.g. "name"
     description_field?: string;   // field name for description (optional)
     // media_message
-    media_type?:     'IMAGE' | 'VIDEO' | 'DOCUMENT';
+    media_type?:     'IMAGE' | 'VIDEO' | 'DOCUMENT' | 'AUDIO';
     media_url?:      string;
+    media_id?:       string;
     caption?:        string;
     // condition
     conditions?:     { value: string; label: string; variable?: string; operator?: string; compare_value?: string }[];
@@ -221,16 +222,17 @@ async function executeFromNode(
 
       // ── Media Message: image/video/document with optional buttons ─
       case 'media_message': {
-        const mediaType  = (node.data.media_type || 'IMAGE') as 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+        const mediaType  = (node.data.media_type || 'IMAGE') as 'IMAGE' | 'VIDEO' | 'DOCUMENT' | 'AUDIO';
         const mediaUrl   = substituteVars(node.data.media_url || '', vars, extras);
+        const mediaId    = node.data.media_id || '';
         const caption    = substituteVars(node.data.caption   || '', vars, extras);
         const buttons    = (node.data.buttons || []) as { id: string; title: string }[];
         let wamid: string | null = null;
         try {
-          const res = await sendMediaButtonMessage(accessToken, phoneNumberId, contactPhone, mediaType, mediaUrl, caption, buttons);
+          const res = await sendMediaButtonMessage(accessToken, phoneNumberId, contactPhone, mediaType, mediaUrl, caption, buttons, mediaId || undefined);
           wamid = res?.messages?.[0]?.id || null;
         } catch { /* continue */ }
-        const msgContent = JSON.stringify({ __type: 'media_button', media_type: mediaType, media_url: mediaUrl, caption, buttons });
+        const msgContent = JSON.stringify({ __type: 'media_button', media_type: mediaType, media_url: mediaUrl, media_id: mediaId, caption, buttons });
         await saveOutboundMessage(workspaceId, session.contact_id, msgContent, wamid, 'interactive');
         if (buttons.length > 0) {
           // Wait for user to click a button
