@@ -16,7 +16,7 @@
  *   end            — end the flow
  */
 import { query, insert, execute } from '@/lib/db';
-import { sendTextMessage, sendTemplateMessage, sendButtonMessage, sendListMessage, sendMediaButtonMessage } from '@/lib/whatsapp';
+import { sendTextMessage, sendTemplateMessage, sendButtonMessage, sendListMessage, sendMediaButtonMessage, sendProductMessage } from '@/lib/whatsapp';
 import { utcNow } from '@/lib/utils';
 import { emitSSE } from '@/lib/sse';
 import { RowDataPacket } from 'mysql2';
@@ -24,7 +24,7 @@ import { RowDataPacket } from 'mysql2';
 // ── Types ────────────────────────────────────────────────────────
 
 export type FlowNodeType =
-  | 'message' | 'button_message' | 'list_message' | 'dynamic_list' | 'media_message' | 'wait' | 'condition'
+  | 'message' | 'button_message' | 'list_message' | 'dynamic_list' | 'media_message' | 'multi_product' | 'wait' | 'condition'
   | 'set_variable' | 'api_call' | 'update_contact'
   | 'delay' | 'template' | 'transfer' | 'end';
 
@@ -42,7 +42,9 @@ export interface FlowNode {
     // list_message
     list_button_text?: string;
     list_sections?:    { title: string; rows: { id: string; title: string; description?: string }[] }[];
-    // variable save options (for button_message, list_message, dynamic_list)
+    // multi_product
+    products?:         { id: string; name: string; price?: string; description?: string; image_url?: string; media_id?: string }[];
+    // variable save options (for button_message, list_message, dynamic_list, multi_product)
     save_id_as?:       string;   // custom variable name for selected ID
     save_title_as?:    string;   // custom variable name for selected title
     // dynamic_list (API se data fetch karke list banao)
@@ -333,6 +335,34 @@ async function executeFromNode(
         const listContent = JSON.stringify({ __type: 'list', body: bodyText, button: btnText, sections: [{ title: '', rows }], header: headerText, footer: footerText });
         await saveOutboundMessage(workspaceId, session.contact_id, listContent, wamid, 'interactive');
         // Stay on this node — user ke item select ka wait karo
+        await updateSessionNode(session.id, nodeId, vars);
+        return;
+      }
+
+      // ── Multi Product: send product catalog ────────────────────
+      case 'multi_product': {
+        const headerText = node.data.header_text ? substituteVars(node.data.header_text, vars, extras) : 'Our Products';
+        const bodyText   = substituteVars(node.data.body_text || '', vars, extras);
+        const footerText = node.data.footer_text ? substituteVars(node.data.footer_text, vars, extras) : undefined;
+        const products   = (node.data.products || []) as { id: string; name: string; price?: string; description?: string; image_url?: string; media_id?: string }[];
+        
+        let wamid: string | null = null;
+        if (products.length > 0) {
+          try {
+            const res = await sendProductMessage(accessToken, phoneNumberId, contactPhone, headerText, bodyText, products, footerText);
+            wamid = res?.messages?.[0]?.id || null;
+          } catch { /**/ }
+        } else {
+          // Fallback: agar koi products nahi to plain text bhejo
+          try {
+            const res = await sendTextMessage(accessToken, phoneNumberId, contactPhone, bodyText + '\n\n(No products available right now)');
+            wamid = res?.messages?.[0]?.id || null;
+          } catch { /**/ }
+        }
+
+        const prodContent = JSON.stringify({ __type: 'products', header: headerText, body: bodyText, products, footer: footerText });
+        await saveOutboundMessage(workspaceId, session.contact_id, prodContent, wamid, 'interactive');
+        // Stay on this node — user ke product select ka wait karo
         await updateSessionNode(session.id, nodeId, vars);
         return;
       }
@@ -634,9 +664,9 @@ export async function tryResumeFlow(
     }
     const handle = conditionMet ? 'true' : 'false';
     nextNode = getNextNode(edges, nodes, currentNode.id, handle);
-  } else if (currentNode.type === 'button_message' || currentNode.type === 'list_message' || currentNode.type === 'media_message') {
+  } else if (currentNode.type === 'button_message' || currentNode.type === 'list_message' || currentNode.type === 'multi_product' || currentNode.type === 'media_message') {
     if (buttonPayload) {
-      // User clicked a button/list item (interactive reply) — advance based on button ID
+      // User clicked a button/list item/product (interactive reply) — advance based on button ID
       nextNode = getNextNode(edges, nodes, currentNode.id, effectiveMsg)
         || getNextNode(edges, nodes, currentNode.id);
     } else {
@@ -673,11 +703,12 @@ export async function tryResumeFlow(
     return false;
   }
 
-  // For button/list/dynamic_list — save selected_id and selected_title into session vars
+  // For button/list/product/dynamic_list — save selected_id and selected_title into session vars
   const updatedVars = { ...session.variables };
   if (
     currentNode.type === 'button_message' ||
     currentNode.type === 'list_message'   ||
+    currentNode.type === 'multi_product'  ||
     currentNode.type === 'dynamic_list'
   ) {
     // Always save to default variables
@@ -692,6 +723,7 @@ export async function tryResumeFlow(
   const msgToPass = (
     currentNode.type === 'button_message' ||
     currentNode.type === 'list_message'   ||
+    currentNode.type === 'multi_product'  ||
     currentNode.type === 'dynamic_list'
   ) ? effectiveMsg : userMessage;
 

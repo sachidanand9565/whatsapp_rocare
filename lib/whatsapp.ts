@@ -301,6 +301,48 @@ export async function markAsRead(
   return data;
 }
 
+// ---- Send multi-product message (interactive product list) ----
+export async function sendProductMessage(
+  accessToken:   string,
+  phoneNumberId: string,
+  to:            string,
+  headerText:    string,
+  bodyText:      string,
+  products:      { id: string; name: string; price?: string; description?: string; image_url?: string; media_id?: string }[],
+  footerText?:   string,
+) {
+  const client = createWAClient(accessToken);
+  
+  // Convert products to list sections format
+  const sections = [{
+    title: headerText || 'Products',
+    rows: products.slice(0, 10).map((p) => ({
+      id:    String(p.id).slice(0, 200),
+      title: String(p.name).slice(0, 24),
+      description: [p.price && `₹${p.price}`, p.description?.slice(0, 50)].filter(Boolean).join(' • ').slice(0, 72),
+    })),
+  }];
+
+  const interactive: Record<string, unknown> = {
+    type: 'list',
+    body: { text: bodyText },
+    action: {
+      button: 'Select Product',
+      sections,
+    },
+  };
+  if (footerText) interactive.footer = { text: footerText };
+
+  const { data } = await client.post(`/${phoneNumberId}/messages`, {
+    messaging_product: 'whatsapp',
+    recipient_type:    'individual',
+    to,
+    type:        'interactive',
+    interactive,
+  });
+  return data;
+}
+
 // ---- Submit template to Meta for approval ----
 export async function submitTemplate(
   accessToken: string,
