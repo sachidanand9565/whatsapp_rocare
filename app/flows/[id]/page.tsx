@@ -168,9 +168,14 @@ function FlowNode({ data, selected }: NodeProps) {
             </div>
             {data.caption && <p className="text-[11px] text-gray-600 line-clamp-2">{data.caption}</p>}
             {(data.buttons||[]).length > 0 && (
-              <div className="space-y-0.5 pt-0.5">
+              <div className="space-y-1 pt-0.5">
                 {(data.buttons as {id:string;title:string}[]).map((b,i)=>(
-                  <div key={i} className="text-[10px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-0.5 truncate">{b.title}</div>
+                  <div key={i} className="relative flex items-center justify-between bg-rose-50 border border-rose-200 rounded-lg px-2 py-1 pr-5">
+                    <span className="text-[10px] text-rose-700 font-medium truncate flex-1">{b.title || '...'}</span>
+                    <Handle type="source" position={Position.Right} id={b.id}
+                      style={{ right: -10, top: '50%', transform: 'translateY(-50%)' }}
+                      className="!w-3.5 !h-3.5 !bg-rose-500 !border-2 !border-white !rounded-full"/>
+                  </div>
                 ))}
               </div>
             )}
@@ -210,7 +215,8 @@ function FlowNode({ data, selected }: NodeProps) {
       {/* Handles */}
       <Handle type="target" position={Position.Left} className="!w-3.5 !h-3.5 !bg-gray-400 !border-2 !border-white"/>
       {data.type !== 'end' && data.type !== 'transfer' && data.type !== 'condition' &&
-        data.type !== 'button_message' && data.type !== 'list_message' && (
+        data.type !== 'button_message' && data.type !== 'list_message' &&
+        !(data.type === 'media_message' && (data.buttons||[]).length > 0) && (
           <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-gray-400 !border-2 !border-white"/>
       )}
     </div>
@@ -262,10 +268,11 @@ function extractFlowVars(allNodes: Node[]): string[] {
 }
 
 // ── Config Panel ──────────────────────────────────────────────
-function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose }: {
+function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnected }: {
   node: Node; allNodes: Node[];
   onUpdate:(id:string,data:Record<string,unknown>)=>void;
   onDelete:(id:string)=>void; onClose:()=>void;
+  onAddConnected:(sourceId:string, sourceHandle:string|null, type:NodeType)=>void;
 }) {
   const type = node.data.type as NodeType;
   const meta = NODE_TYPES_META[type];
@@ -287,6 +294,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose }: {
   const [mediaFilename,setMediaFilename]= useState('');
   const [mediaMime,    setMediaMime]    = useState('');
   const [showMediaLib, setShowMediaLib] = useState(false);
+  const [showAddContent, setShowAddContent] = useState(false);
   const [mediaCaption, setMediaCaption] = useState(node.data.caption||'');
   const [mediaButtons, setMediaButtons] = useState<{id:string;title:string}[]>(node.data.buttons&&node.data.media_type?node.data.buttons:[]);
   const [varName,        setVarName]       = useState(node.data.variable_name||'');
@@ -1095,8 +1103,45 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose }: {
                 </button>
               )}
             </div>
-            {mediaButtons.length > 0 && <p className="text-[10px] text-gray-400 mt-1">Each button has its own output handle on the right.</p>}
+            {mediaButtons.length > 0 && (
+              <div className="mt-1.5 bg-rose-50 border border-rose-100 rounded-lg px-2.5 py-1.5">
+                <p className="text-[10px] text-rose-700 leading-snug">
+                  💡 Canvas par har button ke <strong>right side me ek gol handle</strong> hota hai — usse drag karke kisi bhi node (Message, Condition, End…) se jodo. Har button ka apna alag path chal sakta hai.
+                </p>
+              </div>
+            )}
           </div>}
+
+          {/* Add Content — quick-add the next node when no buttons are used */}
+          {mediaButtons.length === 0 && (
+            <div className="relative pt-1">
+              <button onClick={()=>setShowAddContent(v=>!v)}
+                className="w-full flex items-center justify-center gap-1.5 text-teal-600 hover:text-teal-800 font-medium text-xs py-2 border border-dashed border-teal-300 rounded-lg bg-teal-50/50">
+                <Plus size={12}/> Add Content
+              </button>
+              <p className="text-[10px] text-gray-400 mt-1 text-center">Button nahi chahiye? Yahan se seedha agla node chuno aur connect ho jayega.</p>
+              {showAddContent && (
+                <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl p-1.5 max-h-72 overflow-y-auto">
+                  <div className="flex items-center justify-between px-2 py-1">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Content Block</span>
+                    <button onClick={()=>setShowAddContent(false)} className="text-gray-300 hover:text-gray-600"><X size={13}/></button>
+                  </div>
+                  {(Object.entries(NODE_TYPES_META) as [NodeType, typeof NODE_TYPES_META[NodeType]][]).map(([t,m])=>{
+                    const Icon = m.icon;
+                    return (
+                      <button key={t} onClick={()=>{ onAddConnected(node.id, null, t); setShowAddContent(false); }}
+                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 text-left">
+                        <div className={`w-6 h-6 rounded-md ${m.color} flex items-center justify-center flex-shrink-0`}>
+                          <Icon size={12} className="text-white"/>
+                        </div>
+                        <span className="text-xs text-gray-700 font-medium">{m.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </>}
 
         {/* END */}
@@ -1250,6 +1295,26 @@ export default function FlowBuilderPage() {
     setEdges(EXAMPLE_EDGES);
     setShowHelp(false);
     toast.success('Example flow loaded! Click any node to configure it.');
+  }
+
+  // Create a new node positioned to the right of `sourceId` and auto-connect an edge from it
+  function addConnectedNode(sourceId: string, sourceHandle: string | null, type: NodeType) {
+    const source = nodes.find(n => n.id === sourceId);
+    const newId  = uid();
+    const pos    = source
+      ? { x: source.position.x + 320, y: source.position.y + (Math.random()*60 - 30) }
+      : { x: 200, y: 200 };
+    setNodes(nds => [...nds, {
+      id: newId, type:'flowNode', position: pos,
+      data: { type, text:'', conditions:[], transferNote:'', variable_name:'', url:'', method:'POST', headers:'', body:'', seconds:2, template_name:'', language:'en', contact_field:'name', field_value:'', body_text:'', header_text:'', footer_text:'', buttons:[], media_type:'IMAGE', media_url:'', media_id:'', caption:'' },
+    }]);
+    setEdges(eds => addEdge({
+      id: `e-${sourceId}-${newId}-${Date.now()}`,
+      source: sourceId, target: newId,
+      sourceHandle: sourceHandle || undefined,
+      type: 'deleteEdge',
+    }, eds));
+    toast.success('Node added & connected!');
   }
 
   function updateNodeData(id:string, data:Record<string,unknown>) {
@@ -1422,7 +1487,7 @@ export default function FlowBuilderPage() {
         </div>
 
         {rightPanel==='config' && selectedNode && (
-          <ConfigPanel node={selectedNode} allNodes={nodes} onUpdate={updateNodeData} onDelete={deleteNode} onClose={()=>setSelectedNode(null)}/>
+          <ConfigPanel node={selectedNode} allNodes={nodes} onUpdate={updateNodeData} onDelete={deleteNode} onClose={()=>setSelectedNode(null)} onAddConnected={addConnectedNode}/>
         )}
         {rightPanel==='help' && <HelpPanel onClose={()=>setShowHelp(false)}/>}
 
