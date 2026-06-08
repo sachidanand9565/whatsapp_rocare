@@ -301,7 +301,7 @@ export async function markAsRead(
   return data;
 }
 
-// ---- Send multi-product message (interactive product list) ----
+// ---- Send multi-product message (with images + interactive product list) ----
 export async function sendProductMessage(
   accessToken:   string,
   phoneNumberId: string,
@@ -313,7 +313,28 @@ export async function sendProductMessage(
 ) {
   const client = createWAClient(accessToken);
   
-  // Convert products to list sections format
+  // First, send product images if available (first 3 products max)
+  for (let i = 0; i < Math.min(3, products.length); i++) {
+    const p = products[i];
+    if (p.image_url || p.media_id) {
+      try {
+        const caption = `${p.name}${p.price ? ` • ₹${p.price}` : ''}${p.description ? '\n' + p.description : ''}`;
+        
+        if (p.media_id) {
+          // Send from media library
+          await sendMediaMessage(accessToken, phoneNumberId, to, 'image', p.media_id, caption.slice(0, 1024));
+        } else if (p.image_url) {
+          // Send from URL
+          await sendImageMessage(accessToken, phoneNumberId, to, p.image_url, caption.slice(0, 1024));
+        }
+      } catch { /* continue if image send fails */ }
+      
+      // Small delay between messages to avoid rate limits
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+  
+  // Then send the product list
   const sections = [{
     title: headerText || 'Products',
     rows: products.slice(0, 10).map((p) => ({
