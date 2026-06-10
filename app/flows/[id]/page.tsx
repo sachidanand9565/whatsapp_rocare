@@ -17,7 +17,7 @@ import {
   MessageSquare, Clock, GitBranch, ArrowRightLeft, XCircle,
   Save, ArrowLeft, Plus, Trash2, X, Loader2, HelpCircle,
   Zap, Globe, Database, UserCheck, Timer, LayoutTemplate, Settings, Image,
-  ChevronLeft, ChevronRight, ShoppingCart,
+  ChevronLeft, ChevronRight, ShoppingCart, Workflow,
 } from 'lucide-react';
 
 // ── Node type configs ─────────────────────────────────────────
@@ -36,6 +36,7 @@ const NODE_TYPES_META = {
   delay:          { label: 'Delay',          color: 'bg-gray-500',    icon: Timer,          border: 'border-gray-400',    desc: 'Wait N seconds before continuing' },
   template:       { label: 'Template',       color: 'bg-pink-500',    icon: LayoutTemplate, border: 'border-pink-400',    desc: 'Send a WhatsApp approved template' },
   transfer:       { label: 'Transfer',       color: 'bg-orange-500',  icon: ArrowRightLeft, border: 'border-orange-400',  desc: 'Transfer chat to a human agent' },
+  connect_flow:   { label: 'Connect Flow',   color: 'bg-fuchsia-600', icon: Workflow,       border: 'border-fuchsia-400', desc: 'Jump into another flow' },
   end:            { label: 'End',            color: 'bg-red-500',     icon: XCircle,        border: 'border-red-400',     desc: 'End the flow' },
 };
 type NodeType = keyof typeof NODE_TYPES_META;
@@ -185,25 +186,29 @@ function FlowNode({ data, selected }: NodeProps) {
         )}
         {data.type === 'multi_product' && (
           <div className="space-y-1">
-            <p className="text-blue-600 font-semibold text-[10px]">{data.header_text || 'Our Products:'}</p>
-            {(data.products || []).slice(0, 3).map((p: { id: string; name: string; price?: string }, i: number) => (
-              <div key={i} className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-lg px-2 py-1">
-                <span className="text-[10px] text-blue-700 font-medium flex-1 truncate">{p.name || '...'}</span>
-                {p.price && <span className="text-[9px] text-blue-500 flex-shrink-0">₹{p.price}</span>}
-                <Handle type="source" position={Position.Right} id={p.id}
-                  style={{ right: -10, top: '50%', transform: 'translateY(-50%)' }}
-                  className="!w-3.5 !h-3.5 !bg-blue-500 !border-2 !border-white !rounded-full"/>
+            {data.header_text && <p className="text-blue-600 font-semibold text-[10px]">{data.header_text}</p>}
+            {data.body_text && <p className="text-gray-600 text-[10px] line-clamp-2">{data.body_text}</p>}
+            <div className="text-[9px] text-blue-400 font-mono">Catalog: {data.catalog_id || <span className="italic text-gray-300">not set</span>}</div>
+            {(data.multi_sections||[]).slice(0,2).map((s:{title:string;product_items:{product_retailer_id:string}[]},i:number)=>(
+              <div key={i} className="bg-blue-50 border border-blue-100 rounded px-2 py-1">
+                {s.title && <p className="text-[9px] font-semibold text-blue-700">{s.title}</p>}
+                {(s.product_items||[]).slice(0,2).map((p,j)=>(
+                  <p key={j} className="text-[9px] text-blue-500 font-mono truncate">• {p.product_retailer_id||'...'}</p>
+                ))}
               </div>
             ))}
-            {(data.products || []).length === 0 && (
-              <div className="border border-dashed border-gray-200 rounded-lg px-2 py-1.5 text-[10px] text-gray-300 text-center">+ Add Products</div>
-            )}
-            {(data.products || []).length > 3 && (
-              <p className="text-[9px] text-gray-400 text-center">+{(data.products || []).length - 3} more</p>
-            )}
+            {!(data.multi_sections||[]).length && <div className="border border-dashed border-gray-200 rounded px-2 py-1 text-[10px] text-gray-300 text-center">+ Add Section</div>}
           </div>
         )}
         {data.type === 'transfer'  && <p className="text-orange-600 italic text-[11px]">{data.transferNote||'Transfer to agent'}</p>}
+        {data.type === 'connect_flow' && (
+          <div className="flex items-center gap-1.5 bg-fuchsia-50 border border-fuchsia-100 rounded-lg px-2 py-1.5">
+            <Workflow size={12} className="text-fuchsia-500 flex-shrink-0"/>
+            {data.target_flow_name
+              ? <span className="text-[11px] font-semibold text-fuchsia-700 truncate">{data.target_flow_name as string}</span>
+              : <span className="text-[11px] italic text-gray-300">Select flow…</span>}
+          </div>
+        )}
         {data.type === 'end'       && <p className="text-red-500 italic text-[11px]">✅ Flow ended</p>}
         {data.type === 'condition' && (
           <div className="space-y-1.5">
@@ -236,7 +241,7 @@ function FlowNode({ data, selected }: NodeProps) {
       {/* Handles */}
       <Handle type="target" position={Position.Left} className="!w-3.5 !h-3.5 !bg-gray-400 !border-2 !border-white"/>
       {data.type !== 'end' && data.type !== 'transfer' && data.type !== 'condition' &&
-        data.type !== 'button_message' && data.type !== 'list_message' && data.type !== 'multi_product' &&
+        data.type !== 'button_message' && data.type !== 'list_message' && data.type !== 'connect_flow' &&
         !(data.type === 'media_message' && (data.buttons||[]).length > 0) && (
           <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-gray-400 !border-2 !border-white"/>
       )}
@@ -289,11 +294,12 @@ function extractFlowVars(allNodes: Node[]): string[] {
 }
 
 // ── Config Panel ──────────────────────────────────────────────
-function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnected }: {
+function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnected, currentFlowId }: {
   node: Node; allNodes: Node[];
   onUpdate:(id:string,data:Record<string,unknown>)=>void;
   onDelete:(id:string)=>void; onClose:()=>void;
   onAddConnected:(sourceId:string, sourceHandle:string|null, type:NodeType)=>void;
+  currentFlowId: string;
 }) {
   const type = node.data.type as NodeType;
   const meta = NODE_TYPES_META[type];
@@ -359,16 +365,51 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
   );
   
   // Multi Product state
-  const [prodHeaderText, setProdHeaderText] = useState(node.data.header_text || 'Our Products');
-  const [prodBodyText,   setProdBodyText]   = useState(node.data.body_text || 'Select a product');
+  const [prodHeaderText, setProdHeaderText] = useState(node.data.header_text || '');
+  const [prodBodyText,   setProdBodyText]   = useState(node.data.body_text || '');
   const [prodFooterText, setProdFooterText] = useState(node.data.footer_text || '');
-  const [products,       setProducts]       = useState<{ id: string; name: string; price?: string; description?: string; image_url?: string; media_id?: string; media_filename?: string; media_mime?: string }[]>(
-    node.data.products || []
+  const [catalogId,      setCatalogId]      = useState(node.data.catalog_id || '');
+  const [multiSections,  setMultiSections]  = useState<{title:string;product_items:{product_retailer_id:string}[]}[]>(
+    node.data.multi_sections || [{ title: '', product_items: [{ product_retailer_id: '' }] }]
   );
-  const [prodSaveIdAs,   setProdSaveIdAs]   = useState(node.data.save_id_as || '');
-  const [prodSaveTitleAs,setProdSaveTitleAs]= useState(node.data.save_title_as || '');
-  const [prodMediaLibIdx, setProdMediaLibIdx] = useState<number | null>(null);
-  const [showProdMediaLib, setShowProdMediaLib] = useState(false);
+  const [catalogProducts, setCatalogProducts] = useState<{retailer_id:string;name:string;price?:string;image_url?:string}[]>([]);
+  const [loadingCatalogProducts, setLoadingCatalogProducts] = useState(false);
+
+  // Connect Flow state
+  const [targetFlowId,   setTargetFlowId]   = useState(node.data.target_flow_id || '');
+  const [allFlows,       setAllFlows]       = useState<{id:number;name:string}[]>([]);
+  const [loadingFlows,   setLoadingFlows]   = useState(false);
+
+  // Load list of flows once when connect_flow panel opens
+  useEffect(() => {
+    if (type !== 'connect_flow') return;
+    setLoadingFlows(true);
+    apiFetch('/api/flows')
+      .then(r => setAllFlows((r.data || []).filter((f: {id:number}) => String(f.id) !== String(currentFlowId))))
+      .catch(() => setAllFlows([]))
+      .finally(() => setLoadingFlows(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type]);
+
+  // Load catalog products once when multi_product panel opens
+  useEffect(() => {
+    if (type !== 'multi_product') return;
+    async function fetchCatalogProducts() {
+      setLoadingCatalogProducts(true);
+      try {
+        // First get the connected catalog_id
+        const r1 = await apiFetch('/api/catalog?action=catalogs');
+        const cid = r1.data.selected_catalog_id || catalogId;
+        if (!cid) return;
+        if (!catalogId) setCatalogId(cid);
+        const r2 = await apiFetch(`/api/catalog?action=products&id=${cid}`);
+        setCatalogProducts(r2.data.products || []);
+      } catch { /* ignore */ }
+      finally { setLoadingCatalogProducts(false); }
+    }
+    fetchCatalogProducts();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type]);
 
   function save() {
     const base = { type: node.data.type };
@@ -385,7 +426,8 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
     if (type==='list_message')   { updates.body_text=listBodyText; updates.header_text=listHeaderText; updates.footer_text=listFooterText; updates.list_button_text=listButtonText; updates.list_sections=listSections; updates.save_id_as=listSaveIdAs; updates.save_title_as=listSaveTitleAs; }
     if (type==='dynamic_list')   { updates.url=dynUrl; updates.method=dynMethod; updates.headers=dynHeaders; updates.body=dynReqBody; updates.items_path=dynItemsPath; updates.id_field=dynIdField; updates.title_field=dynTitleField; updates.description_field=dynDescField; updates.body_text=dynBodyText; updates.header_text=dynHeaderText; updates.footer_text=dynFooterText; updates.list_button_text=dynBtnText; updates.save_response_as=dynSaveAs; updates.save_id_as=dynSaveIdAs; updates.save_title_as=dynSaveTitleAs; }
     if (type==='media_message') { updates.media_type=mediaType; updates.media_url=mediaUrl; updates.media_id=mediaId; updates.caption=mediaCaption; updates.buttons=mediaButtons; }
-    if (type==='multi_product') { updates.header_text=prodHeaderText; updates.body_text=prodBodyText; updates.footer_text=prodFooterText; updates.products=products; updates.save_id_as=prodSaveIdAs; updates.save_title_as=prodSaveTitleAs; }
+    if (type==='multi_product') { updates.header_text=prodHeaderText; updates.body_text=prodBodyText; updates.footer_text=prodFooterText; updates.catalog_id=catalogId; updates.multi_sections=multiSections; }
+    if (type==='connect_flow')   { updates.target_flow_id=targetFlowId; updates.target_flow_name=allFlows.find(f=>String(f.id)===String(targetFlowId))?.name || node.data.target_flow_name || ''; }
     onUpdate(node.id, updates);
     onClose();
   }
@@ -856,7 +898,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
         {/* CONDITION */}
         {type==='condition' && <>
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5">
-            <p className="font-semibold text-blue-800 text-[11px]">🔀 Condition node — True branch chalega agar condition match kare, warna False.</p>
+            <p className="font-semibold text-blue-800 text-[11px]">🔀 Condition node — the True branch runs if the condition matches, otherwise False.</p>
           </div>
           {/* Variable */}
           <div>
@@ -1042,6 +1084,30 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
           </div>
         </>}
 
+        {/* CONNECT FLOW */}
+        {type==='connect_flow' && <>
+          <div className="bg-fuchsia-50 border border-fuchsia-200 rounded-lg p-3">
+            <p className="font-semibold text-fuchsia-800 mb-1 flex items-center gap-1.5"><Workflow size={13}/> Connect Flow</p>
+            <p className="text-fuchsia-700">The user will jump from this flow into the selected flow. This is a final step — it cannot have any outgoing connections.</p>
+          </div>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Select Flow</label>
+            {loadingFlows ? (
+              <div className="flex items-center gap-1.5 text-gray-400 text-[11px] py-2"><Loader2 size={12} className="animate-spin"/> Loading flows…</div>
+            ) : allFlows.length === 0 ? (
+              <p className="text-[11px] text-gray-400 italic py-1">No other flows found. Create another flow first.</p>
+            ) : (
+              <select value={targetFlowId} onChange={e=>setTargetFlowId(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-fuchsia-400 bg-white">
+                <option value="">-- Select flow --</option>
+                {allFlows.map(f=>(
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        </>}
+
         {/* MEDIA + BUTTONS */}
         {type==='media_message' && <>
           <div className="bg-rose-50 border border-rose-200 rounded-lg p-2.5">
@@ -1139,7 +1205,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
             {mediaButtons.length > 0 && (
               <div className="mt-1.5 bg-rose-50 border border-rose-100 rounded-lg px-2.5 py-1.5">
                 <p className="text-[10px] text-rose-700 leading-snug">
-                  💡 Canvas par har button ke <strong>right side me ek gol handle</strong> hota hai — usse drag karke kisi bhi node (Message, Condition, End…) se jodo. Har button ka apna alag path chal sakta hai.
+                  💡 On the canvas, each button has a <strong>round handle on its right side</strong> — drag it to connect to any node (Message, Condition, End…). Each button can lead to its own separate path.
                 </p>
               </div>
             )}
@@ -1152,7 +1218,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
                 className="w-full flex items-center justify-center gap-1.5 text-teal-600 hover:text-teal-800 font-medium text-xs py-2 border border-dashed border-teal-300 rounded-lg bg-teal-50/50">
                 <Plus size={12}/> Add Content
               </button>
-              <p className="text-[10px] text-gray-400 mt-1 text-center">Button nahi chahiye? Yahan se seedha agla node chuno aur connect ho jayega.</p>
+              <p className="text-[10px] text-gray-400 mt-1 text-center">Don&apos;t need a button? Pick the next node here and it&apos;ll connect automatically.</p>
               {showAddContent && (
                 <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl p-1.5 max-h-72 overflow-y-auto">
                   <div className="flex items-center justify-between px-2 py-1">
@@ -1179,138 +1245,106 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
 
         {/* MULTI PRODUCT */}
         {type==='multi_product' && <>
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-            <p className="font-semibold text-blue-800 mb-1">🛍️ Multi Product Node</p>
-            <p className="text-blue-700 text-[11px]">Display multiple products with images, prices & descriptions. User selects one to branch the flow.</p>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5">
+            <p className="font-semibold text-blue-800 text-[11px]">🛍️ WhatsApp Catalog — Multi Product Message</p>
+            <p className="text-blue-700 text-[10px] mt-0.5">Apne WhatsApp Catalog ke products sections me dikhao. Catalog ID Meta Business Suite se milega.</p>
           </div>
 
-          {/* Header & Body Text */}
+          {/* Catalog ID */}
           <div>
-            <label className="block font-semibold text-gray-600 mb-1">Header (optional)</label>
+            <label className="block text-[10px] font-semibold text-gray-500 mb-1">Catalog ID *</label>
+            <input value={catalogId} onChange={e=>setCatalogId(e.target.value)}
+              placeholder="e.g. 1234567890123456"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+            <p className="text-[10px] text-gray-400 mt-0.5">Meta Business Suite → Commerce → Catalog → Settings → Catalog ID</p>
+          </div>
+
+          {/* Header */}
+          <div>
+            <label className="block text-[10px] font-semibold text-gray-500 mb-1">Header (optional)</label>
             <input value={prodHeaderText} onChange={e=>setProdHeaderText(e.target.value)}
               placeholder="e.g. Our Products"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"/>
           </div>
+
+          {/* Body */}
           <div>
-            <label className="block font-semibold text-gray-600 mb-1">Body Text</label>
-            <textarea value={prodBodyText} onChange={e=>setProdBodyText(e.target.value)} rows={2}
-              placeholder="e.g. Select a product from below"
+            <label className="block text-[10px] font-semibold text-gray-500 mb-1">Body Text *</label>
+            <textarea value={prodBodyText} onChange={e=>setProdBodyText(e.target.value.slice(0,1024))} rows={2}
+              placeholder="e.g. Check out our products and select one"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none"/>
+            <p className="text-[10px] text-gray-400 text-right">{prodBodyText.length}/1024</p>
           </div>
+
+          {/* Footer */}
           <div>
-            <label className="block font-semibold text-gray-600 mb-1">Footer (optional)</label>
-            <input value={prodFooterText} onChange={e=>setProdFooterText(e.target.value)}
-              placeholder="e.g. Contact us for bulk orders"
+            <label className="block text-[10px] font-semibold text-gray-500 mb-1">Footer (optional)</label>
+            <input value={prodFooterText} onChange={e=>setProdFooterText(e.target.value.slice(0,60))}
+              placeholder="e.g. Powered by our store"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"/>
           </div>
 
-          {/* Products List */}
-          <p className="font-semibold text-gray-700 text-[11px] uppercase tracking-wide pt-2">Products (max 10)</p>
-          <div className="space-y-2 max-h-48 overflow-y-auto bg-gray-50 p-2 rounded-lg border border-gray-200">
-            {products.map((prod, i) => (
-              <div key={i} className="flex items-start gap-2 bg-white border border-blue-200 rounded-lg p-2">
-                <div className="flex-1 space-y-1.5 min-w-0">
-                  <input value={prod.id} onChange={e=>{const n=[...products];n[i]={...n[i],id:e.target.value};setProducts(n);}}
-                    placeholder="ID e.g. prod_1" className="w-full border border-gray-200 rounded px-2 py-1 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"/>
-                  <input value={prod.name} onChange={e=>{const n=[...products];n[i]={...n[i],name:e.target.value};setProducts(n);}}
-                    placeholder="Product name" maxLength={30}
-                    className="w-full border border-gray-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-400"/>
-                  <input value={prod.price||''} onChange={e=>{const n=[...products];n[i]={...n[i],price:e.target.value};setProducts(n);}}
-                    placeholder="Price (optional)" maxLength={10}
-                    className="w-full border border-gray-200 rounded px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400"/>
-                  <input value={prod.description||''} onChange={e=>{const n=[...products];n[i]={...n[i],description:e.target.value.slice(0,100)};setProducts(n);}}
-                    placeholder="Description (max 100)" 
-                    className="w-full border border-gray-200 rounded px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400"/>
-                  
-                  {/* Image selection */}
-                  <div className="space-y-1">
-                    {prod.media_id ? (
-                      <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-2 py-1">
-                        <Image size={12} className="text-blue-500 flex-shrink-0"/>
-                        <span className="text-[10px] text-blue-700 font-medium truncate flex-1">{prod.media_filename || 'Selected from library'}</span>
-                        <button onClick={()=>{const n=[...products];n[i]={...n[i],media_id:'',media_filename:'',media_mime:''};setProducts(n);}} className="text-gray-400 hover:text-red-500 flex-shrink-0"><X size={11}/></button>
-                      </div>
-                    ) : (
-                      <>
-                        <input value={prod.image_url||''} onChange={e=>{const n=[...products];n[i]={...n[i],image_url:e.target.value};setProducts(n);}}
-                          placeholder="Image URL (optional)" 
-                          className="w-full border border-gray-200 rounded px-2 py-1 text-[9px] font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"/>
-                        <button onClick={()=>{setProdMediaLibIdx(i);setShowProdMediaLib(true);}}
-                          className="w-full flex items-center justify-center gap-1 text-blue-600 hover:text-blue-800 font-medium text-[9px] py-1 border border-dashed border-blue-300 rounded bg-blue-50">
-                          <Image size={10}/> Media Library
-                        </button>
-                      </>
-                    )}
-                    {/* Image preview */}
-                    {prod.image_url && !prod.media_id && (
-                      <div className="rounded-lg overflow-hidden border border-gray-200 max-h-20">
-                        <img src={prod.image_url} alt="preview" className="w-full object-cover max-h-20"
-                          onError={e=>{(e.target as HTMLImageElement).style.display='none';}}/>
-                      </div>
-                    )}
-                    {prod.media_id && prod.media_mime?.startsWith('image/') && (
-                      <div className="rounded-lg overflow-hidden border border-gray-200 max-h-20">
-                        <img src={`/api/media/${prod.media_id}?workspaceId=${getWorkspaceId()}`} alt={prod.media_filename}
-                          className="w-full object-cover max-h-20"
-                          onError={e=>{(e.target as HTMLImageElement).style.display='none';}}/>
-                      </div>
+          {/* Sections */}
+          <div>
+            <label className="block text-[10px] font-semibold text-gray-500 mb-1 uppercase tracking-wide">Sections & Products</label>
+            <div className="space-y-3">
+              {multiSections.map((sec, si) => (
+                <div key={si} className="bg-gray-50 border border-gray-200 rounded-xl p-2.5 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input value={sec.title} onChange={e=>{const n=[...multiSections];n[si]={...n[si],title:e.target.value};setMultiSections(n);}}
+                      placeholder="Section Title (max 24)" maxLength={24}
+                      className="flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+                    {multiSections.length > 1 && (
+                      <button onClick={()=>setMultiSections(multiSections.filter((_,j)=>j!==si))} className="text-gray-300 hover:text-red-500"><Trash2 size={12}/></button>
                     )}
                   </div>
+                  <div className="space-y-1.5 pl-1">
+                    {loadingCatalogProducts && (
+                      <div className="flex items-center gap-1.5 text-[10px] text-gray-400 py-1">
+                        <Loader2 size={11} className="animate-spin"/> Loading products from catalog…
+                      </div>
+                    )}
+                    {sec.product_items.map((p, pi) => (
+                      <div key={pi} className="flex items-center gap-1.5">
+                        {catalogProducts.length > 0 ? (
+                          <select value={p.product_retailer_id}
+                            onChange={e=>{const n=[...multiSections];n[si]={...n[si],product_items:n[si].product_items.map((x,j)=>j===pi?{product_retailer_id:e.target.value}:x)};setMultiSections(n);}}
+                            className="flex-1 border border-gray-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+                            <option value="">-- Select product --</option>
+                            {catalogProducts.map(cp=>(
+                              <option key={cp.retailer_id} value={cp.retailer_id}>
+                                {cp.name} ({cp.retailer_id})
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input value={p.product_retailer_id} onChange={e=>{const n=[...multiSections];n[si]={...n[si],product_items:n[si].product_items.map((x,j)=>j===pi?{product_retailer_id:e.target.value}:x)};setMultiSections(n);}}
+                            placeholder="Product Retailer ID" className="flex-1 border border-gray-200 rounded px-2 py-1 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+                        )}
+                        {sec.product_items.length > 1 && (
+                          <button onClick={()=>{const n=[...multiSections];n[si]={...n[si],product_items:n[si].product_items.filter((_,j)=>j!==pi)};setMultiSections(n);}} className="text-gray-300 hover:text-red-500 flex-shrink-0"><X size={11}/></button>
+                        )}
+                      </div>
+                    ))}
+                    <button onClick={()=>{const n=[...multiSections];n[si]={...n[si],product_items:[...n[si].product_items,{product_retailer_id:''}]};setMultiSections(n);}}
+                      className="flex items-center gap-1 text-blue-500 hover:text-blue-700 text-[10px] font-medium">
+                      <Plus size={10}/> Add Product
+                    </button>
+                  </div>
                 </div>
-                <button onClick={()=>setProducts(products.filter((_,j)=>j!==i))} className="text-gray-300 hover:text-red-500 flex-shrink-0 mt-1"><Trash2 size={12}/></button>
-              </div>
-            ))}
-          </div>
-          
-          {/* Media Library Modal for Products */}
-          {showProdMediaLib && prodMediaLibIdx !== null && (
-            <MediaLibrary
-              onSelect={(item: MediaItem)=>{ 
-                const n=[...products];
-                n[prodMediaLibIdx]={...n[prodMediaLibIdx],media_id:item.media_id,media_filename:item.filename,media_mime:item.mime_type||'',image_url:''}; 
-                setProducts(n);
-                setShowProdMediaLib(false);
-                setProdMediaLibIdx(null);
-              }}
-              onClose={()=>{setShowProdMediaLib(false);setProdMediaLibIdx(null);}}
-            />
-          )}
-          
-          {products.length < 10 && (
-            <button onClick={()=>setProducts([...products,{id:`prod_${products.length+1}`,name:'',price:'',description:'',image_url:'',media_id:'',media_filename:'',media_mime:''}])}
-              className="w-full flex items-center justify-center gap-1.5 text-blue-600 hover:text-blue-800 font-medium text-xs py-2 border border-dashed border-blue-300 rounded-lg bg-blue-50">
-              <Plus size={12}/> Add Product
-            </button>
-          )}
-
-          {/* Save Variables */}
-          <div className="bg-teal-50 border border-teal-200 rounded-lg p-3 space-y-2">
-            <p className="font-semibold text-teal-800 text-[11px]">💾 Save Selection as Variable (optional)</p>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-gray-500 text-[10px] mb-1">Save product ID as</label>
-                <input value={prodSaveIdAs} onChange={e=>setProdSaveIdAs(e.target.value)}
-                  placeholder="e.g. selected_product"
-                  className="w-full border border-gray-200 rounded px-2 py-1.5 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-teal-400"/>
-              </div>
-              <div>
-                <label className="block text-gray-500 text-[10px] mb-1">Save product name as</label>
-                <input value={prodSaveTitleAs} onChange={e=>setProdSaveTitleAs(e.target.value)}
-                  placeholder="e.g. selected_product_name"
-                  className="w-full border border-gray-200 rounded px-2 py-1.5 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-teal-400"/>
-              </div>
+              ))}
             </div>
-            {(prodSaveIdAs||prodSaveTitleAs) && (
-              <p className="text-teal-600 text-[10px]">
-                {prodSaveIdAs && <span>Use <code className="bg-teal-100 px-1 rounded">{`{{${prodSaveIdAs}}}`}</code> for product ID. </span>}
-                {prodSaveTitleAs && <span>Use <code className="bg-teal-100 px-1 rounded">{`{{${prodSaveTitleAs}}}`}</code> for product name.</span>}
-              </p>
-            )}
+            <button onClick={()=>setMultiSections([...multiSections,{title:'',product_items:[{product_retailer_id:''}]}])}
+              className="mt-2 w-full flex items-center justify-center gap-1.5 text-blue-600 hover:text-blue-800 font-medium text-xs py-1.5 border border-dashed border-blue-300 rounded-lg">
+              <Plus size={11}/> Add Section
+            </button>
           </div>
 
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 space-y-1">
-            <p className="font-semibold text-blue-800 text-[11px]">💡 Connect to separate branches:</p>
-            <p className="text-blue-700 text-[11px]">Each product has a <strong>right side handle</strong> — drag it to connect to the next node for that product. Each product can have its own flow.</p>
+          <div className="bg-blue-50 border border-blue-100 rounded-lg px-2.5 py-2">
+            {catalogProducts.length > 0
+              ? <p className="text-[10px] text-blue-700">💡 Loaded <strong>{catalogProducts.length} products</strong> from your catalog. Pick one from the dropdown, or manage them on the <a href="/catalog" target="_blank" className="underline">Catalogue page</a>.</p>
+              : <p className="text-[10px] text-blue-700">💡 <strong>Product Retailer ID</strong> is the same ID you assigned when creating the product in Meta Catalog. Connect your <a href="/catalog" target="_blank" className="underline">Catalogue</a> first so products appear in the dropdown.</p>
+            }
           </div>
         </>}
 
@@ -1638,8 +1672,8 @@ export default function FlowBuilderPage() {
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="text-center space-y-3 pointer-events-auto">
                   <div className="text-5xl">🤖</div>
-                  <p className="text-gray-500 font-semibold">Flow abhi khali hai</p>
-                  <p className="text-gray-400 text-sm">Left panel se node add karo ya example load karo</p>
+                  <p className="text-gray-500 font-semibold">This flow is empty</p>
+                  <p className="text-gray-400 text-sm">Add a node from the left panel or load an example</p>
                   <div className="flex gap-2 justify-center">
                     <button onClick={loadExample}
                       className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700">
@@ -1657,7 +1691,7 @@ export default function FlowBuilderPage() {
         </div>
 
         {rightPanel==='config' && selectedNode && (
-          <ConfigPanel node={selectedNode} allNodes={nodes} onUpdate={updateNodeData} onDelete={deleteNode} onClose={()=>setSelectedNode(null)} onAddConnected={addConnectedNode}/>
+          <ConfigPanel node={selectedNode} allNodes={nodes} onUpdate={updateNodeData} onDelete={deleteNode} onClose={()=>setSelectedNode(null)} onAddConnected={addConnectedNode} currentFlowId={flowId}/>
         )}
         {rightPanel==='help' && <HelpPanel onClose={()=>setShowHelp(false)}/>}
 

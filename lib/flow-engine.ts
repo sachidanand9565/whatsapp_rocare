@@ -16,7 +16,7 @@
  *   end            — end the flow
  */
 import { query, insert, execute } from '@/lib/db';
-import { sendTextMessage, sendTemplateMessage, sendButtonMessage, sendListMessage, sendMediaButtonMessage, sendProductMessage } from '@/lib/whatsapp';
+import { sendTextMessage, sendTemplateMessage, sendButtonMessage, sendListMessage, sendMediaButtonMessage, sendMultiProductMessage } from '@/lib/whatsapp';
 import { utcNow } from '@/lib/utils';
 import { emitSSE } from '@/lib/sse';
 import { RowDataPacket } from 'mysql2';
@@ -26,7 +26,7 @@ import { RowDataPacket } from 'mysql2';
 export type FlowNodeType =
   | 'message' | 'button_message' | 'list_message' | 'dynamic_list' | 'media_message' | 'multi_product' | 'wait' | 'condition'
   | 'set_variable' | 'api_call' | 'update_contact'
-  | 'delay' | 'template' | 'transfer' | 'end';
+  | 'delay' | 'template' | 'transfer' | 'connect_flow' | 'end';
 
 export interface FlowNode {
   id:   string;
@@ -42,8 +42,9 @@ export interface FlowNode {
     // list_message
     list_button_text?: string;
     list_sections?:    { title: string; rows: { id: string; title: string; description?: string }[] }[];
-    // multi_product
-    products?:         { id: string; name: string; price?: string; description?: string; image_url?: string; media_id?: string }[];
+    // multi_product (WhatsApp Catalog)
+    catalog_id?:       string;
+    multi_sections?:   { title: string; product_items: { product_retailer_id: string }[] }[];
     // variable save options (for button_message, list_message, dynamic_list, multi_product)
     save_id_as?:       string;   // custom variable name for selected ID
     save_title_as?:    string;   // custom variable name for selected title
@@ -81,6 +82,9 @@ export interface FlowNode {
     condition_variable?: string;
     condition_operator?: string;
     condition_value?:    string;
+    // connect_flow
+    target_flow_id?:   string;
+    target_flow_name?: string;
   };
   position: { x: number; y: number };
 }
@@ -339,40 +343,26 @@ async function executeFromNode(
         return;
       }
 
-      // ── Multi Product: send product catalog ────────────────────
+      // ── Multi Product: WhatsApp Catalog product_list message ──
       case 'multi_product': {
-        const headerText = node.data.header_text ? substituteVars(node.data.header_text, vars, extras) : 'Our Products';
+        const catalogId  = (node.data.catalog_id || '').trim();
+        const headerText = node.data.header_text ? substituteVars(node.data.header_text, vars, extras) : undefined;
         const bodyText   = substituteVars(node.data.body_text || '', vars, extras);
         const footerText = node.data.footer_text ? substituteVars(node.data.footer_text, vars, extras) : undefined;
-        const products   = (node.data.products || []) as { id: string; name: string; price?: string; description?: string; image_url?: string; media_id?: string }[];
-        
-        console.log('[flow-engine] Multi Product Node:');
-        console.log('  Header:', headerText);
-        console.log('  Body:', bodyText);
-        console.log('  Products:', JSON.stringify(products, null, 2));
-        
+        const sections   = (node.data.multi_sections || []) as { title: string; product_items: { product_retailer_id: string }[] }[];
         let wamid: string | null = null;
-        if (products.length > 0) {
-          try {
-            const res = await sendProductMessage(accessToken, phoneNumberId, contactPhone, headerText, bodyText, products, footerText);
-            wamid = res?.messages?.[0]?.id || null;
-            console.log('[flow-engine] Product message sent, wamid:', wamid);
-          } catch (err) {
-            console.error('[flow-engine] Product message send failed:', err);
-          }
-        } else {
-          // Fallback: agar koi products nahi to plain text bhejo
-          try {
-            const res = await sendTextMessage(accessToken, phoneNumberId, contactPhone, bodyText + '\n\n(No products available right now)');
-            wamid = res?.messages?.[0]?.id || null;
-          } catch { /**/ }
-        }
-
-        const prodContent = JSON.stringify({ __type: 'products', header: headerText, body: bodyText, products, footer: footerText });
+        try {
+          const res = await sendMultiProductMessage(accessToken, phoneNumberId, contactPhone, catalogId, sections, bodyText, headerText, footerText);
+          wamid = res?.messages?.[0]?.id || null;
+        } catch { /**/ }
+        const prodContent = JSON.stringify({ __type: 'multi_product', catalog_id: catalogId, sections, header: headerText, body: bodyText, footer: footerText });
         await saveOutboundMessage(workspaceId, session.contact_id, prodContent, wamid, 'interactive');
-        // Stay on this node — user ke product select ka wait karo
-        await updateSessionNode(session.id, nodeId, vars);
-        return;
+        // Auto-advance — no user input needed
+        const nextN = getNextNode(flow.edges, flow.nodes, nodeId);
+        if (!nextN) { await endSession(session.id); return; }
+        await updateSessionNode(session.id, nextN.id, vars);
+        node = nextN;
+        continue;
       }
 
       // ── Message: send text ─────────────────────────────────────
@@ -532,6 +522,36 @@ async function executeFromNode(
         emitSSE({ type: 'chat_status_update', workspaceId, contactId: session.contact_id, chatStatus: 'open' });
         await endSession(session.id);
         return;
+      }
+
+      // ── Connect Flow: jump into another flow ──────────────────
+      case 'connect_flow': {
+        const targetFlowId = node.data.target_flow_id;
+        if (!targetFlowId) { await endSession(session.id); return; }
+
+        const targetRows = await query<RowDataPacket[]>(
+          'SELECT * FROM flows WHERE id = ? AND workspace_id = ? LIMIT 1',
+          [targetFlowId, workspaceId]
+        );
+        if (!targetRows.length) { await endSession(session.id); return; }
+
+        const targetFlow  = targetRows[0];
+        const targetNodes: FlowNode[] = typeof targetFlow.nodes === 'string' ? JSON.parse(targetFlow.nodes) : targetFlow.nodes;
+        const targetEdges: FlowEdge[] = typeof targetFlow.edges === 'string' ? JSON.parse(targetFlow.edges) : targetFlow.edges;
+
+        const targetIds = new Set(targetEdges.map((e) => e.target));
+        const startNode = targetNodes.find((n) => !targetIds.has(n.id)) || targetNodes[0];
+        if (!startNode) { await endSession(session.id); return; }
+
+        flow.id    = targetFlow.id as number;
+        flow.nodes = targetNodes;
+        flow.edges = targetEdges;
+        session.flow_id = targetFlow.id as number;
+        await execute('UPDATE flow_sessions SET flow_id = ? WHERE id = ?', [targetFlow.id, session.id]);
+
+        node = startNode;
+        await updateSessionNode(session.id, node.id, vars);
+        continue;
       }
 
       // ── End ───────────────────────────────────────────────────

@@ -210,6 +210,41 @@ export async function uploadMedia(
   return json.id;
 }
 
+// ---- Send multi-product message (WhatsApp Catalog product_list) ----
+export async function sendMultiProductMessage(
+  accessToken:   string,
+  phoneNumberId: string,
+  to:            string,
+  catalogId:     string,
+  sections:      { title: string; product_items: { product_retailer_id: string }[] }[],
+  bodyText:      string,
+  headerText?:   string,
+  footerText?:   string,
+) {
+  const client = createWAClient(accessToken);
+  const interactive: Record<string, unknown> = {
+    type: 'product_list',
+    body: { text: bodyText || ' ' },
+    action: {
+      catalog_id: catalogId,
+      sections: sections.map(s => ({
+        title: s.title || '',
+        product_items: s.product_items.map(p => ({ product_retailer_id: p.product_retailer_id })),
+      })),
+    },
+  };
+  if (headerText) interactive.header = { type: 'text', text: headerText };
+  if (footerText) interactive.footer = { text: footerText };
+  const { data } = await client.post(`/${phoneNumberId}/messages`, {
+    messaging_product: 'whatsapp',
+    recipient_type:    'individual',
+    to,
+    type:        'interactive',
+    interactive,
+  });
+  return data;
+}
+
 // ---- Send media message with optional buttons (interactive header) ----
 export async function sendMediaButtonMessage(
   accessToken:   string,
@@ -301,7 +336,7 @@ export async function markAsRead(
   return data;
 }
 
-// ---- Send multi-product message (interactive product list only) ----
+// ---- Send multi-product message (first product image + product list) ----
 export async function sendProductMessage(
   accessToken:   string,
   phoneNumberId: string,
@@ -313,7 +348,34 @@ export async function sendProductMessage(
 ) {
   const client = createWAClient(accessToken);
   
-  // Send the product list (interactive list message)
+  // Send first product's image (if available)
+  if (products.length > 0) {
+    const firstProduct = products[0];
+    if (firstProduct.image_url || firstProduct.media_id) {
+      try {
+        const caption = `${firstProduct.name}${firstProduct.price ? ` • ₹${firstProduct.price}` : ''}`;
+        
+        if (firstProduct.image_url?.trim()) {
+          // Send from URL
+          await client.post(`/${phoneNumberId}/messages`, {
+            messaging_product: 'whatsapp',
+            recipient_type:    'individual',
+            to,
+            type:  'image',
+            image: { link: firstProduct.image_url, caption },
+          });
+          console.log('[sendProductMessage] First product image sent');
+        }
+      } catch (err) {
+        console.error('[sendProductMessage] Image send failed:', err);
+      }
+      
+      // Small delay before sending list
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }
+  
+  // Send the product list
   const sections = [{
     title: headerText || 'Products',
     rows: products.slice(0, 10).map((p) => ({
