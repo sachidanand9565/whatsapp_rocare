@@ -2,7 +2,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { apiFetch } from '@/hooks/useApi';
 import MediaLibrary, { type MediaItem as MLItem } from '@/app/components/MediaLibrary';
-import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter, BellOff, Bell } from 'lucide-react';
+import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter, BellOff, Bell, ArrowLeft, Info } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Contact, Message } from '@/types';
 
@@ -368,11 +368,13 @@ function TemplateBubble({ data, status, time }: { data: TemplateContent; status:
 }
 
 // ── Contact Profile Panel ─────────────────────────────────────
-function ProfilePanel({ contact, templateMsgCount, sessionMsgCount, onContactUpdate }: {
+function ProfilePanel({ contact, templateMsgCount, sessionMsgCount, onContactUpdate, mobileOpen, onClose }: {
   contact: Contact;
   templateMsgCount: number;
   sessionMsgCount: number;
   onContactUpdate: (updated: Partial<Contact>) => void;
+  mobileOpen: boolean;
+  onClose: () => void;
 }) {
   const [open, setOpen] = useState<Record<string, boolean>>({ info: true });
   const toggle = (k: string) => setOpen(p => ({ ...p, [k]: !p[k] }));
@@ -456,7 +458,14 @@ function ProfilePanel({ contact, templateMsgCount, sessionMsgCount, onContactUpd
   ];
 
   return (
-    <div className="w-72 border-l border-gray-200 bg-white flex flex-col overflow-y-auto">
+    <div className={`${mobileOpen ? 'flex fixed inset-0 z-40' : 'hidden lg:flex'} lg:static lg:inset-auto lg:z-auto w-full lg:w-72 border-l border-gray-200 bg-white flex-col overflow-y-auto`}>
+      {/* Mobile header with close */}
+      <div className="lg:hidden flex items-center justify-between px-4 py-3 border-b border-gray-100 sticky top-0 bg-white z-10">
+        <p className="font-semibold text-gray-800">Contact Info</p>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <X size={20} />
+        </button>
+      </div>
       {/* Avatar + name */}
       <div className="p-5 border-b border-gray-100 text-center">
         <div className={`w-14 h-14 rounded-full ${color} text-white text-2xl font-bold flex items-center justify-center mx-auto mb-3`}>
@@ -607,6 +616,7 @@ function renderTplPreview(text: string): React.ReactNode {
 export default function InboxPage() {
   const [contacts, setContacts]     = useState<Contact[]>([]);
   const [selected, setSelected]     = useState<Contact | null>(null);
+  const [showProfileMobile, setShowProfileMobile] = useState(false);
   const [messages, setMessages]     = useState<Message[]>([]);
   const [contactsLoading, setContactsLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -987,6 +997,7 @@ export default function InboxPage() {
     setMessages([]);
     setMessagesLoading(true);
     setSelected(c);
+    setShowProfileMobile(false);
     setUnreadCounts(prev => {
       const next = { ...prev, [c.id]: 0 };
       saveUnread(next);
@@ -1258,7 +1269,7 @@ export default function InboxPage() {
     <div className="h-[calc(100vh-5rem)] flex border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
 
       {/* ── Left: Contact List ──────────────────────────────── */}
-      <div className="w-72 border-r border-gray-200 flex flex-col flex-shrink-0">
+      <div className={`${selected ? 'hidden lg:flex' : 'flex'} w-full lg:w-72 border-r border-gray-200 flex-col flex-shrink-0`}>
         {/* Search + Campaign Filter */}
         <div className="p-3 border-b border-gray-100 space-y-2">
           <div className="flex items-center gap-2">
@@ -1585,16 +1596,22 @@ export default function InboxPage() {
 
       {/* ── Middle: Chat area ───────────────────────────────── */}
       {selected ? (
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 w-full">
           {/* Chat header */}
           <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-3 bg-white">
+            <button onClick={() => setSelected(null)} className="lg:hidden text-gray-500 hover:text-gray-700 flex-shrink-0">
+              <ArrowLeft size={20} />
+            </button>
             <div className="w-9 h-9 rounded-full bg-whatsapp-green text-white flex items-center justify-center font-bold text-sm flex-shrink-0">
               {(selected.name || selected.phone).charAt(0).toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-semibold text-sm text-gray-900">{selected.name || selected.phone}</p>
+              <p className="font-semibold text-sm text-gray-900 truncate">{selected.name || selected.phone}</p>
               <p className="text-xs text-gray-400">+{selected.phone}</p>
             </div>
+            <button onClick={() => setShowProfileMobile(true)} className="lg:hidden text-gray-400 hover:text-gray-600 flex-shrink-0">
+              <Info size={18} />
+            </button>
             {selected.chat_status === 'intervened' && (
               <div className="flex items-center gap-2">
                 {/* Transfer dropdown */}
@@ -2107,7 +2124,7 @@ export default function InboxPage() {
           )}
         </div>
       ) : (
-        <div className="flex-1 flex items-center justify-center text-gray-400 bg-gray-50">
+        <div className="hidden lg:flex flex-1 items-center justify-center text-gray-400 bg-gray-50">
           {contactsLoading ? (
             <div className="flex flex-col items-center gap-3">
               <div className="w-10 h-10 border-4 border-whatsapp-green border-t-transparent rounded-full animate-spin" />
@@ -2130,6 +2147,8 @@ export default function InboxPage() {
           contact={selected}
           templateMsgCount={templateMsgCount}
           sessionMsgCount={sessionMsgCount}
+          mobileOpen={showProfileMobile}
+          onClose={() => setShowProfileMobile(false)}
           onContactUpdate={(updated) => {
             setSelected((prev) => prev ? { ...prev, ...updated } : prev);
             setContacts((prev) => prev.map((c) => c.id === selected.id ? { ...c, ...updated } : c));
