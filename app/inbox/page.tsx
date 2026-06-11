@@ -1613,13 +1613,13 @@ export default function InboxPage() {
               <Info size={18} />
             </button>
             {selected.chat_status === 'intervened' && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
                 {/* Transfer dropdown */}
                 <div className="relative" ref={transferRef}>
                   <button onClick={openTransfer} disabled={actioning || transferring}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-400 hover:bg-blue-600 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50">
+                    className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 bg-blue-400 hover:bg-blue-600 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50">
                     {transferring ? <Loader2 size={12} className="animate-spin" /> : <ArrowRightLeft size={12} />}
-                    Transfer
+                    <span className="hidden sm:inline">Transfer</span>
                     <ChevronDown size={11} className={`transition-transform duration-150 ${showTransfer ? 'rotate-180' : ''}`} />
                   </button>
                   {showTransfer && (
@@ -1652,9 +1652,9 @@ export default function InboxPage() {
                 </div>
                 {/* Resolve button */}
                 <button onClick={resolve} disabled={actioning}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50">
+                  className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50">
                   {actioning ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle size={12} />}
-                  Resolve
+                  <span className="hidden sm:inline">Resolve</span>
                 </button>
               </div>
             )}
