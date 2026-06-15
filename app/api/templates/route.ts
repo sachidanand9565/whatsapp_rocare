@@ -42,6 +42,18 @@ export async function POST(req: NextRequest) {
 
     if (!name || !body_text) return apiError('Name and body text are required');
 
+    // ── 0. Block duplicate template names (case-insensitive) ──
+    const existing = await query<RowDataPacket[]>(
+      `SELECT id, status FROM templates WHERE workspace_id = ? AND LOWER(name) = LOWER(?) AND language = ? AND status != 'REJECTED' LIMIT 1`,
+      [payload.workspaceId, name, language || 'en']
+    );
+    if (existing.length > 0) {
+      return apiError(
+        `A template named "${name}" already exists (status: ${existing[0].status}). Please choose a different name or edit the existing template.`,
+        409
+      );
+    }
+
     // ── 1. Resolve credentials: DB → ENV fallback ────────────
     const ws = await query<RowDataPacket[]>(
       'SELECT access_token, waba_id FROM workspaces WHERE id = ?',
@@ -144,11 +156,17 @@ export async function POST(req: NextRequest) {
         const errDataField = fbError.error_data     as string | undefined;
         metaError = userTitle || (fbError.message as string) || metaErr.message;
 
-        // Friendly hints for known error codes
+        // Friendly hints for known error codes (subcode checked first — more specific)
         let hint = '';
-        if (code === 1)   hint = 'Try a different template name (even previously rejected templates occupy the name on Meta). Also check: WABA permissions, access token scopes (needs whatsapp_business_management), and that you are not mixing Quick Reply + CTA buttons.';
-        if (code === 100) hint = 'Invalid parameter — check template name (only lowercase letters, numbers, underscores allowed) and body variables.';
-        if (code === 190) hint = 'Access token expired or invalid. Please reconnect via Facebook in Settings.';
+        if (subcode === 2388023) {
+          hint = 'This template name + language was recently deleted on Meta and is still in a ~4 week cooldown period during which it cannot be reused. Use a different template name (or a different language) instead of waiting.';
+        } else if (code === 1) {
+          hint = 'Try a different template name (even previously rejected templates occupy the name on Meta). Also check: WABA permissions, access token scopes (needs whatsapp_business_management), and that you are not mixing Quick Reply + CTA buttons.';
+        } else if (code === 100) {
+          hint = 'Invalid parameter — check template name (only lowercase letters, numbers, underscores allowed) and body variables.';
+        } else if (code === 190) {
+          hint = 'Access token expired or invalid. Please reconnect via Facebook in Settings.';
+        }
 
         metaDetails = [
           hint                && `Hint: ${hint}`,

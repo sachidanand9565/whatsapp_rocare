@@ -330,6 +330,8 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
   const [apiHeaders,     setApiHeaders]    = useState(node.data.headers||'');
   const [apiBody,        setApiBody]       = useState(node.data.body||'');
   const [apiSaveAs,      setApiSaveAs]     = useState(node.data.save_response_as||'');
+  const [apiTestLoading, setApiTestLoading]= useState(false);
+  const [apiTestResult,  setApiTestResult] = useState<{ ok: boolean; status?: number; error?: string; raw?: string } | null>(null);
   const [contactField,   setContactField]  = useState(node.data.contact_field||'name');
   const [fieldValue,     setFieldValue]    = useState(node.data.field_value||'');
   const [delaySecs,      setDelaySecs]     = useState(node.data.seconds||2);
@@ -1009,6 +1011,71 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
           </div>
           <div className="bg-gray-50 rounded-lg p-2 text-gray-500">
             Available vars: <code className="bg-gray-200 px-1">{'{{contact_phone}}'}</code> <code className="bg-gray-200 px-1">{'{{contact_name}}'}</code> <code className="bg-gray-200 px-1">{'{{user_message}}'}</code> and any saved variable
+          </div>
+
+          {/* Test API */}
+          <div className="space-y-2">
+            <button
+              onClick={async () => {
+                if (!apiUrl) return;
+                setApiTestLoading(true);
+                setApiTestResult(null);
+                try {
+                  let headersObj: Record<string,string> = {};
+                  if (apiHeaders) {
+                    try { headersObj = JSON.parse(apiHeaders); } catch { /**/ }
+                  }
+                  // Use server-side proxy to avoid CORS issues
+                  const token = localStorage.getItem('token');
+                  const proxyRes = await fetch('/api/proxy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                    body: JSON.stringify({
+                      url:     apiUrl,
+                      method:  apiMethod,
+                      headers: headersObj,
+                      body:    apiMethod !== 'GET' && apiBody ? apiBody : undefined,
+                    }),
+                  });
+                  const proxyData = await proxyRes.json();
+                  if (proxyData.error && proxyData.ok === undefined) {
+                    setApiTestResult({ ok: false, error: proxyData.error });
+                  } else {
+                    setApiTestResult({
+                      ok:     !!proxyData.ok,
+                      status: proxyData.status,
+                      raw:    JSON.stringify(proxyData.data, null, 2),
+                    });
+                  }
+                } catch (e) {
+                  setApiTestResult({ ok: false, error: e instanceof Error ? e.message : 'Request failed. Check URL and network.' });
+                } finally {
+                  setApiTestLoading(false);
+                }
+              }}
+              disabled={!apiUrl || apiTestLoading}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-40">
+              {apiTestLoading
+                ? <><Loader2 size={13} className="animate-spin"/> Testing…</>
+                : <><Zap size={13}/> Test API</>}
+            </button>
+
+            {apiTestResult && (
+              <div className="rounded-lg border overflow-hidden">
+                <div className={`px-3 py-2 flex items-center gap-2 ${apiTestResult.ok ? 'bg-green-600' : 'bg-red-600'}`}>
+                  <span className="text-white text-[11px] font-semibold">
+                    {apiTestResult.ok ? `✓ Success — Status ${apiTestResult.status}` : `✗ ${apiTestResult.error || `Failed — Status ${apiTestResult.status}`}`}
+                  </span>
+                </div>
+                <div className="bg-gray-900 max-h-52 overflow-y-auto">
+                  <pre className="text-[10px] text-green-400 font-mono p-3 whitespace-pre-wrap leading-relaxed">
+                    {apiTestResult.raw || 'No response body'}
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            <p className="text-gray-400 text-[10px]">Note: <code className="bg-gray-100 px-1">{'{{variables}}'}</code> are sent as literal text in this test — they are only substituted when the flow actually runs.</p>
           </div>
         </>}
 
