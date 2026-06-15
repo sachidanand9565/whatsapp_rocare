@@ -4,6 +4,7 @@ import { apiFetch } from '@/hooks/useApi';
 import { Plus, Trash2, ToggleLeft, ToggleRight, GitBranch, Pencil, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useRouter } from 'next/navigation';
+import { encryptId } from '@/lib/idCrypt';
 
 interface Flow {
   id:            number;
@@ -69,7 +70,7 @@ export default function FlowsPage() {
       setShowModal(false);
       setForm({ name: '', trigger_type: 'keyword', trigger_value: '' });
       setKeywords([]);
-      router.push(`/flows/${r.data.id}`);
+      router.push(`/flows/${encryptId(r.data.id)}`);
     } catch { toast.error('Failed to create flow'); }
     finally { setSaving(false); }
   }
@@ -159,7 +160,7 @@ export default function FlowsPage() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={() => router.push(`/flows/${flow.id}`)}
+                        onClick={() => router.push(`/flows/${encryptId(flow.id)}`)}
                         title="Edit flow"
                         className="p-1.5 text-gray-400 hover:text-whatsapp-teal hover:bg-teal-50 rounded transition-colors">
                         <Pencil size={15} />

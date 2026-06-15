@@ -10,6 +10,7 @@ import {
 import toast from 'react-hot-toast';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import MediaLibrary, { type MediaItem as MLItem } from '@/app/components/MediaLibrary';
+import { decryptId } from '@/lib/idCrypt';
 
 // ── Types ─────────────────────────────────────────────────────
 interface CampaignDetail {
@@ -136,7 +137,8 @@ function WaBubble({ bodyText, buttons }: { bodyText: string; buttons: string }) 
 
 // ── Main Page ─────────────────────────────────────────────────
 export default function CampaignDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const { id: rawId } = useParams<{ id: string }>();
+  const id = decryptId(rawId) || rawId;
   const router = useRouter();
 
   const [campaign, setCampaign]     = useState<CampaignDetail | null>(null);

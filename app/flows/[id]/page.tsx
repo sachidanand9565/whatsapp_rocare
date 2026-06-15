@@ -13,6 +13,7 @@ import { apiFetch } from '@/hooks/useApi';
 import { useParams, useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import MediaLibrary, { type MediaItem, getWorkspaceId } from '@/app/components/MediaLibrary';
+import { decryptId } from '@/lib/idCrypt';
 import {
   MessageSquare, Clock, GitBranch, ArrowRightLeft, XCircle,
   Save, ArrowLeft, Plus, Trash2, X, Loader2, HelpCircle,
@@ -1507,7 +1508,7 @@ function uid() { return `n-${++nodeCounter}-${Date.now()}`; }
 export default function FlowBuilderPage() {
   const params  = useParams();
   const router  = useRouter();
-  const flowId  = params.id as string;
+  const flowId  = decryptId(params.id as string) || (params.id as string);
 
   const [flowName, setFlowName]          = useState('');
   const [nodes, setNodes, onNodesChange] = useNodesState([]);

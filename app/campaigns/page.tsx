@@ -2,6 +2,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/hooks/useApi';
+import { encryptId } from '@/lib/idCrypt';
 import { Plus, Play, Radio, Zap, GitBranch, ShoppingBag, ChevronRight, Trash2, UserPlus, X, Search, ChevronDown, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Campaign, Template, Contact, User } from '@/types';
@@ -158,7 +159,7 @@ export default function CampaignsPage() {
             const typeCfg = TYPE_CONFIG[cType] || TYPE_CONFIG.broadcast;
             return (
               <div key={c.id} className="card cursor-pointer hover:shadow-md transition-shadow"
-                onClick={() => router.push(`/campaigns/${c.id}`)}>
+                onClick={() => router.push(`/campaigns/${encryptId(c.id)}`)}>
                 <div className="flex flex-wrap items-start gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
