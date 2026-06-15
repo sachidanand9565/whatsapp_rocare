@@ -68,6 +68,7 @@ export interface FlowNode {
     headers?:        string;   // JSON string
     body?:           string;   // JSON template string with {{vars}}
     save_response_as?: string; // variable name to store response body
+    extract_fields?: { path: string; variable: string }[]; // extract specific JSON fields from response into variables
     // update_contact
     contact_field?:  'name' | 'email' | 'phone' | 'notes' | 'tags';
     field_value?:    string;   // supports {{vars}}
@@ -116,6 +117,17 @@ interface FlowSession {
 }
 
 // ── Variable substitution ────────────────────────────────────────
+
+// Navigate a JSON value using a dot/bracket path, e.g. "[0].products_title" or "data.items.0.name"
+function getByPath(obj: unknown, path: string): unknown {
+  const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean);
+  let cur: unknown = obj;
+  for (const part of parts) {
+    if (cur === null || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return cur;
+}
 
 function substituteVars(
   text: string,
@@ -452,10 +464,24 @@ async function executeFromNode(
             headers: headersObj,
             body: bodyStr,
           });
-          if (node.data.save_response_as) {
+          if (node.data.save_response_as || (node.data.extract_fields && node.data.extract_fields.length)) {
             try {
               const responseText = await res.text();
-              vars[node.data.save_response_as] = responseText;
+              if (node.data.save_response_as) {
+                vars[node.data.save_response_as] = responseText;
+              }
+              if (node.data.extract_fields && node.data.extract_fields.length) {
+                try {
+                  const json = JSON.parse(responseText);
+                  for (const f of node.data.extract_fields) {
+                    if (!f.path || !f.variable) continue;
+                    const val = getByPath(json, f.path);
+                    vars[f.variable] = val !== undefined && val !== null
+                      ? (typeof val === 'object' ? JSON.stringify(val) : String(val))
+                      : '';
+                  }
+                } catch { /* response not JSON, skip extraction */ }
+              }
             } catch { /* ignore */ }
           }
         } catch { /* API call failed, continue flow */ }

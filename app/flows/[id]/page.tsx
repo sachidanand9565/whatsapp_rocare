@@ -331,6 +331,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
   const [apiHeaders,     setApiHeaders]    = useState(node.data.headers||'');
   const [apiBody,        setApiBody]       = useState(node.data.body||'');
   const [apiSaveAs,      setApiSaveAs]     = useState(node.data.save_response_as||'');
+  const [apiExtractFields, setApiExtractFields] = useState<{path:string;variable:string}[]>(node.data.extract_fields||[]);
   const [apiTestLoading, setApiTestLoading]= useState(false);
   const [apiTestResult,  setApiTestResult] = useState<{ ok: boolean; status?: number; error?: string; raw?: string } | null>(null);
   const [contactField,   setContactField]  = useState(node.data.contact_field||'name');
@@ -422,7 +423,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
     if (type==='transfer')       { updates.transferNote = transferNote; }
     if (type==='condition')      { updates.condition_variable = condVar; updates.condition_operator = condOp; updates.condition_value = condVal; }
     if (type==='set_variable')   { updates.variable_name = varName; }
-    if (type==='api_call')       { updates.url=apiUrl; updates.method=apiMethod; updates.headers=apiHeaders; updates.body=apiBody; updates.save_response_as=apiSaveAs; }
+    if (type==='api_call')       { updates.url=apiUrl; updates.method=apiMethod; updates.headers=apiHeaders; updates.body=apiBody; updates.save_response_as=apiSaveAs; updates.extract_fields=apiExtractFields.filter(f=>f.path&&f.variable); }
     if (type==='update_contact') { updates.contact_field=contactField; updates.field_value=fieldValue; }
     if (type==='delay')          { updates.seconds=Number(delaySecs); }
     if (type==='template')       { updates.template_name=tplName; updates.language=tplLang; }
@@ -1005,11 +1006,46 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
               className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-purple-400 text-sm font-mono resize-none"/>
           </div>}
           <div>
-            <label className="block font-semibold text-gray-600 mb-1">Save response as (optional)</label>
+            <label className="block font-semibold text-gray-600 mb-1">Save full response as (optional)</label>
             <input value={apiSaveAs} onChange={e=>setApiSaveAs(e.target.value)}
               placeholder="e.g. api_response (variable name)"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-purple-400 text-sm font-mono"/>
           </div>
+
+          {/* Extract fields from response */}
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Extract fields from response (optional)</label>
+            <div className="space-y-2">
+              {apiExtractFields.map((f, idx) => (
+                <div key={idx} className="flex gap-2 items-start">
+                  <input value={f.path}
+                    onChange={e=>setApiExtractFields(prev=>prev.map((p,i)=>i===idx?{...p, path:e.target.value}:p))}
+                    placeholder="e.g. [0].products_title or data.items[0].price"
+                    className="flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-purple-400"/>
+                  <span className="text-gray-400 text-xs pt-2">→</span>
+                  <input value={f.variable}
+                    onChange={e=>setApiExtractFields(prev=>prev.map((p,i)=>i===idx?{...p, variable:e.target.value}:p))}
+                    placeholder="variable name"
+                    className="flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-purple-400"/>
+                  <button onClick={()=>setApiExtractFields(prev=>prev.filter((_,i)=>i!==idx))}
+                    className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors">
+                    <Trash2 size={14}/>
+                  </button>
+                </div>
+              ))}
+              <button onClick={()=>setApiExtractFields(prev=>[...prev, {path:'', variable:''}])}
+                className="flex items-center gap-1.5 text-purple-600 hover:text-purple-700 text-xs font-semibold">
+                <Plus size={13}/> Add field
+              </button>
+            </div>
+            <p className="text-gray-400 text-[10px] mt-1">
+              Response JSON se ek value nikal kar variable mein save karo. Array ho to index use karo, e.g.{' '}
+              <code className="bg-gray-100 px-1">{'[0].products_title'}</code> pehle item ka title{' '}
+              <code className="bg-gray-100 px-1">{'product_title'}</code> variable mein save karega — aage{' '}
+              <code className="bg-gray-100 px-1">{'{{product_title}}'}</code> se use karo.
+            </p>
+          </div>
+
           <div className="bg-gray-50 rounded-lg p-2 text-gray-500">
             Available vars: <code className="bg-gray-200 px-1">{'{{contact_phone}}'}</code> <code className="bg-gray-200 px-1">{'{{contact_name}}'}</code> <code className="bg-gray-200 px-1">{'{{user_message}}'}</code> and any saved variable
           </div>
