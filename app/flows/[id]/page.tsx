@@ -294,6 +294,17 @@ function extractFlowVars(allNodes: Node[]): string[] {
   return Array.from(vars);
 }
 
+// Navigate a JSON value using a dot/bracket path, e.g. "[0].products_title" or "data.items.0.name"
+function getByPath(obj: unknown, path: string): unknown {
+  const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean);
+  let cur: unknown = obj;
+  for (const part of parts) {
+    if (cur === null || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return cur;
+}
+
 // ── Config Panel ──────────────────────────────────────────────
 function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnected, currentFlowId }: {
   node: Node; allNodes: Node[];
@@ -333,7 +344,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
   const [apiSaveAs,      setApiSaveAs]     = useState(node.data.save_response_as||'');
   const [apiExtractFields, setApiExtractFields] = useState<{path:string;variable:string}[]>(node.data.extract_fields||[]);
   const [apiTestLoading, setApiTestLoading]= useState(false);
-  const [apiTestResult,  setApiTestResult] = useState<{ ok: boolean; status?: number; error?: string; raw?: string } | null>(null);
+  const [apiTestResult,  setApiTestResult] = useState<{ ok: boolean; status?: number; error?: string; raw?: string; extracted?: {path:string;variable:string;value:string}[] } | null>(null);
   const [contactField,   setContactField]  = useState(node.data.contact_field||'name');
   const [fieldValue,     setFieldValue]    = useState(node.data.field_value||'');
   const [delaySecs,      setDelaySecs]     = useState(node.data.seconds||2);
@@ -1078,10 +1089,20 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
                   if (proxyData.error && proxyData.ok === undefined) {
                     setApiTestResult({ ok: false, error: proxyData.error });
                   } else {
+                    const validFields = apiExtractFields.filter(f=>f.path && f.variable);
+                    const extracted = validFields.map(f => {
+                      const val = getByPath(proxyData.data, f.path);
+                      return {
+                        path:     f.path,
+                        variable: f.variable,
+                        value:    val !== undefined && val !== null ? (typeof val==='object' ? JSON.stringify(val) : String(val)) : '(not found)',
+                      };
+                    });
                     setApiTestResult({
                       ok:     !!proxyData.ok,
                       status: proxyData.status,
                       raw:    JSON.stringify(proxyData.data, null, 2),
+                      extracted: extracted.length ? extracted : undefined,
                     });
                   }
                 } catch (e) {
@@ -1109,6 +1130,23 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
                     {apiTestResult.raw || 'No response body'}
                   </pre>
                 </div>
+
+                {apiTestResult.extracted && (
+                  <div className="border-t border-gray-200 bg-purple-50">
+                    <p className="text-[10px] font-semibold text-purple-700 uppercase tracking-wide px-3 pt-2">Extracted Fields Preview</p>
+                    <div className="divide-y divide-purple-100">
+                      {apiTestResult.extracted.map((f, i) => (
+                        <div key={i} className="flex items-center gap-2 px-3 py-1.5 text-[11px]">
+                          <code className="bg-white border border-purple-200 px-1.5 py-0.5 rounded text-purple-700 flex-shrink-0">{f.path}</code>
+                          <span className="text-gray-400">→</span>
+                          <code className="bg-white border border-purple-200 px-1.5 py-0.5 rounded text-purple-700 flex-shrink-0">{`{{${f.variable}}}`}</code>
+                          <span className="text-gray-400">=</span>
+                          <span className="text-gray-700 truncate font-mono">{f.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
