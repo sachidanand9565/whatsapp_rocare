@@ -131,19 +131,12 @@ export async function POST(req: NextRequest) {
         if (contactRow.length === 0) continue;
         const contactId = contactRow[0].id as number;
         // Store per-contact vars as JSON in campaign_contacts
-        try {
-          await exec(
-            `INSERT IGNORE INTO campaign_contacts (campaign_id, contact_id, variables) VALUES (?, ?, ?)
-             ON DUPLICATE KEY UPDATE variables = VALUES(variables)`,
-            [id, contactId, JSON.stringify(row.vars || {})]
-          );
-        } catch {
-          // Fallback if variables column doesn't exist yet
-          await exec(
-            'INSERT IGNORE INTO campaign_contacts (campaign_id, contact_id) VALUES (?, ?)',
-            [id, contactId]
-          );
-        }
+        // NOTE: Do NOT use INSERT IGNORE here — it suppresses ON DUPLICATE KEY UPDATE
+        await exec(
+          `INSERT INTO campaign_contacts (campaign_id, contact_id, variables) VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE variables = VALUES(variables)`,
+          [id, contactId, JSON.stringify(row.vars || {})]
+        );
       }
     }
 

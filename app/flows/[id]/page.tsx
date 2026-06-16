@@ -86,6 +86,38 @@ const EXAMPLE_EDGES: Edge[] = [
 
 // ── Custom Node Component ─────────────────────────────────────
 function FlowNode({ data, selected }: NodeProps) {
+  // ── TRIGGER: special entry-point node, marks where the flow starts ──
+  if (data.type === 'trigger') {
+    const ttype = data.trigger_type || 'keyword';
+    const tval  = (data.trigger_value || '') as string;
+    const keywords = tval ? tval.split(',').map((k: string) => k.trim()).filter(Boolean) : [];
+    const label = ttype === 'any' ? 'Any message' : ttype === 'starts_with' ? 'Message starts with' : 'Message contains';
+    return (
+      <div className={`bg-white rounded-xl shadow-md border-2 min-w-[220px] max-w-[270px]
+        ${selected ? 'border-whatsapp-green ring-2 ring-whatsapp-green/30' : 'border-teal-400'}`}>
+        <div className="bg-teal-600 text-white text-xs font-semibold px-3 py-2 rounded-t-xl flex items-center gap-1.5">
+          <Zap size={12}/> Trigger — Flow Start
+        </div>
+        <div className="px-3 py-2 text-xs text-gray-600 min-h-[32px] space-y-1.5">
+          <p className="text-teal-700 font-semibold text-[11px]">{label}</p>
+          {keywords.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {keywords.map((kw: string) => (
+                <span key={kw} className="text-[10px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full font-mono">{kw}</span>
+              ))}
+            </div>
+          ) : ttype === 'any' ? (
+            <p className="text-gray-400 text-[10px] italic">Triggers on any incoming message</p>
+          ) : (
+            <p className="text-gray-300 text-[10px] italic">No keywords set</p>
+          )}
+          <p className="text-gray-300 text-[9px] pt-1">Click to edit in Flow Settings ⚙️</p>
+        </div>
+        <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-teal-500 !border-2 !border-white"/>
+      </div>
+    );
+  }
+
   const meta = NODE_TYPES_META[data.type as NodeType] || NODE_TYPES_META.message;
   const Icon = meta.icon;
   return (
@@ -303,6 +335,40 @@ function getByPath(obj: unknown, path: string): unknown {
     cur = (cur as Record<string, unknown>)[part];
   }
   return cur;
+}
+
+// ── Trigger node helpers ───────────────────────────────────────
+// Real (non-trigger) nodes — used to decide if the canvas is "empty"
+function realNodes(allNodes: Node[]): Node[] {
+  return allNodes.filter(n => n.data?.type !== 'trigger');
+}
+
+// Ensure there's always exactly one 'trigger' node, positioned to the left
+// of everything else, reflecting the flow's current trigger settings.
+function ensureTriggerNode(allNodes: Node[], triggerType: string, triggerValue: string | null): Node[] {
+  const existing = allNodes.find(n => n.data?.type === 'trigger');
+  const others   = realNodes(allNodes);
+
+  let position = existing?.position;
+  if (!position) {
+    if (others.length) {
+      const minX = Math.min(...others.map(n => n.position.x));
+      const avgY = others.reduce((sum, n) => sum + n.position.y, 0) / others.length;
+      position = { x: minX - 280, y: avgY };
+    } else {
+      position = { x: 40, y: 40 };
+    }
+  }
+
+  const trigger: Node = {
+    id: existing?.id || 'trigger-node',
+    type: 'flowNode',
+    position,
+    deletable: false,
+    data: { type: 'trigger', trigger_type: triggerType, trigger_value: triggerValue || '' },
+  };
+
+  return [trigger, ...others];
 }
 
 // ── Config Panel ──────────────────────────────────────────────

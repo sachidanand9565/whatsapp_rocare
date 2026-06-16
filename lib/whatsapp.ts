@@ -120,7 +120,7 @@ export async function sendTemplateMessage(
   components:    object[] = []
 ) {
   const client = createWAClient(accessToken);
-  const { data } = await client.post(`/${phoneNumberId}/messages`, {
+  const payload = {
     messaging_product: 'whatsapp',
     to,
     type:     'template',
@@ -129,7 +129,10 @@ export async function sendTemplateMessage(
       language:   { code: language },
       components,
     },
-  });
+  };
+  console.log('[sendTemplate] payload=', JSON.stringify(payload));
+  const { data } = await client.post(`/${phoneNumberId}/messages`, payload);
+  console.log('[sendTemplate] response=', JSON.stringify(data));
   return data;
 }
 

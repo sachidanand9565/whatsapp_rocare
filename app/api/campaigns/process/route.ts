@@ -98,20 +98,25 @@ export async function GET(req: NextRequest) {
       try {
         // Per-contact vars override campaign vars (CSV mode)
         const rowVars = parseJson<Record<string, string>>(contact.row_vars as string, {});
+        const components = buildComponents(camp, contact.phone as string, contact.contact_name as string | null, rowVars);
+        console.log(`[process] contact=${contact.phone as string} row_vars_raw=`, contact.row_vars, ' rowVars=', rowVars, ' components=', JSON.stringify(components));
         const result = await sendTemplateMessage(
           camp.access_token as string,
           camp.phone_number_id as string,
           contact.phone as string,
           camp.tname as string,
           camp.language as string,
-          buildComponents(camp, contact.phone as string, contact.contact_name as string | null, rowVars)
+          components
         );
+        console.log(`[process] meta_response=`, JSON.stringify(result));
+        console.log(`[process] template_name=${camp.tname as string} language=${camp.language as string}`);
 
         const wamid = (result?.messages as Record<string, unknown>[])?.[0]?.id as string;
 
         let bodyText = (camp.body_text as string) || '';
-        const vars = parseJson<Record<string, string>>(camp.template_vars as string, {});
-        for (const [k, v] of Object.entries(vars)) {
+        const vars   = parseJson<Record<string, string>>(camp.template_vars as string, {});
+        const allVars = { ...vars, ...rowVars };
+        for (const [k, v] of Object.entries(allVars)) {
           bodyText = bodyText.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), v);
         }
         let buttons: unknown[] = [];
@@ -140,7 +145,12 @@ export async function GET(req: NextRequest) {
         );
         sentCount++;
       } catch (err) {
-        console.error(`[process] failed for ${contact.phone as string}:`, err);
+        const axiosErr = err as { response?: { data?: unknown; status?: number } };
+        if (axiosErr?.response) {
+          console.error(`[process] Meta API error for ${contact.phone as string}: status=${axiosErr.response.status} body=`, JSON.stringify(axiosErr.response.data));
+        } else {
+          console.error(`[process] failed for ${contact.phone as string}:`, err);
+        }
         await execute(
           'UPDATE campaign_contacts SET status = ?, error = ? WHERE id = ?',
           ['failed', String(err), contact.cc_id]

@@ -24,6 +24,7 @@ import { RowDataPacket } from 'mysql2';
 // ── Types ────────────────────────────────────────────────────────
 
 export type FlowNodeType =
+  | 'trigger'
   | 'message' | 'button_message' | 'list_message' | 'dynamic_list' | 'media_message' | 'multi_product' | 'wait' | 'condition'
   | 'set_variable' | 'api_call' | 'update_contact'
   | 'delay' | 'template' | 'transfer' | 'connect_flow' | 'end';
@@ -196,6 +197,20 @@ function getNextNode(edges: FlowEdge[], nodes: FlowNode[], sourceId: string, han
   return getNode(nodes, edge.target);
 }
 
+// Find the real first node to execute. A 'trigger' node (if present) is just a
+// visual marker on the canvas — follow its outgoing edge to the actual start node.
+// Falls back to the old heuristic (node with no incoming edges) for flows without one.
+function findStartNode(nodes: FlowNode[], edges: FlowEdge[]): FlowNode | null {
+  const triggerNode = nodes.find((n) => n.type === 'trigger');
+  if (triggerNode) {
+    const next = getNextNode(edges, nodes, triggerNode.id);
+    if (next) return next;
+  }
+  const realNodes = nodes.filter((n) => n.type !== 'trigger');
+  const targetIds = new Set(edges.map((e) => e.target));
+  return realNodes.find((n) => !targetIds.has(n.id)) || realNodes[0] || null;
+}
+
 // ── Core Executor ────────────────────────────────────────────────
 
 async function executeFromNode(
@@ -218,6 +233,13 @@ async function executeFromNode(
     const nodeId = node.id;
 
     switch (node.type) {
+
+        // ── Trigger: visual marker only, just pass through ────────
+      case 'trigger': {
+        node = getNextNode(flow.edges, flow.nodes, nodeId);
+        if (node) await updateSessionNode(session.id, node.id, vars);
+        break;
+      }
 
         // ── Button Message: WhatsApp interactive buttons ──────────
       case 'button_message': {
@@ -565,8 +587,7 @@ async function executeFromNode(
         const targetNodes: FlowNode[] = typeof targetFlow.nodes === 'string' ? JSON.parse(targetFlow.nodes) : targetFlow.nodes;
         const targetEdges: FlowEdge[] = typeof targetFlow.edges === 'string' ? JSON.parse(targetFlow.edges) : targetFlow.edges;
 
-        const targetIds = new Set(targetEdges.map((e) => e.target));
-        const startNode = targetNodes.find((n) => !targetIds.has(n.id)) || targetNodes[0];
+        const startNode = findStartNode(targetNodes, targetEdges);
         if (!startNode) { await endSession(session.id); return; }
 
         flow.id    = targetFlow.id as number;
@@ -624,8 +645,7 @@ export async function tryStartFlow(
   const nodes: FlowNode[] = typeof matchedFlow.nodes === 'string' ? JSON.parse(matchedFlow.nodes) : matchedFlow.nodes;
   const edges: FlowEdge[] = typeof matchedFlow.edges === 'string' ? JSON.parse(matchedFlow.edges) : matchedFlow.edges;
 
-  const targetIds  = new Set(edges.map((e) => e.target));
-  const startNode  = nodes.find((n) => !targetIds.has(n.id)) || nodes[0];
+  const startNode  = findStartNode(nodes, edges);
   if (!startNode) return false;
 
   await abandonOldSessions(workspaceId, contactId);

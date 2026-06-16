@@ -677,6 +677,12 @@ function TemplateModal({
       const label = form.header_type === 'IMAGE' ? 'an image' : form.header_type === 'VIDEO' ? 'a video' : 'a PDF';
       toast.error(`Please upload ${label} for the ${form.header_type} header`); return;
     }
+    if (detectedVars.length > 0) {
+      const missing = detectedVars.filter((v) => !varSamples[v]?.trim());
+      if (missing.length > 0) {
+        toast.error(`Sample values required for: ${missing.join(', ')}`); return;
+      }
+    }
     setSaving(true);
     try {
       const token = localStorage.getItem('token');
@@ -852,19 +858,22 @@ function TemplateModal({
             {detectedVars.length > 0 && (
               <div className="border border-purple-200 bg-purple-50 rounded-xl p-4 space-y-3">
                 <div>
-                  <p className="text-sm font-semibold text-purple-800">Sample Values for Variables</p>
-                  <p className="text-xs text-purple-600 mt-0.5">Meta requires examples to review your template</p>
+                  <p className="text-sm font-semibold text-purple-800">
+                    Sample Values for Variables <span className="text-red-500">*</span>
+                  </p>
+                  <p className="text-xs text-purple-600 mt-0.5">Meta requires examples to review your template — all fields are required</p>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   {detectedVars.map((v) => (
                     <div key={v}>
                       <label className="text-xs font-medium text-purple-700 mb-1 block">
-                        Sample for <code className="bg-purple-200 px-1 rounded">{v}</code>
+                        Sample for <code className="bg-purple-200 px-1 rounded">{v}</code> <span className="text-red-500">*</span>
                       </label>
                       <input value={varSamples[v] || ''}
                         onChange={(e) => setVarSamples({ ...varSamples, [v]: e.target.value })}
-                        className="input text-sm"
-                        placeholder={v === '{{1}}' ? 'John' : v === '{{2}}' ? 'ORD-123' : 'sample'} />
+                        className={`input text-sm ${!varSamples[v]?.trim() ? 'border-red-300 focus:border-red-400' : ''}`}
+                        placeholder={v === '{{1}}' ? 'e.g. John' : v === '{{2}}' ? 'e.g. Delhi' : 'e.g. sample value'}
+                        required />
                     </div>
                   ))}
                 </div>
