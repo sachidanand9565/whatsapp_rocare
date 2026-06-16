@@ -4,7 +4,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { query, insert, execute } from '@/lib/db';
-import { parseWebhookBody, sendTextMessage, markAsRead, sendTypingIndicator, TemplateStatusUpdate } from '@/lib/whatsapp';
+import { parseWebhookBody, sendTextMessage, markAsRead, sendTypingIndicator, TemplateStatusUpdate, IncomingCall } from '@/lib/whatsapp';
 import { normalizePhone, utcNow, unixToUtc } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { emitSSE } from '@/lib/sse';
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Identify workspace by phoneNumberId
-  const { messages, statuses, phoneNumberId, wabaId, profileNames, templateStatusUpdates } = parseWebhookBody(body);
+  const { messages, statuses, phoneNumberId, wabaId, profileNames, templateStatusUpdates, calls } = parseWebhookBody(body);
 
   let workspaceId: number | null = null;
   let workspaceAccessToken = '';
@@ -275,6 +275,39 @@ export async function POST(req: NextRequest) {
       }
       await tryResumeFlow(workspaceId, contactId, phone, replyTitle, token, pnId, replyId).catch(() => {});
     }
+  }
+
+  // ---- Process incoming WhatsApp calls ----
+  for (const call of calls) {
+    const phone = normalizePhone(call.from);
+    if (!phone || !workspaceId) continue;
+
+    // Upsert contact
+    await execute(
+      'INSERT IGNORE INTO contacts (workspace_id, phone, source, opted_in) VALUES (?, ?, ?, 1)',
+      [workspaceId, phone, 'inbound']
+    );
+    const contactRow = await query<RowDataPacket[]>(
+      'SELECT id FROM contacts WHERE workspace_id = ? AND phone = ? LIMIT 1',
+      [workspaceId, phone]
+    );
+    if (contactRow.length === 0) continue;
+    const contactId = contactRow[0].id as number;
+
+    const isMissed = call.status === 'missed_call' || call.status === 'missed';
+    const callContent = JSON.stringify({
+      __type:  'call',
+      status:  isMissed ? 'missed' : 'answered',
+      call_id: call.call_id,
+    });
+    const callAt = unixToUtc(call.timestamp);
+    await insert(
+      `INSERT IGNORE INTO messages
+         (workspace_id, contact_id, wamid, direction, type, content, status, sent_at, created_at)
+       VALUES (?, ?, ?, 'inbound', 'call', ?, 'delivered', ?, ?)`,
+      [workspaceId, contactId, `call_${call.call_id}`, callContent, callAt, utcNow()]
+    );
+    emitSSE({ type: 'new_message', workspaceId, contactId, direction: 'inbound' });
   }
 
   // ---- Process status updates ----

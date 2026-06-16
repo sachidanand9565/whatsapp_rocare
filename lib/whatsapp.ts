@@ -469,6 +469,13 @@ export interface TemplateStatusUpdate {
   reason:           string;
 }
 
+export interface IncomingCall {
+  from:      string;
+  call_id:   string;
+  timestamp: string;
+  status:    string; // 'missed_call' | 'answered'
+}
+
 export function parseWebhookBody(body: Record<string, unknown>): {
   messages: IncomingMessage[];
   statuses: StatusUpdate[];
@@ -476,6 +483,7 @@ export function parseWebhookBody(body: Record<string, unknown>): {
   wabaId: string;
   profileNames: Record<string, string>;
   templateStatusUpdates: TemplateStatusUpdate[];
+  calls: IncomingCall[];
 } {
   const result = {
     messages: [] as IncomingMessage[],
@@ -484,12 +492,31 @@ export function parseWebhookBody(body: Record<string, unknown>): {
     wabaId: '',
     profileNames: {} as Record<string, string>,
     templateStatusUpdates: [] as TemplateStatusUpdate[],
+    calls: [] as IncomingCall[],
   };
   try {
     const entry  = (body.entry as Record<string, unknown>[])?.[0];
     result.wabaId = (entry?.id as string) ?? '';
 
     const changes = (entry?.changes as Record<string, unknown>[]) ?? [];
+
+    // Parse calls (field = "calls")
+    for (const change of changes) {
+      if (change.field === 'calls') {
+        const v    = change.value as Record<string, unknown>;
+        const pnId = (v?.metadata as Record<string, unknown>)?.phone_number_id as string;
+        if (pnId && !result.phoneNumberId) result.phoneNumberId = pnId;
+        const callsList = (v?.calls as Record<string, unknown>[]) ?? [];
+        for (const c of callsList) {
+          result.calls.push({
+            from:      c.from      as string,
+            call_id:   c.call_id   as string,
+            timestamp: c.timestamp as string,
+            status:    c.status    as string,
+          });
+        }
+      }
+    }
 
     // Template status update events (field = "message_template_status_update")
     for (const change of changes) {

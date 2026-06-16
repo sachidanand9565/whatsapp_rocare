@@ -2,7 +2,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { apiFetch } from '@/hooks/useApi';
 import MediaLibrary, { type MediaItem as MLItem } from '@/app/components/MediaLibrary';
-import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter, BellOff, Bell, ArrowLeft, Info } from 'lucide-react';
+import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter, BellOff, Bell, ArrowLeft, Info, PhoneCall, PhoneMissed } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Contact, Message } from '@/types';
 
@@ -204,6 +204,29 @@ interface ButtonsContent {
 }
 function parseButtonsContent(c: string): ButtonsContent | null {
   try { const p = JSON.parse(c); if (p.__type === 'buttons') return p; } catch { /**/ } return null;
+}
+
+// ── WhatsApp Call bubble ──────────────────────────────────────
+interface CallContent { __type: 'call'; status: 'missed' | 'answered'; call_id: string; }
+function parseCallContent(c: string): CallContent | null {
+  try { const p = JSON.parse(c); if (p.__type === 'call') return p; } catch { /**/ } return null;
+}
+function CallBubble({ data, time }: { data: CallContent; time: string }) {
+  const isMissed = data.status === 'missed';
+  return (
+    <div className="flex items-center justify-center my-1">
+      <div className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-xs font-medium shadow-sm border
+        ${isMissed
+          ? 'bg-red-50 border-red-200 text-red-600'
+          : 'bg-green-50 border-green-200 text-green-700'}`}>
+        {isMissed
+          ? <PhoneMissed size={14} className="text-red-500" />
+          : <PhoneCall size={14} className="text-green-600" />}
+        <span>{isMissed ? 'Missed WhatsApp Call' : 'WhatsApp Call'}</span>
+        <span className="text-gray-400 font-normal">{time}</span>
+      </div>
+    </div>
+  );
 }
 function ButtonsBubble({ data, status, time }: { data: ButtonsContent; status: string; time: string }) {
   return (
@@ -1682,6 +1705,7 @@ export default function InboxPage() {
               const contacts = parseContactsContent(m.content);
               const listMsg  = parseListContent(m.content);
               const btnsMsg  = parseButtonsContent(m.content);
+              const callMsg  = parseCallContent(m.content);
               const repliedMsg = m.replied_to_wamid ? messages.find((x) => x.wamid === m.replied_to_wamid) : null;
               const msgDate  = toLocalDate(m.created_at);
               const timeStr  = msgDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
@@ -1720,6 +1744,22 @@ export default function InboxPage() {
                         {m.content}
                       </span>
                     </div>
+                  </div>
+                );
+              }
+
+              // Call notification — centered pill (not a regular bubble)
+              if (callMsg) {
+                return (
+                  <div key={m.id}>
+                    {isNewDay && (
+                      <div className="flex items-center justify-center my-3">
+                        <span className="bg-white/80 text-gray-500 text-xs font-medium px-3 py-1 rounded-full shadow-sm">
+                          {dateLabel}
+                        </span>
+                      </div>
+                    )}
+                    <CallBubble data={callMsg} time={timeStr} />
                   </div>
                 );
               }
