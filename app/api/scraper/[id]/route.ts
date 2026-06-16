@@ -25,6 +25,24 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   }
 }
 
+export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const payload = requireAuth(req);
+    const { places } = await req.json() as { places: unknown[] };
+    if (!Array.isArray(places)) return apiError('places array required');
+    const phoneCount = (places as { phone?: string }[]).filter((p) => p.phone).length;
+    const affected = await execute(
+      `UPDATE scraper_sessions SET places = ?, total_count = ?, phone_count = ? WHERE id = ? AND workspace_id = ?`,
+      [JSON.stringify(places), places.length, phoneCount, params.id, payload.workspaceId]
+    );
+    if (affected === 0) return apiError('Not found', 404);
+    return apiSuccess({ updated: true, total_count: places.length, phone_count: phoneCount });
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
+    return apiError('Server error', 500);
+  }
+}
+
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const payload = requireAuth(req);

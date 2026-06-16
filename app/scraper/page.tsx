@@ -5,6 +5,7 @@ import {
   Search, MapPin, Phone, Globe, Star, Users, ExternalLink,
   CheckSquare, Square, Loader2, X, Building2, Zap,
   Plus, ArrowLeft, Trash2, Send, Calendar, ChevronRight,
+  Edit2, List, LayoutGrid, Save,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -90,6 +91,12 @@ export default function ScraperPage() {
   // Detail
   const [selected, setSelected]         = useState<Set<string>>(new Set());
   const [showCampaign, setShowCampaign] = useState(false);
+  const [listMode, setListMode]         = useState<'cards' | 'list'>('cards');
+
+  // Edit place modal
+  const [editingPlace, setEditingPlace] = useState<ScrapedPlace | null>(null);
+  const [editForm, setEditForm]         = useState<ScrapedPlace | null>(null);
+  const [savingEdit, setSavingEdit]     = useState(false);
 
   // Campaign modal
   const [templates, setTemplates]             = useState<Template[]>([]);
@@ -193,6 +200,42 @@ export default function ScraperPage() {
       setSessions((prev) => prev.filter((s) => s.id !== id));
       toast.success('List deleted');
     } catch { toast.error('Failed to delete'); }
+  }
+
+  // ── Place edit/delete helpers ────────────────────────────────
+  async function persistPlaces(newPlaces: ScrapedPlace[]) {
+    if (!activeSession?.id) return;
+    await fetch(`/api/scraper/${activeSession.id}`, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify({ places: newPlaces }),
+    });
+    setActiveSession((prev) => prev ? { ...prev, places: newPlaces, total_count: newPlaces.length, phone_count: newPlaces.filter((p) => p.phone).length } : prev);
+    setSessions((prev) => prev.map((s) => s.id === activeSession.id ? { ...s, total_count: newPlaces.length, phone_count: newPlaces.filter((p) => p.phone).length } : s));
+  }
+
+  async function deletePlace(placeId: string) {
+    if (!confirm('Delete this contact from the list?')) return;
+    const newPlaces = (activeSession?.places || []).filter((p) => p.place_id !== placeId);
+    await persistPlaces(newPlaces);
+    setSelected((prev) => { const n = new Set(prev); n.delete(placeId); return n; });
+    toast.success('Contact deleted');
+  }
+
+  function openEdit(place: ScrapedPlace) {
+    setEditingPlace(place);
+    setEditForm({ ...place });
+  }
+
+  async function saveEdit() {
+    if (!editForm || !editingPlace) return;
+    setSavingEdit(true);
+    const newPlaces = (activeSession?.places || []).map((p) => p.place_id === editingPlace.place_id ? { ...editForm } : p);
+    await persistPlaces(newPlaces);
+    setEditingPlace(null);
+    setEditForm(null);
+    setSavingEdit(false);
+    toast.success('Contact updated');
   }
 
   // ── Selection helpers ────────────────────────────────────────
@@ -517,29 +560,131 @@ export default function ScraperPage() {
             ))}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm text-gray-500 font-medium">Select:</span>
-            <button onClick={selectAll} className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium transition-colors">
-              All ({detailPlaces.length})
-            </button>
-            <button onClick={selectWithPhone} className="text-xs px-3 py-1.5 rounded-lg bg-green-100 hover:bg-green-200 text-green-700 font-medium transition-colors">
-              With Phone ({withPhone.length})
-            </button>
-            <button onClick={clearSel} className="text-xs px-3 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-medium transition-colors">
-              Clear
-            </button>
+          {/* Toolbar: select buttons + view toggle */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm text-gray-500 font-medium">Select:</span>
+              <button onClick={selectAll} className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium transition-colors">
+                All ({detailPlaces.length})
+              </button>
+              <button onClick={selectWithPhone} className="text-xs px-3 py-1.5 rounded-lg bg-green-100 hover:bg-green-200 text-green-700 font-medium transition-colors">
+                With Phone ({withPhone.length})
+              </button>
+              <button onClick={clearSel} className="text-xs px-3 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-medium transition-colors">
+                Clear
+              </button>
+            </div>
+            {/* View toggle */}
+            <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
+              <button onClick={() => setListMode('cards')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${listMode === 'cards' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}>
+                <LayoutGrid size={13} /> Cards
+              </button>
+              <button onClick={() => setListMode('list')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${listMode === 'list' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}>
+                <List size={13} /> List
+              </button>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {detailPlaces.map((place) => (
-              <PlaceCard
-                key={place.place_id}
-                place={place}
-                selected={selected.has(place.place_id)}
-                onToggle={() => toggleSelect(place.place_id)}
-              />
-            ))}
-          </div>
+          {/* Cards view */}
+          {listMode === 'cards' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {detailPlaces.map((place) => (
+                <PlaceCard
+                  key={place.place_id}
+                  place={place}
+                  selected={selected.has(place.place_id)}
+                  onToggle={() => toggleSelect(place.place_id)}
+                  onEdit={() => openEdit(place)}
+                  onDelete={() => deletePlace(place.place_id)}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* List / Table view */}
+          {listMode === 'list' && (
+            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 bg-gray-50">
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide w-8">
+                        <input type="checkbox"
+                          checked={selected.size === detailPlaces.length && detailPlaces.length > 0}
+                          onChange={(e) => e.target.checked ? selectAll() : clearSel()}
+                          className="accent-green-600 w-4 h-4" />
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">#</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Business Name</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Phone</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Address</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Website</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Rating</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {detailPlaces.map((place, idx) => (
+                      <tr key={place.place_id}
+                        className={`hover:bg-gray-50 transition-colors ${selected.has(place.place_id) ? 'bg-green-50' : ''}`}>
+                        <td className="px-4 py-3">
+                          <input type="checkbox"
+                            checked={selected.has(place.place_id)}
+                            onChange={() => toggleSelect(place.place_id)}
+                            className="accent-green-600 w-4 h-4" />
+                        </td>
+                        <td className="px-4 py-3 text-gray-400 text-xs">{idx + 1}</td>
+                        <td className="px-4 py-3 max-w-[200px]">
+                          <p className="font-medium text-gray-900 line-clamp-2 text-sm leading-tight">{place.name}</p>
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {place.phone
+                            ? <a href={`tel:${place.phone}`} className="text-green-700 font-medium hover:underline text-xs">{place.phone}</a>
+                            : <span className="text-gray-400 text-xs italic">—</span>}
+                        </td>
+                        <td className="px-4 py-3 max-w-[180px]">
+                          <p className="text-gray-500 text-xs line-clamp-2">{place.address || '—'}</p>
+                        </td>
+                        <td className="px-4 py-3 max-w-[120px]">
+                          {place.website
+                            ? <a href={place.website} target="_blank" rel="noopener noreferrer"
+                                className="text-blue-600 text-xs hover:underline truncate block max-w-[110px]">
+                                {place.website.replace(/^https?:\/\//, '')}
+                              </a>
+                            : <span className="text-gray-400 text-xs">—</span>}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {place.rating > 0
+                            ? <span className="flex items-center gap-1 text-xs font-semibold text-amber-600">
+                                <Star size={11} className="fill-amber-400 text-amber-400" /> {place.rating.toFixed(1)}
+                                <span className="text-gray-400 font-normal">({place.reviews})</span>
+                              </span>
+                            : <span className="text-gray-400 text-xs">—</span>}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-1">
+                            <button onClick={() => openEdit(place)}
+                              className="p-1.5 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors" title="Edit">
+                              <Edit2 size={13} />
+                            </button>
+                            <button onClick={() => deletePlace(place.place_id)}
+                              className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors" title="Delete">
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {detailPlaces.length === 0 && (
+                  <div className="text-center py-12 text-gray-400 text-sm">No contacts found</div>
+                )}
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -710,19 +855,90 @@ export default function ScraperPage() {
           </div>
         </div>
       )}
+
+      {/* Edit Place Modal */}
+      {editingPlace && editForm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <h3 className="text-lg font-semibold text-gray-900">Edit Contact</h3>
+              <button onClick={() => { setEditingPlace(null); setEditForm(null); }}
+                className="p-2 rounded-xl hover:bg-gray-100 text-gray-400"><X size={18} /></button>
+            </div>
+            <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase tracking-wide">Business Name</label>
+                <input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  className="input w-full" placeholder="Business name" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase tracking-wide">Phone</label>
+                <input value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                  className="input w-full" placeholder="Phone number" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase tracking-wide">Address</label>
+                <textarea value={editForm.address} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
+                  className="input w-full resize-none" rows={2} placeholder="Address" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase tracking-wide">Website</label>
+                <input value={editForm.website} onChange={(e) => setEditForm({ ...editForm, website: e.target.value })}
+                  className="input w-full" placeholder="https://..." />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase tracking-wide">Rating</label>
+                  <input type="number" min={0} max={5} step={0.1}
+                    value={editForm.rating} onChange={(e) => setEditForm({ ...editForm, rating: Number(e.target.value) })}
+                    className="input w-full" placeholder="4.5" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase tracking-wide">Reviews Count</label>
+                  <input type="number" min={0}
+                    value={editForm.reviews} onChange={(e) => setEditForm({ ...editForm, reviews: Number(e.target.value) })}
+                    className="input w-full" placeholder="120" />
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 p-5 border-t border-gray-100">
+              <button onClick={() => { setEditingPlace(null); setEditForm(null); }} className="btn-secondary flex-1">Cancel</button>
+              <button onClick={saveEdit} disabled={savingEdit}
+                className="btn-primary flex-1 flex items-center justify-center gap-2">
+                {savingEdit ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                {savingEdit ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── Place Card ───────────────────────────────────────────────
-function PlaceCard({ place, selected, onToggle }: { place: ScrapedPlace; selected: boolean; onToggle: () => void }) {
+function PlaceCard({ place, selected, onToggle, onEdit, onDelete }: {
+  place: ScrapedPlace; selected: boolean; onToggle: () => void;
+  onEdit: () => void; onDelete: () => void;
+}) {
   return (
     <div onClick={onToggle}
-      className={`relative bg-white rounded-xl border-2 cursor-pointer transition-all duration-150 hover:shadow-md ${
+      className={`group relative bg-white rounded-xl border-2 cursor-pointer transition-all duration-150 hover:shadow-md ${
         selected ? 'border-green-500 shadow-md shadow-green-100' : 'border-gray-200 hover:border-gray-300'
       }`}>
-      <div className="absolute top-3 right-3">
+      <div className="absolute top-3 right-3 flex items-center gap-1">
         {selected ? <CheckSquare size={17} className="text-green-600" /> : <Square size={17} className="text-gray-300" />}
+      </div>
+      {/* Edit/Delete actions — shown on hover */}
+      <div className="absolute top-2 left-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button onClick={(e) => { e.stopPropagation(); onEdit(); }}
+          className="p-1.5 rounded-lg bg-white shadow-sm border border-gray-200 text-gray-500 hover:text-blue-600 hover:border-blue-300 transition-colors">
+          <Edit2 size={12} />
+        </button>
+        <button onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="p-1.5 rounded-lg bg-white shadow-sm border border-gray-200 text-gray-500 hover:text-red-600 hover:border-red-300 transition-colors">
+          <Trash2 size={12} />
+        </button>
       </div>
       <div className="p-4 space-y-2.5">
         <div className="pr-6">
