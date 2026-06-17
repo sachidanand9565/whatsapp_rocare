@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/hooks/useApi';
 import {
   Plus, Search, LayoutGrid, List, Phone,
-  IndianRupee, Trash2, ChevronRight, Target, X,
+  IndianRupee, Trash2, ChevronRight, Target, X, RefreshCw,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -48,6 +48,7 @@ export default function LeadsPage() {
   const [total, setTotal]             = useState(0);
   const [stageCounts, setStageCounts] = useState<StageCount[]>([]);
   const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState('');
   const [view, setView]               = useState<'kanban' | 'list'>('kanban');
   const [search, setSearch]           = useState('');
   const [stageFilter, setStageFilter] = useState('');
@@ -55,10 +56,25 @@ export default function LeadsPage() {
   const [form, setForm] = useState({
     name: '', phone: '', email: '', source: 'manual', stage: 'new', deal_value: '', notes: '',
   });
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving]   = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  async function syncContacts() {
+    setSyncing(true);
+    try {
+      const r = await apiFetch('/api/leads/sync', { method: 'POST' });
+      toast.success(`${r.data?.imported} contacts imported as leads!`);
+      load();
+    } catch (e: unknown) {
+      toast.error((e as Error).message || 'Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   const load = useCallback(() => {
     setLoading(true);
+    setError('');
     const params = new URLSearchParams({ limit: '200' });
     if (search)      params.set('search', search);
     if (stageFilter) params.set('stage', stageFilter);
@@ -68,7 +84,10 @@ export default function LeadsPage() {
         setTotal(r.data?.total || 0);
         setStageCounts(r.data?.stageCounts || []);
       })
-      .catch(() => toast.error('Failed to load leads'))
+      .catch((e: Error) => {
+        setError(e.message || 'Failed to load leads');
+        toast.error(e.message || 'Failed to load leads');
+      })
       .finally(() => setLoading(false));
   }, [search, stageFilter]);
 
@@ -116,7 +135,7 @@ export default function LeadsPage() {
   const wonCount   = stageCounts.find((s) => s.stage === 'won')?.cnt || 0;
 
   return (
-    <div className="flex flex-col h-full gap-4">
+    <div className="flex flex-col gap-4">
 
       {/* ── Top bar ── */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -192,6 +211,14 @@ export default function LeadsPage() {
           </div>
 
           <button
+            onClick={syncContacts}
+            disabled={syncing}
+            className="btn-secondary flex items-center gap-1.5 text-sm px-3 py-1.5"
+          >
+            <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+            {syncing ? 'Importing...' : 'Sync Contacts'}
+          </button>
+          <button
             onClick={() => setShowModal(true)}
             className="btn-primary flex items-center gap-1.5 text-sm px-3 py-1.5"
           >
@@ -222,6 +249,14 @@ export default function LeadsPage() {
           <div className="text-center">
             <div className="w-8 h-8 border-2 border-whatsapp-teal border-t-transparent rounded-full animate-spin mx-auto mb-2" />
             <p className="text-sm text-gray-400">Loading leads...</p>
+          </div>
+        </div>
+      ) : error ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center bg-red-50 border border-red-200 rounded-2xl p-8 max-w-md">
+            <p className="text-red-600 font-semibold text-sm mb-1">API Error</p>
+            <p className="text-red-500 text-xs font-mono">{error}</p>
+            <button onClick={load} className="mt-4 btn-primary text-sm">Retry</button>
           </div>
         </div>
       ) : view === 'kanban' ? (

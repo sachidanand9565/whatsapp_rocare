@@ -114,6 +114,27 @@ export async function POST(req: NextRequest) {
       [contactId]
     );
 
+    // Auto-create lead if this phone doesn't already have one for this workspace
+    try {
+      const existingLead = await query<RowDataPacket[]>(
+        'SELECT id FROM leads WHERE workspace_id = ? AND phone = ? LIMIT 1',
+        [workspaceId, phone]
+      );
+      if (existingLead.length === 0) {
+        const leadName = profileName || contactRow[0].name || null;
+        const now = utcNow();
+        const leadId = await insert(
+          `INSERT INTO leads (workspace_id, contact_id, name, phone, source, stage, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'whatsapp', 'new', ?, ?)`,
+          [workspaceId, contactId, leadName, phone, now, now]
+        );
+        await insert(
+          `INSERT INTO lead_activities (lead_id, type, description, done_by, created_at) VALUES (?, ?, ?, ?, ?)`,
+          [leadId, 'message', 'Lead auto-created from WhatsApp message', null, utcNow()]
+        );
+      }
+    } catch { /* never fail webhook on lead error */ }
+
     // Auto opt-out: if user sends STOP/UNSUBSCRIBE → mark opted_in = 0
     if (msg.type === 'text' && msg.text) {
       const lower = msg.text.trim().toLowerCase();
