@@ -48,7 +48,32 @@ export async function GET(req: NextRequest) {
       [payload.workspaceId]
     );
 
-    return apiSuccess({ data: rows, total: countRow.total, page, stageCounts });
+    const sourceCounts = await query<RowDataPacket[]>(
+      `SELECT source, COUNT(*) as cnt FROM leads WHERE workspace_id = ? GROUP BY source`,
+      [payload.workspaceId]
+    );
+
+    const [valueRow] = await query<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(deal_value), 0) as total_value FROM leads WHERE workspace_id = ?`,
+      [payload.workspaceId]
+    );
+
+    const dailyTrend = await query<RowDataPacket[]>(
+      `SELECT DATE(created_at) as day, COUNT(*) as cnt FROM leads
+       WHERE workspace_id = ? AND created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+       GROUP BY DATE(created_at) ORDER BY day ASC`,
+      [payload.workspaceId]
+    );
+
+    return apiSuccess({
+      data: rows,
+      total: countRow.total,
+      page,
+      stageCounts,
+      sourceCounts,
+      totalValue: valueRow.total_value,
+      dailyTrend,
+    });
   } catch (err) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
     return apiError('Server error', 500);

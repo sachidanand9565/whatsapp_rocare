@@ -4,7 +4,8 @@ import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/hooks/useApi';
 import {
   Plus, Search, Phone, IndianRupee,
-  Trash2, ChevronRight, Target, X, RefreshCw,
+  Trash2, ChevronRight, Target, X,
+  Users, CheckCircle2, Activity,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -23,6 +24,8 @@ interface Lead {
 }
 
 interface StageCount { stage: string; cnt: number; }
+interface SourceCount { source: string; cnt: number; }
+interface DayCount { day: string; cnt: number; }
 
 const STAGES = [
   { key: 'new',         label: 'New',         dot: 'bg-blue-500',    badge: 'bg-blue-50 text-blue-700',     activeBg: 'bg-blue-500' },
@@ -42,11 +45,21 @@ const SOURCE_COLORS: Record<string, string> = {
   flow:     'bg-purple-100 text-purple-700',
 };
 
+const SOURCE_DOTS: Record<string, string> = {
+  whatsapp: 'bg-green-500',
+  scraper:  'bg-indigo-500',
+  manual:   'bg-gray-400',
+  campaign: 'bg-orange-500',
+  flow:     'bg-purple-500',
+};
+
 export default function LeadsPage() {
   const router = useRouter();
-  const [leads, setLeads]             = useState<Lead[]>([]);
-  const [total, setTotal]             = useState(0);
-  const [stageCounts, setStageCounts] = useState<StageCount[]>([]);
+  const [leads, setLeads]               = useState<Lead[]>([]);
+  const [stageCounts, setStageCounts]   = useState<StageCount[]>([]);
+  const [sourceCounts, setSourceCounts] = useState<SourceCount[]>([]);
+  const [dailyTrend, setDailyTrend]     = useState<DayCount[]>([]);
+  const [totalValue, setTotalValue]     = useState(0);
   const [loading, setLoading]         = useState(true);
   const [search, setSearch]           = useState('');
   const [stageFilter, setStageFilter] = useState('');
@@ -55,7 +68,6 @@ export default function LeadsPage() {
     name: '', phone: '', email: '', source: 'manual', stage: 'new', deal_value: '', notes: '',
   });
   const [saving, setSaving]   = useState(false);
-  const [syncing, setSyncing] = useState(false);
 
   const totalCount = stageCounts.reduce((s, c) => s + Number(c.cnt), 0);
 
@@ -73,27 +85,16 @@ export default function LeadsPage() {
     apiFetch(`/api/leads?${params}`)
       .then((r) => {
         setLeads(r.data?.data || []);
-        setTotal(r.data?.total || 0);
         setStageCounts(r.data?.stageCounts || []);
+        setSourceCounts(r.data?.sourceCounts || []);
+        setDailyTrend(r.data?.dailyTrend || []);
+        setTotalValue(Number(r.data?.totalValue || 0));
       })
       .catch((e: Error) => toast.error(e.message || 'Failed to load'))
       .finally(() => setLoading(false));
   }, [search, stageFilter]);
 
   useEffect(() => { load(); }, [load]);
-
-  async function syncContacts() {
-    setSyncing(true);
-    try {
-      const r = await apiFetch('/api/leads/sync', { method: 'POST' });
-      toast.success(`${r.data?.imported} contacts imported!`);
-      load();
-    } catch (e: unknown) {
-      toast.error((e as Error).message || 'Sync failed');
-    } finally {
-      setSyncing(false);
-    }
-  }
 
   async function deleteLead(id: number) {
     if (!confirm('Delete this lead?')) return;
@@ -131,9 +132,11 @@ export default function LeadsPage() {
     finally { setSaving(false); }
   }
 
-  const totalValue = leads.reduce((s, l) => s + (l.deal_value ? Number(l.deal_value) : 0), 0);
-  const wonCount   = stageCount('won');
-  const lostCount  = stageCount('lost');
+  const wonCount  = stageCount('won');
+  const lostCount = stageCount('lost');
+  const maxStageCount  = Math.max(1, ...STAGES.map((s) => stageCount(s.key)));
+  const totalSources   = sourceCounts.reduce((s, c) => s + Number(c.cnt), 0);
+  const maxDayCount    = Math.max(1, ...dailyTrend.map((d) => Number(d.cnt)));
 
   return (
     <div className="space-y-4">
@@ -159,10 +162,6 @@ export default function LeadsPage() {
               className="input pl-8 pr-3 py-1.5 text-sm w-48"
             />
           </div>
-          <button onClick={syncContacts} disabled={syncing} className="btn-secondary flex items-center gap-1.5 text-sm px-3 py-1.5">
-            <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
-            {syncing ? 'Importing...' : 'Sync Contacts'}
-          </button>
           <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-1.5 text-sm px-3 py-1.5">
             <Plus size={14} /> Add Lead
           </button>
@@ -172,61 +171,147 @@ export default function LeadsPage() {
       {/* ── Stats cards ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: 'Total',    value: totalCount,                         sub: 'all leads' },
-          { label: 'Pipeline', value: `₹${totalValue.toLocaleString()}`,  sub: 'deal value' },
-          { label: 'Won',      value: wonCount,                           sub: 'closed' },
-          { label: 'Active',   value: totalCount - wonCount - lostCount,  sub: 'in progress' },
+          { label: 'Total',    value: totalCount,                         sub: 'all leads',   icon: Users,        ring: 'bg-blue-50 text-blue-600' },
+          { label: 'Pipeline', value: `₹${totalValue.toLocaleString()}`,  sub: 'deal value',  icon: IndianRupee,  ring: 'bg-violet-50 text-violet-600' },
+          { label: 'Won',      value: wonCount,                           sub: 'closed',      icon: CheckCircle2, ring: 'bg-emerald-50 text-emerald-600' },
+          { label: 'Active',   value: totalCount - wonCount - lostCount,  sub: 'in progress', icon: Activity,     ring: 'bg-amber-50 text-amber-600' },
         ].map((s) => (
-          <div key={s.label} className="bg-white rounded-xl border border-gray-100 px-4 py-3 shadow-sm">
-            <p className="text-[11px] text-gray-400 font-medium uppercase tracking-wide">{s.label}</p>
-            <p className="text-2xl font-bold text-gray-800 mt-0.5 leading-none">{s.value}</p>
-            <p className="text-[10px] text-gray-400 mt-0.5">{s.sub}</p>
+          <div key={s.label} className="bg-white rounded-xl border border-gray-100 px-4 py-3.5 shadow-sm hover:shadow-md transition-shadow">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-[11px] text-gray-400 font-medium uppercase tracking-wide">{s.label}</p>
+                <p className="text-2xl font-bold text-gray-800 mt-1 leading-none">{s.value}</p>
+                <p className="text-[10px] text-gray-400 mt-1">{s.sub}</p>
+              </div>
+              <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${s.ring}`}>
+                <s.icon size={16} />
+              </div>
+            </div>
           </div>
         ))}
       </div>
 
-      {/* ── Stage tabs with counts ── */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="flex overflow-x-auto border-b border-gray-100">
-          {/* All tab */}
-          <button
-            onClick={() => setStageFilter('')}
-            className={`flex-shrink-0 flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors
-              ${stageFilter === ''
-                ? 'border-whatsapp-teal text-whatsapp-teal bg-whatsapp-teal/5'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
-          >
-            All
-            <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full min-w-[22px] text-center
-              ${stageFilter === '' ? 'bg-whatsapp-teal text-white' : 'bg-gray-100 text-gray-500'}`}>
-              {totalCount}
-            </span>
-          </button>
-
-          {STAGES.map((s) => {
-            const cnt = stageCount(s.key);
-            const active = stageFilter === s.key;
-            return (
-              <button
-                key={s.key}
-                onClick={() => setStageFilter(active ? '' : s.key)}
-                className={`flex-shrink-0 flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors
-                  ${active
-                    ? 'border-gray-800 text-gray-900 bg-gray-50'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
-              >
-                <span className={`w-2 h-2 rounded-full ${s.dot}`} />
-                {s.label}
-                <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full min-w-[22px] text-center
-                  ${active ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-500'}`}>
-                  {cnt}
-                </span>
-              </button>
-            );
-          })}
+      {/* ── Analytics row: stage funnel / source breakdown / 7-day trend ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        {/* Stage funnel */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3.5">
+          <p className="text-[11px] text-gray-400 font-medium uppercase tracking-wide mb-3">Stage funnel</p>
+          <div className="space-y-2">
+            {STAGES.map((s) => {
+              const cnt = stageCount(s.key);
+              return (
+                <button
+                  key={s.key}
+                  onClick={() => setStageFilter(stageFilter === s.key ? '' : s.key)}
+                  className="w-full flex items-center gap-2 group"
+                >
+                  <span className="text-xs text-gray-500 w-20 text-left truncate">{s.label}</span>
+                  <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${s.dot} transition-all ${stageFilter === s.key ? 'opacity-100' : 'opacity-80 group-hover:opacity-100'}`}
+                      style={{ width: `${(cnt / maxStageCount) * 100}%` }}
+                    />
+                  </div>
+                  <span className="text-xs font-semibold text-gray-700 w-12 text-right">{cnt}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        {/* ── List table ── */}
+        {/* Source breakdown */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3.5">
+          <p className="text-[11px] text-gray-400 font-medium uppercase tracking-wide mb-3">Leads by source</p>
+          {totalSources === 0 ? (
+            <p className="text-xs text-gray-300 py-6 text-center">No data yet</p>
+          ) : (
+            <>
+              <div className="flex h-2.5 rounded-full overflow-hidden bg-gray-100 mb-3">
+                {sourceCounts.map((sc) => (
+                  <div
+                    key={sc.source}
+                    title={`${sc.source}: ${sc.cnt}`}
+                    className={SOURCE_DOTS[sc.source] || 'bg-gray-400'}
+                    style={{ width: `${(Number(sc.cnt) / totalSources) * 100}%` }}
+                  />
+                ))}
+              </div>
+              <div className="space-y-1.5">
+                {sourceCounts
+                  .slice()
+                  .sort((a, b) => Number(b.cnt) - Number(a.cnt))
+                  .map((sc) => (
+                    <div key={sc.source} className="flex items-center justify-between text-xs">
+                      <span className="flex items-center gap-1.5 text-gray-500 capitalize">
+                        <span className={`w-2 h-2 rounded-full ${SOURCE_DOTS[sc.source] || 'bg-gray-400'}`} />
+                        {sc.source}
+                      </span>
+                      <span className="font-semibold text-gray-700">{sc.cnt}</span>
+                    </div>
+                  ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* 7-day trend */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3.5">
+          <p className="text-[11px] text-gray-400 font-medium uppercase tracking-wide mb-3">New leads (7 days)</p>
+          {dailyTrend.length === 0 ? (
+            <p className="text-xs text-gray-300 py-6 text-center">No recent activity</p>
+          ) : (
+            <div className="flex items-end justify-between gap-1.5 h-24">
+              {dailyTrend.map((d) => (
+                <div key={d.day} className="flex-1 flex flex-col items-center gap-1.5">
+                  <div className="w-full flex items-end justify-center" style={{ height: '72px' }}>
+                    <div
+                      title={`${d.cnt} leads`}
+                      className="w-full max-w-[22px] rounded-t-md bg-whatsapp-teal/70 hover:bg-whatsapp-teal transition-colors"
+                      style={{ height: `${Math.max((Number(d.cnt) / maxDayCount) * 100, 4)}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-gray-400">
+                    {new Date(d.day).toLocaleDateString('en-IN', { weekday: 'short' })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Stage filter chips ── */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        <button
+          onClick={() => setStageFilter('')}
+          className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors
+            ${stageFilter === ''
+              ? 'bg-whatsapp-teal text-white'
+              : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+        >
+          All <span className="opacity-70">{totalCount}</span>
+        </button>
+        {STAGES.map((s) => {
+          const cnt = stageCount(s.key);
+          const active = stageFilter === s.key;
+          return (
+            <button
+              key={s.key}
+              onClick={() => setStageFilter(active ? '' : s.key)}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors
+                ${active
+                  ? 'bg-gray-800 text-white'
+                  : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+              {s.label} <span className="opacity-70">{cnt}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Compact list ── */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <div className="w-7 h-7 border-2 border-whatsapp-teal border-t-transparent rounded-full animate-spin" />
@@ -235,95 +320,97 @@ export default function LeadsPage() {
           <div className="flex flex-col items-center justify-center py-20 text-gray-300">
             <Target size={36} className="mb-2" />
             <p className="text-sm text-gray-400">No leads{stageFilter ? ` in ${stageInfo(stageFilter).label}` : ''}</p>
-            {!stageFilter && (
-              <button onClick={syncContacts} disabled={syncing} className="mt-3 btn-secondary text-xs flex items-center gap-1.5">
-                <RefreshCw size={12} /> Sync from Contacts
-              </button>
-            )}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-100">
-                <tr>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">#</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Name</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Phone</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Stage</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Move to</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Source</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Value</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Date</th>
-                  <th className="px-4 py-3 w-12"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {leads.map((lead, idx) => {
-                  const si = stageInfo(lead.stage);
-                  const nextStage = STAGES[STAGES.findIndex((s) => s.key === lead.stage) + 1];
-                  return (
-                    <tr
-                      key={lead.id}
-                      className="hover:bg-blue-50/30 cursor-pointer transition-colors group"
-                      onClick={() => router.push(`/leads/${lead.id}`)}
+          <div>
+            <div
+              className="hidden md:grid items-center gap-3 px-4 py-2 bg-gray-50 border-b border-gray-100 text-[11px] font-semibold text-gray-400 uppercase tracking-wide"
+              style={{ gridTemplateColumns: '28px 28px minmax(0,1fr) 120px 96px 90px 80px 90px 100px 44px' }}
+            >
+              <span>#</span>
+              <span />
+              <span>Name</span>
+              <span>Phone</span>
+              <span>Stage</span>
+              <span>Source</span>
+              <span>Date</span>
+              <span className="text-right">Value</span>
+              <span>Move to</span>
+              <span />
+            </div>
+            <div className="divide-y divide-gray-50">
+            {leads.map((lead, idx) => {
+              const si = stageInfo(lead.stage);
+              const nextStage = STAGES[STAGES.findIndex((s) => s.key === lead.stage) + 1];
+              return (
+                <div
+                  key={lead.id}
+                  onClick={() => router.push(`/leads/${lead.id}`)}
+                  className="grid items-center gap-3 px-4 py-2.5 hover:bg-blue-50/30 cursor-pointer transition-colors group"
+                  style={{ gridTemplateColumns: '28px 28px minmax(0,1fr) 120px 96px 90px 80px 90px 100px 44px' }}
+                >
+                  <span className="text-xs text-gray-300 font-mono">{idx + 1}</span>
+
+                  <div className="w-8 h-8 rounded-full bg-whatsapp-teal/10 text-whatsapp-teal text-xs font-bold flex items-center justify-center">
+                    {(lead.name || '?').trim().charAt(0).toUpperCase()}
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="font-semibold text-gray-800 text-sm truncate">{lead.name || '—'}</p>
+                    {lead.email && <p className="text-xs text-gray-400 truncate">{lead.email}</p>}
+                  </div>
+
+                  <span className="text-xs text-gray-500 font-mono whitespace-nowrap">
+                    {lead.phone ? (
+                      <span className="flex items-center gap-1">
+                        <Phone size={9} className="text-gray-300 flex-shrink-0" /> {lead.phone}
+                      </span>
+                    ) : '—'}
+                  </span>
+
+                  <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full w-fit ${si.badge}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${si.dot}`} />
+                    {si.label}
+                  </span>
+
+                  <span className={`hidden sm:inline-flex text-[11px] font-medium px-2 py-0.5 rounded-full w-fit ${SOURCE_COLORS[lead.source] || 'bg-gray-100 text-gray-500'}`}>
+                    {lead.source}
+                  </span>
+
+                  <span className="hidden md:inline text-xs text-gray-400 whitespace-nowrap">
+                    {new Date(lead.created_at).toLocaleDateString('en-IN')}
+                  </span>
+
+                  <span className="hidden lg:inline text-sm font-semibold text-emerald-700 text-right">
+                    {lead.deal_value ? `₹${Number(lead.deal_value).toLocaleString()}` : <span className="text-gray-200">—</span>}
+                  </span>
+
+                  <div className="flex justify-end">
+                    {nextStage ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); quickStage(lead.id, nextStage.key); }}
+                        className={`hidden sm:inline-flex text-[11px] font-semibold px-2 py-1 rounded-lg ${nextStage.badge} hover:opacity-80 transition-opacity whitespace-nowrap`}
+                      >
+                        → {nextStage.label}
+                      </button>
+                    ) : (
+                      <span className="hidden sm:inline text-xs text-gray-200">—</span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-end gap-1">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); deleteLead(lead.id); }}
+                      className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-opacity"
                     >
-                      <td className="px-4 py-3 text-xs text-gray-300 font-mono">{idx + 1}</td>
-                      <td className="px-4 py-3">
-                        <p className="font-semibold text-gray-800 truncate max-w-[160px]">{lead.name || '—'}</p>
-                        {lead.email && <p className="text-xs text-gray-400 truncate max-w-[160px]">{lead.email}</p>}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-500 font-mono whitespace-nowrap">
-                        {lead.phone ? (
-                          <span className="flex items-center gap-1">
-                            <Phone size={10} className="text-gray-300" /> {lead.phone}
-                          </span>
-                        ) : '—'}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-0.5 rounded-full ${si.badge}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${si.dot}`} />
-                          {si.label}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        {nextStage ? (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); quickStage(lead.id, nextStage.key); }}
-                            className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg ${nextStage.badge} hover:opacity-80 transition-opacity whitespace-nowrap`}
-                          >
-                            → {nextStage.label}
-                          </button>
-                        ) : (
-                          <span className="text-xs text-gray-300">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${SOURCE_COLORS[lead.source] || 'bg-gray-100 text-gray-500'}`}>
-                          {lead.source}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-sm font-semibold text-emerald-700 whitespace-nowrap">
-                        {lead.deal_value ? `₹${Number(lead.deal_value).toLocaleString()}` : <span className="text-gray-200">—</span>}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
-                        {new Date(lead.created_at).toLocaleDateString('en-IN')}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <ChevronRight size={14} className="text-gray-300" />
-                          <button
-                            onClick={(e) => { e.stopPropagation(); deleteLead(lead.id); }}
-                            className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      <Trash2 size={13} />
+                    </button>
+                    <ChevronRight size={14} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </div>
+              );
+            })}
+            </div>
           </div>
         )}
       </div>
