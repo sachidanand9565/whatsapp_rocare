@@ -5,9 +5,10 @@ import { apiFetch } from '@/hooks/useApi';
 import {
   Plus, Search, Phone, IndianRupee,
   Trash2, ChevronRight, Target, X,
-  Users, CheckCircle2, Activity,
+  Users, CheckCircle2, Activity, Filter, MessageSquareReply, MessageCircle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import LeadChatPanel from '@/app/components/LeadChatPanel';
 
 interface Lead {
   id: number;
@@ -26,6 +27,7 @@ interface Lead {
 interface StageCount { stage: string; cnt: number; }
 interface SourceCount { source: string; cnt: number; }
 interface DayCount { day: string; cnt: number; }
+interface Campaign { id: number; name: string; }
 
 const STAGES = [
   { key: 'new',         label: 'New',         dot: 'bg-blue-500',    badge: 'bg-blue-50 text-blue-700',     activeBg: 'bg-blue-500' },
@@ -62,7 +64,14 @@ export default function LeadsPage() {
   const [totalValue, setTotalValue]     = useState(0);
   const [loading, setLoading]         = useState(true);
   const [search, setSearch]           = useState('');
-  const [stageFilter, setStageFilter] = useState('');
+  const [stageFilter, setStageFilter]       = useState('');
+  const [sourceFilter, setSourceFilter]     = useState('');
+  const [dateFrom, setDateFrom]             = useState('');
+  const [dateTo, setDateTo]                 = useState('');
+  const [campaignFilter, setCampaignFilter] = useState('');
+  const [campaigns, setCampaigns]           = useState<Campaign[]>([]);
+  const [campaignReplies, setCampaignReplies] = useState<number | null>(null);
+  const [chatLead, setChatLead]       = useState<{ name: string; phone: string } | null>(null);
   const [showModal, setShowModal]     = useState(false);
   const [form, setForm] = useState({
     name: '', phone: '', email: '', source: 'manual', stage: 'new', deal_value: '', notes: '',
@@ -80,8 +89,12 @@ export default function LeadsPage() {
   const load = useCallback(() => {
     setLoading(true);
     const params = new URLSearchParams({ limit: '500' });
-    if (search)      params.set('search', search);
-    if (stageFilter) params.set('stage', stageFilter);
+    if (search)         params.set('search', search);
+    if (stageFilter)    params.set('stage', stageFilter);
+    if (sourceFilter)   params.set('source', sourceFilter);
+    if (dateFrom)       params.set('dateFrom', dateFrom);
+    if (dateTo)         params.set('dateTo', dateTo);
+    if (campaignFilter) params.set('campaignId', campaignFilter);
     apiFetch(`/api/leads?${params}`)
       .then((r) => {
         setLeads(r.data?.data || []);
@@ -89,12 +102,25 @@ export default function LeadsPage() {
         setSourceCounts(r.data?.sourceCounts || []);
         setDailyTrend(r.data?.dailyTrend || []);
         setTotalValue(Number(r.data?.totalValue || 0));
+        setCampaignReplies(r.data?.campaignReplies ?? null);
       })
       .catch((e: Error) => toast.error(e.message || 'Failed to load'))
       .finally(() => setLoading(false));
-  }, [search, stageFilter]);
+  }, [search, stageFilter, sourceFilter, dateFrom, dateTo, campaignFilter]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    apiFetch('/api/campaigns')
+      .then((r) => setCampaigns((r.data || []).map((c: { id: number; name: string }) => ({ id: c.id, name: c.name }))))
+      .catch(() => {});
+  }, []);
+
+  function clearFilters() {
+    setSearch(''); setStageFilter(''); setSourceFilter(''); setDateFrom(''); setDateTo(''); setCampaignFilter('');
+  }
+
+  const hasActiveFilters = !!(search || stageFilter || sourceFilter || dateFrom || dateTo || campaignFilter);
 
   async function deleteLead(id: number) {
     if (!confirm('Delete this lead?')) return;
@@ -280,6 +306,56 @@ export default function LeadsPage() {
         </div>
       </div>
 
+      {/* ── Filter bar: date range / source / campaign ── */}
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 flex flex-wrap items-end gap-3">
+        <div className="flex items-center gap-1.5 text-gray-400 mr-1">
+          <Filter size={14} />
+          <span className="text-[11px] font-medium uppercase tracking-wide">Filters</span>
+        </div>
+
+        <div>
+          <label className="block text-[10px] text-gray-400 mb-1">From</label>
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="input text-xs py-1.5 px-2" />
+        </div>
+        <div>
+          <label className="block text-[10px] text-gray-400 mb-1">To</label>
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input text-xs py-1.5 px-2" />
+        </div>
+
+        <div>
+          <label className="block text-[10px] text-gray-400 mb-1">Source</label>
+          <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} className="input text-xs py-1.5 px-2">
+            <option value="">All sources</option>
+            <option value="whatsapp">WhatsApp</option>
+            <option value="manual">Manual</option>
+            <option value="scraper">Scraper</option>
+            <option value="campaign">Campaign</option>
+            <option value="flow">Flow</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-[10px] text-gray-400 mb-1">Campaign</label>
+          <select value={campaignFilter} onChange={(e) => setCampaignFilter(e.target.value)} className="input text-xs py-1.5 px-2 max-w-[200px]">
+            <option value="">All campaigns</option>
+            {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+
+        {campaignFilter && campaignReplies !== null && (
+          <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 px-2.5 py-1.5 rounded-lg">
+            <MessageSquareReply size={13} />
+            {campaignReplies} replies from this campaign
+          </div>
+        )}
+
+        {hasActiveFilters && (
+          <button onClick={clearFilters} className="text-xs text-gray-400 hover:text-red-500 flex items-center gap-1 ml-auto">
+            <X size={12} /> Clear filters
+          </button>
+        )}
+      </div>
+
       {/* ── Stage filter chips ── */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1">
         <button
@@ -325,7 +401,7 @@ export default function LeadsPage() {
           <div>
             <div
               className="hidden md:grid items-center gap-3 px-4 py-2 bg-gray-50 border-b border-gray-100 text-[11px] font-semibold text-gray-400 uppercase tracking-wide"
-              style={{ gridTemplateColumns: '28px 28px minmax(0,1fr) 120px 96px 90px 80px 90px 100px 44px' }}
+              style={{ gridTemplateColumns: '28px 28px minmax(0,1fr) 120px 96px 90px 80px 90px 100px 56px 44px' }}
             >
               <span>#</span>
               <span />
@@ -336,6 +412,7 @@ export default function LeadsPage() {
               <span>Date</span>
               <span className="text-right">Value</span>
               <span>Move to</span>
+              <span>Chat</span>
               <span />
             </div>
             <div className="divide-y divide-gray-50">
@@ -347,7 +424,7 @@ export default function LeadsPage() {
                   key={lead.id}
                   onClick={() => router.push(`/leads/${lead.id}`)}
                   className="grid items-center gap-3 px-4 py-2.5 hover:bg-blue-50/30 cursor-pointer transition-colors group"
-                  style={{ gridTemplateColumns: '28px 28px minmax(0,1fr) 120px 96px 90px 80px 90px 100px 44px' }}
+                  style={{ gridTemplateColumns: '28px 28px minmax(0,1fr) 120px 96px 90px 80px 90px 100px 56px 44px' }}
                 >
                   <span className="text-xs text-gray-300 font-mono">{idx + 1}</span>
 
@@ -396,6 +473,17 @@ export default function LeadsPage() {
                     ) : (
                       <span className="hidden sm:inline text-xs text-gray-200">—</span>
                     )}
+                  </div>
+
+                  <div className="flex justify-center">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setChatLead({ name: lead.name, phone: lead.phone }); }}
+                      disabled={!lead.phone}
+                      title={lead.phone ? 'Show chat' : 'No phone number'}
+                      className="p-1.5 text-whatsapp-teal hover:bg-whatsapp-teal/10 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <MessageCircle size={15} />
+                    </button>
                   </div>
 
                   <div className="flex items-center justify-end gap-1">
@@ -480,6 +568,10 @@ export default function LeadsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {chatLead && (
+        <LeadChatPanel name={chatLead.name} phone={chatLead.phone} onClose={() => setChatLead(null)} />
       )}
     </div>
   );

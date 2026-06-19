@@ -12,6 +12,10 @@ export async function GET(req: NextRequest) {
   try {
     const payload = requireAuth(req);
 
+    // Optional date filter (YYYY-MM-DD) — counts messages sent ON that date for each campaign
+    const dateParam = req.nextUrl.searchParams.get('date');
+    const isValidDate = !!dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam);
+
     // Subquery: accurate per-status counts from messages (every individual send)
     const statsSub = `
       LEFT JOIN (
@@ -22,6 +26,7 @@ export async function GET(req: NextRequest) {
           COALESCE(SUM(status = 'failed'),                     0) AS cc_failed
         FROM messages
         WHERE direction = 'outbound'
+        ${isValidDate ? 'AND DATE(created_at) = ?' : ''}
         GROUP BY campaign_id
       ) cc_stats ON cc_stats.campaign_id = c.id`;
 
@@ -30,6 +35,10 @@ export async function GET(req: NextRequest) {
       COALESCE(cc_stats.cc_delivered, 0) AS cc_delivered,
       COALESCE(cc_stats.cc_read,      0) AS cc_read,
       COALESCE(cc_stats.cc_failed,    0) AS cc_failed`;
+
+    // When filtering by date, sort by messages sent on that date (highest first)
+    const orderBy = isValidDate ? 'cc_stats.cc_sent DESC, c.created_at DESC' : 'c.created_at DESC';
+    const statsParams = isValidDate ? [dateParam] : [];
 
     // Agents only see campaigns assigned to them
     if (payload.role === 'agent') {
@@ -40,8 +49,8 @@ export async function GET(req: NextRequest) {
          ${statsSub}
          JOIN campaign_assignments ca ON ca.campaign_id = c.id AND ca.agent_id = ?
          WHERE c.workspace_id = ?
-         ORDER BY c.created_at DESC`,
-        [payload.userId, payload.workspaceId]
+         ORDER BY ${orderBy}`,
+        [...statsParams, payload.userId, payload.workspaceId]
       );
       return apiSuccess(campaigns);
     }
@@ -52,8 +61,8 @@ export async function GET(req: NextRequest) {
        LEFT JOIN templates t ON t.id = c.template_id
        ${statsSub}
        WHERE c.workspace_id = ?
-       ORDER BY c.created_at DESC`,
-      [payload.workspaceId]
+       ORDER BY ${orderBy}`,
+      [...statsParams, payload.workspaceId]
     );
     return apiSuccess(campaigns);
   } catch (err: unknown) {

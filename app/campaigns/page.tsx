@@ -34,17 +34,19 @@ export default function CampaignsPage() {
   const [deletingId, setDeletingId]         = useState<number | null>(null);
   const [assignCampaign, setAssignCampaign] = useState<Campaign | null>(null);
   const [userRole, setUserRole]             = useState('admin');
+  const [dateFilter, setDateFilter]         = useState('');
 
   useEffect(() => {
     setUserRole(localStorage.getItem('userRole') || 'admin');
   }, []);
 
-  function load() {
+  function load(date: string) {
     setLoading(true);
-    apiFetch('/api/campaigns').then((r) => setCampaigns(r.data || [])).finally(() => setLoading(false));
+    const qs = date ? `?date=${date}` : '';
+    apiFetch(`/api/campaigns${qs}`).then((r) => setCampaigns(r.data || [])).finally(() => setLoading(false));
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(dateFilter); }, [dateFilter]);
 
   async function deleteCampaign(id: number, name: string) {
     if (!confirm(`Delete campaign "${name}"? This action cannot be undone.`)) return;
@@ -58,7 +60,7 @@ export default function CampaignsPage() {
       const data = await res.json();
       if (!res.ok) { toast.error(data.error || 'Delete failed', { duration: 6000 }); return; }
       toast.success('Campaign deleted');
-      load();
+      load(dateFilter);
     } catch {
       toast.error('Delete failed');
     } finally {
@@ -70,7 +72,7 @@ export default function CampaignsPage() {
     try {
       const r = await apiFetch(`/api/campaigns/${id}/launch`, { method: 'POST' });
       toast.success(r.data?.message || 'Campaign launched!');
-      load();
+      load(dateFilter);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Launch failed');
     }
@@ -116,28 +118,60 @@ export default function CampaignsPage() {
         )}
       </div>
 
-      {/* Type filter tabs */}
-      <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
-        {ALL_TYPES.map((t) => {
-          const cfg = t === 'all' ? null : TYPE_CONFIG[t];
-          const isActive = filterType === t;
-          return (
+      {/* Type filter tabs + date filter */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
+          {ALL_TYPES.map((t) => {
+            const cfg = t === 'all' ? null : TYPE_CONFIG[t];
+            const isActive = filterType === t;
+            return (
+              <button
+                key={t}
+                onClick={() => setFilterType(t)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  isActive ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {cfg && <span className={cfg.color}>{cfg.icon}</span>}
+                <span className="capitalize">{t === 'all' ? 'All' : cfg?.label}</span>
+                <span className={`text-xs rounded-full px-1.5 py-0.5 font-semibold ${
+                  isActive ? 'bg-gray-100 text-gray-600' : 'bg-white text-gray-400'
+                }`}>{counts[t]}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            value={dateFilter}
+            onChange={(e) => setDateFilter(e.target.value)}
+            className="input text-sm py-1.5"
+            max={new Date().toISOString().slice(0, 10)}
+          />
+          <button
+            type="button"
+            onClick={() => setDateFilter(new Date().toISOString().slice(0, 10))}
+            className="text-xs font-semibold text-whatsapp-green hover:underline">
+            Today
+          </button>
+          {dateFilter && (
             <button
-              key={t}
-              onClick={() => setFilterType(t)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                isActive ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              {cfg && <span className={cfg.color}>{cfg.icon}</span>}
-              <span className="capitalize">{t === 'all' ? 'All' : cfg?.label}</span>
-              <span className={`text-xs rounded-full px-1.5 py-0.5 font-semibold ${
-                isActive ? 'bg-gray-100 text-gray-600' : 'bg-white text-gray-400'
-              }`}>{counts[t]}</span>
+              type="button"
+              onClick={() => setDateFilter('')}
+              className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-0.5">
+              <X size={12} /> Clear
             </button>
-          );
-        })}
+          )}
+        </div>
       </div>
+
+      {dateFilter && (
+        <p className="text-xs text-gray-500">
+          Showing messages sent on <strong>{new Date(dateFilter + 'T00:00:00').toLocaleDateString()}</strong> — sorted by most sent first
+        </p>
+      )}
 
       {/* Campaign cards */}
       {loading ? (
@@ -202,7 +236,7 @@ export default function CampaignsPage() {
                   <div className="flex gap-6 text-sm">
                     {[
                       { label: 'Total',     value: c.total_contacts,  color: 'text-gray-900'   },
-                      { label: 'Sent',      value: ccSent(c),         color: 'text-blue-600'   },
+                      { label: dateFilter ? 'Sent (date)' : 'Sent', value: ccSent(c), color: 'text-blue-600' },
                       { label: 'Delivered', value: deliveryRate(c),   color: 'text-green-600'  },
                       { label: 'Read',      value: readRate(c),       color: 'text-purple-600' },
                       { label: 'Failed',    value: ccFailed(c),       color: 'text-red-600'    },
@@ -271,7 +305,7 @@ export default function CampaignsPage() {
       )}
 
       {showModal && (
-        <CampaignModal onClose={() => setShowModal(false)} onSaved={() => { setShowModal(false); load(); }} />
+        <CampaignModal onClose={() => setShowModal(false)} onSaved={() => { setShowModal(false); load(dateFilter); }} />
       )}
 
       {assignCampaign && (
