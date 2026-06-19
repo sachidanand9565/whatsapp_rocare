@@ -12,7 +12,8 @@ import { RowDataPacket } from 'mysql2';
 
 export const maxDuration = 55; // stay under Vercel's 60s limit
 
-const BATCH_SIZE = 40; // messages per cron invocation
+const BATCH_SIZE  = 100; // messages per cron invocation
+const CONCURRENCY = 10;  // messages sent in parallel (well under Meta's 80/sec limit)
 
 export async function GET(req: NextRequest) {
   // Accept either: Vercel cron secret OR a valid user JWT (manual trigger from UI)
@@ -90,16 +91,15 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, message: `Campaign ${campaignId} completed` });
     }
 
-    // Process batch
+    // Process batch — send in parallel chunks (CONCURRENCY at a time) instead of one-by-one
     let sentCount = 0;
     let failedCount = 0;
 
-    for (const contact of contacts) {
+    async function sendOne(contact: RowDataPacket) {
       try {
         // Per-contact vars override campaign vars (CSV mode)
         const rowVars = parseJson<Record<string, string>>(contact.row_vars as string, {});
         const components = buildComponents(camp, contact.phone as string, contact.contact_name as string | null, rowVars);
-        console.log(`[process] contact=${contact.phone as string} row_vars_raw=`, contact.row_vars, ' rowVars=', rowVars, ' components=', JSON.stringify(components));
         const result = await sendTemplateMessage(
           camp.access_token as string,
           camp.phone_number_id as string,
@@ -108,8 +108,6 @@ export async function GET(req: NextRequest) {
           camp.language as string,
           components
         );
-        console.log(`[process] meta_response=`, JSON.stringify(result));
-        console.log(`[process] template_name=${camp.tname as string} language=${camp.language as string}`);
 
         const wamid = (result?.messages as Record<string, unknown>[])?.[0]?.id as string;
 
@@ -143,7 +141,7 @@ export async function GET(req: NextRequest) {
           'UPDATE campaign_contacts SET status = ?, message_id = ?, sent_at = ? WHERE id = ?',
           ['sent', msgId, t, contact.cc_id]
         );
-        sentCount++;
+        return true;
       } catch (err) {
         const axiosErr = err as { response?: { data?: unknown; status?: number } };
         if (axiosErr?.response) {
@@ -155,10 +153,15 @@ export async function GET(req: NextRequest) {
           'UPDATE campaign_contacts SET status = ?, error = ? WHERE id = ?',
           ['failed', String(err), contact.cc_id]
         );
-        failedCount++;
+        return false;
       }
+    }
 
-      await sleep(WA_RATE_LIMIT_MS);
+    for (let i = 0; i < contacts.length; i += CONCURRENCY) {
+      const chunk = contacts.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(chunk.map((c) => sendOne(c)));
+      for (const ok of results) ok ? sentCount++ : failedCount++;
+      if (i + CONCURRENCY < contacts.length) await sleep(WA_RATE_LIMIT_MS);
     }
 
     // Update running counts on campaign
