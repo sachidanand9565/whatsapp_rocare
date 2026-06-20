@@ -5,7 +5,7 @@
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 import { query, insert } from '@/lib/db';
-import { apiSuccess, apiError } from '@/lib/utils';
+import { apiSuccess, apiError, utcNow } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
@@ -95,14 +95,18 @@ export async function POST(req: NextRequest) {
     // For CSV mode, total_contacts comes from csv_contacts length
     const totalContacts = csv_contacts?.length || contact_ids?.length || 0;
 
+    // Campaigns are active by default — they start sending right away unless scheduled for later.
+    const status = scheduled_at ? 'scheduled' : 'running';
+
     const id = await insert(
-      `INSERT INTO campaigns (workspace_id, name, template_id, campaign_type, status, scheduled_at, template_vars, created_by, total_contacts)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO campaigns (workspace_id, name, template_id, campaign_type, status, scheduled_at, started_at, template_vars, created_by, total_contacts)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         payload.workspaceId, name, template_id,
         type,
-        scheduled_at ? 'scheduled' : 'draft',
+        status,
         scheduled_at || null,
+        status === 'running' ? utcNow() : null,
         JSON.stringify({ ...(template_vars || {}), ...(header_media ? { _header_media: header_media } : {}) }),
         payload.userId,
         totalContacts,

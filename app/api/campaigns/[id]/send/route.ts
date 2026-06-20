@@ -83,6 +83,10 @@ export async function POST(
 
     const campaign = rows[0];
 
+    if (campaign.status === 'paused') {
+      return apiError('Campaign is inactive — activate it before sending messages', 403);
+    }
+
     const accessToken   = (campaign.access_token   as string) || process.env.WHATSAPP_ACCESS_TOKEN || '';
     const phoneNumberId = (campaign.phone_number_id as string) || process.env.PHONE_NUMBER_ID      || '';
 

@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/hooks/useApi';
 import { encryptId } from '@/lib/idCrypt';
-import { Plus, Play, Radio, Zap, GitBranch, ShoppingBag, ChevronRight, Trash2, UserPlus, X, Search, ChevronDown, Loader2 } from 'lucide-react';
+import { Plus, Radio, Zap, GitBranch, ShoppingBag, ChevronRight, Trash2, UserPlus, X, Search, ChevronDown, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Campaign, Template, Contact, User } from '@/types';
 
@@ -32,6 +32,7 @@ export default function CampaignsPage() {
   const [showModal, setShowModal]           = useState(false);
   const [filterType, setFilterType]         = useState<FilterType>('all');
   const [deletingId, setDeletingId]         = useState<number | null>(null);
+  const [togglingId, setTogglingId]         = useState<number | null>(null);
   const [assignCampaign, setAssignCampaign] = useState<Campaign | null>(null);
   const [userRole, setUserRole]             = useState('admin');
   const [dateFilter, setDateFilter]         = useState('');
@@ -68,13 +69,16 @@ export default function CampaignsPage() {
     }
   }
 
-  async function launch(id: number) {
+  async function toggleActive(c: Campaign) {
+    setTogglingId(c.id);
     try {
-      const r = await apiFetch(`/api/campaigns/${id}/launch`, { method: 'POST' });
-      toast.success(r.data?.message || 'Campaign launched!');
+      const r = await apiFetch(`/api/campaigns/${c.id}/toggle`, { method: 'POST' });
+      toast.success(r.data?.message || 'Status updated');
       load(dateFilter);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Launch failed');
+      toast.error(err instanceof Error ? err.message : 'Failed to update status');
+    } finally {
+      setTogglingId(null);
     }
   }
 
@@ -250,15 +254,30 @@ export default function CampaignsPage() {
 
                   {/* Actions */}
                   <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                    {cType === 'api' ? (
+                    {cType === 'api' && (
                       <span className="text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5 flex items-center gap-1">
                         <Zap size={12} /> Call via API
                       </span>
-                    ) : (c.status === 'draft' || c.status === 'scheduled') && (
-                      <button onClick={() => launch(c.id)}
-                        className="btn-primary flex items-center gap-1 text-sm px-3 py-1.5">
-                        <Play size={14} /> Launch
-                      </button>
+                    )}
+                    {!['completed', 'failed'].includes(c.status) && (
+                      <div className="flex items-center gap-1.5">
+                        <span className={`text-xs font-semibold ${c.status === 'running' ? 'text-whatsapp-green' : 'text-gray-400'}`}>
+                          {c.status === 'running' ? 'Active' : 'Inactive'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleActive(c)}
+                          disabled={togglingId === c.id}
+                          title={c.status === 'running' ? 'Deactivate — stop sending messages' : 'Activate — start sending messages'}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                            c.status === 'running' ? 'bg-whatsapp-green' : 'bg-gray-300'
+                          }`}
+                        >
+                          <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                            c.status === 'running' ? 'translate-x-4' : 'translate-x-1'
+                          }`} />
+                        </button>
+                      </div>
                     )}
                     {/* Assign Agent — admin/manager only */}
                     {['admin','manager'].includes(userRole) && (
@@ -285,7 +304,7 @@ export default function CampaignsPage() {
                 </div>
 
                 {/* Progress bar for running campaign */}
-                {c.status === 'running' && c.total_contacts > 0 && (
+                {cType !== 'api' && c.status === 'running' && c.total_contacts > 0 && (
                   <div className="mt-4">
                     <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                       <div
