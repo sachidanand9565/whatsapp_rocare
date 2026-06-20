@@ -121,23 +121,15 @@ export async function POST(req: NextRequest) {
     const autoName     = (firstParam && !firstParam.startsWith('$')) ? firstParam : null;
     const contactName  = explicitName || autoName || null;
 
-    // ── Upsert contact (race-condition safe) ─────────────────
-    // INSERT IGNORE skips silently if webhook already created the contact
-    await execute(
-      'INSERT IGNORE INTO contacts (workspace_id, phone, name, source, opted_in) VALUES (?, ?, ?, ?, 1)',
+    // ── Upsert contact in a single round trip (race-condition safe) ─
+    const contactId = await insert(
+      `INSERT INTO contacts (workspace_id, phone, name, source, opted_in)
+       VALUES (?, ?, ?, ?, 1)
+       ON DUPLICATE KEY UPDATE
+         id   = LAST_INSERT_ID(id),
+         name = IF(name IS NULL OR name = '', VALUES(name), name)`,
       [payload.workspaceId, normalizedPhone, contactName, 'api_campaign']
     );
-    const contactRow = await query<RowDataPacket[]>(
-      'SELECT id, name FROM contacts WHERE workspace_id = ? AND phone = ? LIMIT 1',
-      [payload.workspaceId, normalizedPhone]
-    );
-    const contactId = contactRow[0].id as number;
-    if (contactName && !contactRow[0].name) {
-      await execute(
-        "UPDATE contacts SET name = ? WHERE id = ? AND (name IS NULL OR name = '')",
-        [contactName, contactId]
-      );
-    }
 
     // ── Build template components ─────────────────────────────
     const components: object[] = [];
@@ -235,25 +227,27 @@ export async function POST(req: NextRequest) {
       buttons,
     });
 
-    // ── Persist message + campaign_contacts ───────────────────
+    // ── Persist message + bump campaign counters in parallel ──
+    // (counter update doesn't depend on the message id, so it doesn't need to wait)
     const t = utcNow();
-    const msgId = await insert(
-      `INSERT INTO messages
-         (workspace_id, contact_id, wamid, direction, type, content, campaign_id, status, sent_at, created_at)
-       VALUES (?, ?, ?, 'outbound', 'template', ?, ?, 'sent', ?, ?)`,
-      [payload.workspaceId, contactId, wamid || null, templateContent, campaign.id, t, t]
-    );
+    const [msgId] = await Promise.all([
+      insert(
+        `INSERT INTO messages
+           (workspace_id, contact_id, wamid, direction, type, content, campaign_id, status, sent_at, created_at)
+         VALUES (?, ?, ?, 'outbound', 'template', ?, ?, 'sent', ?, ?)`,
+        [payload.workspaceId, contactId, wamid || null, templateContent, campaign.id, t, t]
+      ),
+      execute(
+        `UPDATE campaigns SET sent_count = sent_count + 1, total_contacts = total_contacts + 1 WHERE id = ?`,
+        [campaign.id]
+      ),
+    ]);
 
     await insert(
       `INSERT INTO campaign_contacts (campaign_id, contact_id, message_id, status, sent_at)
        VALUES (?, ?, ?, 'sent', ?)
        ON DUPLICATE KEY UPDATE message_id = VALUES(message_id), status = 'sent', sent_at = ?`,
       [campaign.id, contactId, msgId, t, t]
-    );
-
-    await execute(
-      `UPDATE campaigns SET sent_count = sent_count + 1, total_contacts = total_contacts + 1 WHERE id = ?`,
-      [campaign.id]
     );
 
     return apiSuccess({ sent: true, phone: normalizedPhone, wamid });

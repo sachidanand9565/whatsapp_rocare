@@ -21,7 +21,7 @@ function createPool(): mysql.Pool {
     password:           process.env.DB_PASSWORD,
     database:           process.env.DB_NAME,
     waitForConnections: true,
-    connectionLimit:    8,   // lower limit for serverless (Vercel)
+    connectionLimit:    5,   // lower limit for serverless (Vercel) — DB user has max_user_connections=30, shared across ALL panel users
     queueLimit:         0,
     charset:            'utf8mb4',
     timezone:           'Z',         // session timezone = UTC
