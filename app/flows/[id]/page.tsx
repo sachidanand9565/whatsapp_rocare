@@ -1678,9 +1678,10 @@ export default function FlowBuilderPage() {
       setSettingsTriggerType(f.trigger_type || 'keyword');
       const kws = (f.trigger_value || '').split(',').map((k: string) => k.trim()).filter(Boolean);
       setSettingsKeywords(kws);
-      setNodes((f.nodes||[]).map((n:Node) => ({ ...n, type:'flowNode' })));
+      const loadedNodes = (f.nodes||[]).map((n:Node) => ({ ...n, type:'flowNode' }));
+      setNodes(ensureTriggerNode(loadedNodes, f.trigger_type || 'keyword', f.trigger_value || null));
       setEdges((f.edges||[]).map((e:Edge) => ({ ...e, type:'deleteEdge' })));
-      if (!(f.nodes||[]).length) setShowHelp(true);
+      if (!realNodes(loadedNodes).length) setShowHelp(true);
     }).catch(()=>toast.error('Flow not found')).finally(()=>setLoading(false));
   }, [flowId, setNodes, setEdges]);
 
@@ -1703,7 +1704,7 @@ export default function FlowBuilderPage() {
 
   function loadExample() {
     if (nodes.length > 0 && !confirm('Canvas will be cleared. Load example flow?')) return;
-    setNodes(EXAMPLE_NODES);
+    setNodes(ensureTriggerNode(EXAMPLE_NODES, settingsTriggerType, settingsKeywords.join(', ') || null));
     setEdges(EXAMPLE_EDGES);
     setShowHelp(false);
     toast.success('Example flow loaded! Click any node to configure it.');
@@ -1735,7 +1736,7 @@ export default function FlowBuilderPage() {
   }
 
   function deleteNode(id:string) {
-    setNodes(nds => nds.filter(n => n.id!==id));
+    setNodes(nds => nds.filter(n => n.id!==id || n.data?.type === 'trigger'));
     setEdges(eds => eds.filter(e => e.source!==id && e.target!==id));
     setSelectedNode(null);
   }
@@ -1761,6 +1762,7 @@ export default function FlowBuilderPage() {
         }),
       });
       setFlowName(settingsName);
+      setNodes(nds => ensureTriggerNode(nds, settingsTriggerType, triggerVal));
       setShowSettings(false);
       toast.success('Settings saved!');
     } catch { toast.error('Failed to save settings'); }
@@ -1853,7 +1855,10 @@ export default function FlowBuilderPage() {
           <ReactFlow nodes={nodes} edges={edges}
             onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
             onConnect={onConnect} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
-            onNodeClick={(_,n)=>{setSelectedNode(n);setShowHelp(false);setShowSettings(false);}}
+            onNodeClick={(_,n)=>{
+              if (n.data?.type === 'trigger') { setSelectedNode(null); setShowHelp(false); setShowSettings(true); return; }
+              setSelectedNode(n);setShowHelp(false);setShowSettings(false);
+            }}
             onPaneClick={()=>setSelectedNode(null)}
             onMove={(_,vp)=>setViewport(vp)}
             deleteKeyCode={['Backspace','Delete']}
