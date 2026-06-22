@@ -174,17 +174,12 @@ export async function POST(req: NextRequest) {
       content = JSON.stringify({ __type: 'contacts', contacts: list });
     } else if (msg.type === 'interactive') content = msg.interactiveReply?.title || '📋 Interactive reply';
     else if (msg.type === 'unsupported') {
-      // Meta sends type:"unsupported" when it can't relay a message over webhooks
-      // (polls, view-once media, etc). For error 131051 specifically this is almost
-      // always an authentication/OTP template from another business — Meta deliberately
-      // withholds the OTP code from the webhook so API-controlled numbers can't be used
-      // to auto-read OTPs. There is no content to recover in that case.
-      const errCode = msg.errors?.[0]?.code;
-      if (errCode === 131051) {
-        content = '🔒 OTP/Authentication message received — WhatsApp does not share the code via API for security reasons. Check the recipient\'s phone directly.';
-      } else {
-        content = msg.errors?.[0]?.title || msg.errors?.[0]?.message || '⚠️ This message type is not supported by WhatsApp';
-      }
+      // Meta sends type:"unsupported" (code 131051 is a generic catch-all) when the
+      // recipient's WhatsApp client sent back something the Cloud API webhook schema
+      // doesn't recognize — e.g. tapping a template button/quick-reply on an older
+      // WhatsApp app version, a poll, view-once media, etc. Meta does not include the
+      // real content in these cases, so there is nothing to recover or render.
+      content = '⚠️ Received a message type WhatsApp could not deliver details for (often a button tap or unsupported content on the sender\'s app). No content was provided by WhatsApp.';
     }
     else content = `⚠️ Unsupported message type: ${msg.type}`;
 
