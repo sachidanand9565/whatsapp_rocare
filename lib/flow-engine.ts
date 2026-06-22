@@ -135,10 +135,14 @@ function substituteVars(
   vars: Record<string, string>,
   extras: { contact_phone?: string; contact_name?: string; user_message?: string }
 ): string {
+  // Plain 10-digit mobile number (no country code) — many external APIs (CRMs etc.)
+  // reject the full {{contact_phone}} (e.g. "919876543210") and expect just "9876543210".
+  const phone10 = (extras.contact_phone || '').replace(/\D/g, '').slice(-10);
   return text
-    .replace(/\{\{user_message\}\}/gi,   extras.user_message   || '')
-    .replace(/\{\{contact_phone\}\}/gi,  extras.contact_phone  || '')
-    .replace(/\{\{contact_name\}\}/gi,   extras.contact_name   || '')
+    .replace(/\{\{user_message\}\}/gi,    extras.user_message   || '')
+    .replace(/\{\{contact_phone\}\}/gi,   extras.contact_phone  || '')
+    .replace(/\{\{contact_phone_10\}\}/gi, phone10)
+    .replace(/\{\{contact_name\}\}/gi,    extras.contact_name   || '')
     .replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] !== undefined ? vars[key] : `{{${key}}}`);
 }
 

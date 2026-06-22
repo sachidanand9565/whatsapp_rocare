@@ -83,9 +83,22 @@ export async function PUT(req: NextRequest) {
 
     const { name, phone_number_id, waba_id, access_token } = await req.json();
 
+    // Phone number (or its credentials) changed — refresh the cached display number
+    // from Meta so it doesn't keep showing the old number after a switch.
+    let phone_display: string | null = null;
+    if (phone_number_id && access_token) {
+      try {
+        const metaRes = await fetch(
+          `https://graph.facebook.com/v20.0/${phone_number_id}?fields=display_phone_number&access_token=${access_token}`
+        );
+        const metaData = await metaRes.json();
+        phone_display = metaData.display_phone_number || null;
+      } catch { /* ignore — Meta API unavailable, falls back to null */ }
+    }
+
     await execute(
-      `UPDATE workspaces SET name=?, phone_number_id=?, waba_id=?, access_token=? WHERE id = ?`,
-      [name, phone_number_id, waba_id, access_token, payload.workspaceId]
+      `UPDATE workspaces SET name=?, phone_number_id=?, waba_id=?, access_token=?, phone_display=? WHERE id = ?`,
+      [name, phone_number_id, waba_id, access_token, phone_display, payload.workspaceId]
     );
     return apiSuccess({ updated: true });
   } catch (err: unknown) {
