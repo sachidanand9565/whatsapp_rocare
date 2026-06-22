@@ -17,8 +17,9 @@ interface MetaComponent {
   buttons?: MetaButton[];
 }
 interface MetaButton {
-  type:          string;   // QUICK_REPLY | URL | PHONE_NUMBER
-  text:          string;
+  type:          string;   // QUICK_REPLY | URL | PHONE_NUMBER | OTP
+  text?:         string;   // Meta omits `text` for OTP buttons (label is auto-generated)
+  otp_type?:     string;   // COPY_CODE | ONE_TAP | ZERO_TAP (AUTHENTICATION templates only)
   url?:          string;
   phone_number?: string;
 }
@@ -37,16 +38,21 @@ function extractButtons(components: MetaComponent[]) {
   if (!btnComponent?.buttons?.length) return [];
 
   return btnComponent.buttons.map((b) => ({
-    type:  b.type,                        // QUICK_REPLY | URL | PHONE_NUMBER
-    text:  b.text,
+    type:  b.type,                        // QUICK_REPLY | URL | PHONE_NUMBER | OTP
+    text:  b.text || (b.type === 'OTP' ? 'Copy Code' : ''),
     url:   b.url || undefined,
     phone: b.phone_number || undefined,
   }));
 }
 
 // ── Extract body/header text from components ─────────────────
-function extractBodyText(components: MetaComponent[]): string {
-  return components.find((c) => c.type === 'BODY')?.text || '';
+function extractBodyText(components: MetaComponent[], category?: string): string {
+  const bodyText = components.find((c) => c.type === 'BODY')?.text || '';
+  if (bodyText) return bodyText;
+  // AUTHENTICATION templates have no static BODY text — Meta auto-generates the
+  // OTP wording at send time. Store a placeholder so the chat bubble isn't empty.
+  if (category === 'AUTHENTICATION') return '***** is your verification code.';
+  return '';
 }
 function extractHeaderInfo(components: MetaComponent[]): { type: string; content: string } {
   const h = components.find((c) => c.type === 'HEADER');
@@ -136,7 +142,7 @@ export async function POST(req: NextRequest) {
 
       // Extract buttons + content from Meta components
       const metaButtons    = extractButtons(meta.components);
-      const metaBodyText   = extractBodyText(meta.components);
+      const metaBodyText   = extractBodyText(meta.components, newCategory);
       const metaHeader     = extractHeaderInfo(meta.components);
       const metaFooter     = extractFooterText(meta.components);
 

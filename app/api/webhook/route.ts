@@ -173,7 +173,13 @@ export async function POST(req: NextRequest) {
       const list = msg.contacts as Record<string, unknown>[] | undefined;
       content = JSON.stringify({ __type: 'contacts', contacts: list });
     } else if (msg.type === 'interactive') content = msg.interactiveReply?.title || '📋 Interactive reply';
-    else content = msg.type;
+    else if (msg.type === 'unsupported') {
+      // Meta sends type:"unsupported" when it can't relay a message over webhooks
+      // (e.g. polls, view-once media, some template/OTP-related events). Show the
+      // real reason from Meta's `errors` payload instead of the raw "unsupported" word.
+      content = msg.errors?.[0]?.title || msg.errors?.[0]?.message || '⚠️ This message type is not supported by WhatsApp';
+    }
+    else content = `⚠️ Unsupported message type: ${msg.type}`;
 
     // Store message (try with replied_to_wamid, fallback without)
     const msgSentAt = unixToUtc(msg.timestamp);

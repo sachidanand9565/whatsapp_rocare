@@ -450,6 +450,7 @@ export interface IncomingMessage {
   // Parsed from interactive: button_reply or list_reply
   interactiveReply?: { id: string; title: string; replyType: 'button_reply' | 'list_reply' };
   replied_to_wamid?: string;  // context.id from button replies
+  errors?:         { code?: number; title?: string; message?: string }[];  // present when type === 'unsupported'
 }
 
 export interface StatusUpdate {
@@ -583,6 +584,7 @@ export function parseWebhookBody(body: Record<string, unknown>): {
         button:           btn ? { text: btn.text as string, payload: btn.payload as string } : undefined,
         interactiveReply,
         replied_to_wamid: context?.id as string | undefined,
+        errors:           m.errors as IncomingMessage['errors'],
       });
     }
 
