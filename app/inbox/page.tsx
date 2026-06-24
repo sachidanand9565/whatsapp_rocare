@@ -15,6 +15,19 @@ interface TemplateContent {
   body: string;
   footer: string;
   buttons: { type: string; text: string }[];
+  workspace_id?: number;
+}
+// Meta CDN URLs require an Authorization header to load — route those (and our
+// own WhatsApp media ids) through server-side proxies instead of hot-linking.
+function headerMediaSrc(headerContent: string, workspaceId?: number): string {
+  if (!headerContent) return '';
+  if (headerContent.startsWith('media_id:')) {
+    return workspaceId ? `/api/media/${headerContent.slice('media_id:'.length)}?workspaceId=${workspaceId}` : '';
+  }
+  if (workspaceId && /facebook\.com|fbcdn\.net|fbsbx\.com|whatsapp\.net/i.test(headerContent)) {
+    return `/api/template-header?url=${encodeURIComponent(headerContent)}&workspaceId=${workspaceId}`;
+  }
+  return headerContent;
 }
 // MySQL timestamps are stored in UTC via utcNow(). Append 'Z' so JS Date
 // treats them as UTC and toLocaleTimeString/toLocaleDateString convert to IST correctly.
@@ -311,20 +324,21 @@ function ContactsBubble({ data }: { data: ContactsContent }) {
 
 // ── WhatsApp template bubble ──────────────────────────────────
 function TemplateBubble({ data, status, time }: { data: TemplateContent; status: string; time: string }) {
-  const hasMediaUrl = data.header_content?.startsWith('http');
+  const mediaSrc    = headerMediaSrc(data.header_content, data.workspace_id);
+  const hasMediaUrl = !!mediaSrc;
 
   function MediaHeader() {
     if (data.header_type === 'IMAGE' && hasMediaUrl) {
       return (
         <div className="bg-gray-100">
-          <img src={data.header_content} alt="header" className="w-full max-h-48 object-cover" loading="lazy" />
+          <img src={mediaSrc} alt="header" className="w-full max-h-48 object-cover" loading="lazy" />
         </div>
       );
     }
     if (data.header_type === 'VIDEO' && hasMediaUrl) {
       return (
         <div className="bg-gray-100">
-          <video src={data.header_content} controls className="w-full max-h-48" />
+          <video src={mediaSrc} controls className="w-full max-h-48" />
         </div>
       );
     }
@@ -332,11 +346,11 @@ function TemplateBubble({ data, status, time }: { data: TemplateContent; status:
       return (
         <div className="bg-gray-100 px-4 py-2.5">
           {hasMediaUrl ? (
-            <a href={data.header_content} target="_blank" rel="noreferrer"
+            <a href={mediaSrc} target="_blank" rel="noreferrer"
               className="flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm font-medium">
               <File size={16} className="flex-shrink-0" />
               <span className="truncate">
-                {data.header_content.split('/').pop()?.split('?')[0] || 'Document'}
+                {data.header_content.startsWith('media_id:') ? 'Document' : (data.header_content.split('/').pop()?.split('?')[0] || 'Document')}
               </span>
               <Download size={13} className="flex-shrink-0 ml-auto" />
             </a>

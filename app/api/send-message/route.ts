@@ -72,14 +72,26 @@ export async function POST(req: NextRequest) {
       }
 
       // Store in inbox-compatible format so messages render correctly
+      // Header media actually used in this send: prefer the per-message header
+      // component (uploaded file / pasted URL) over the static template definition,
+      // so the stored bubble matches what was really sent.
+      const sentHeaderComp = resolvedComponents.find((c) => (c as { type?: string }).type === 'header') as
+        { parameters?: { type: string; image?: { id?: string; link?: string }; video?: { id?: string; link?: string }; document?: { id?: string; link?: string } }[] } | undefined;
+      const sentHeaderParam = sentHeaderComp?.parameters?.[0];
+      const sentHeaderMedia = sentHeaderParam
+        ? (sentHeaderParam.image || sentHeaderParam.video || sentHeaderParam.document)
+        : undefined;
+      const sentHeaderContent = sentHeaderMedia?.link || (sentHeaderMedia?.id ? `media_id:${sentHeaderMedia.id}` : '');
+
       content = JSON.stringify({
         __type:         'template',
         template_name:  templateName,
         header_type:    (tplRow?.header_type  as string) || '',
-        header_content: (tplRow?.header_content as string) || '',
+        header_content: sentHeaderContent || (tplRow?.header_content as string) || '',
         body:           bodyText,
         footer:         (tplRow?.footer_text  as string) || '',
         buttons:        JSON.parse((tplRow?.buttons as string) || '[]'),
+        workspace_id:   payload.workspaceId,
       });
       msgType = 'template';
     } else if (['image', 'document', 'video', 'audio'].includes(type)) {

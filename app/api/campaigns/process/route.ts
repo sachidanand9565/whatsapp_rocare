@@ -120,14 +120,20 @@ export async function GET(req: NextRequest) {
         let buttons: unknown[] = [];
         try { buttons = JSON.parse((camp.buttons as string) || '[]'); } catch { buttons = []; }
 
+        // Header media actually used in this send — campaign override if set,
+        // else the template's static value — so the stored bubble matches what was sent.
+        const campaignVarsForHeader = parseJson<Record<string, string>>(camp.template_vars as string, {});
+        const sentHeaderContent = campaignVarsForHeader._header_media || camp.header_content || '';
+
         const templateContent = JSON.stringify({
           __type:         'template',
           template_name:  camp.tname,
           header_type:    camp.header_type    || 'NONE',
-          header_content: camp.header_content || '',
+          header_content: sentHeaderContent,
           body:           bodyText,
           footer:         camp.footer_text    || '',
           buttons,
+          workspace_id:   workspaceId,
         });
 
         const t = utcNow();

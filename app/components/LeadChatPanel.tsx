@@ -14,6 +14,19 @@ interface TplContent {
   __type: 'template'; template_name: string; header_type: string;
   header_content: string; body: string; footer: string;
   buttons: { type: string; text: string }[];
+  workspace_id?: number;
+}
+// Meta CDN URLs require an Authorization header to load — route those (and our
+// own WhatsApp media ids) through server-side proxies instead of hot-linking.
+function headerMediaSrc(headerContent: string, workspaceId?: number): string {
+  if (!headerContent) return '';
+  if (headerContent.startsWith('media_id:')) {
+    return workspaceId ? `/api/media/${headerContent.slice('media_id:'.length)}?workspaceId=${workspaceId}` : '';
+  }
+  if (workspaceId && /facebook\.com|fbcdn\.net|fbsbx\.com|whatsapp\.net/i.test(headerContent)) {
+    return `/api/template-header?url=${encodeURIComponent(headerContent)}&workspaceId=${workspaceId}`;
+  }
+  return headerContent;
 }
 interface BtnContent { __type: 'buttons'; body: string; footer?: string; buttons: { id: string; title: string }[] }
 interface MediaContent { __type: 'media'; media_id: string; mime_type?: string; caption?: string; workspace_id: number }
@@ -50,11 +63,12 @@ function toDate(ts: string) {
 }
 
 function TemplateBubble({ data, time, status }: { data: TplContent; time: string; status: string }) {
+  const mediaSrc = headerMediaSrc(data.header_content, data.workspace_id);
   return (
     <div className="w-72 rounded-2xl rounded-br-sm overflow-hidden shadow-sm border border-green-100">
-      {data.header_type === 'IMAGE' && data.header_content?.startsWith('http') && (
+      {data.header_type === 'IMAGE' && !!mediaSrc && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={data.header_content} alt="header" className="w-full max-h-48 object-cover" />
+        <img src={mediaSrc} alt="header" className="w-full max-h-48 object-cover" />
       )}
       {data.header_type === 'TEXT' && data.header_content && (
         <div className="bg-gray-100 px-3 py-2">

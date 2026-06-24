@@ -115,6 +115,7 @@ async function sendBulk(
         body:           bodyText,
         footer:         camp.footer_text    || '',
         buttons,
+        workspace_id:   workspaceId,
       });
 
       // Store message

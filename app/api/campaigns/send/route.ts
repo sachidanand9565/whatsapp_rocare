@@ -225,6 +225,7 @@ export async function POST(req: NextRequest) {
       body:           bodyText,
       footer:         campaign.footer_text    || '',
       buttons,
+      workspace_id:   payload.workspaceId,
     });
 
     // ── Persist message + bump campaign counters in parallel ──
