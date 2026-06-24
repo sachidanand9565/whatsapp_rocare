@@ -634,6 +634,25 @@ function TemplateModal({
   async function handleMediaUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    const ALLOWED: Record<string, number> = {
+      'application/pdf': 10,
+      'image/jpeg':       5,
+      'image/png':        5,
+      'video/mp4':       16,
+    };
+    const maxMB = ALLOWED[file.type];
+    if (!maxMB) {
+      toast.error(`Unsupported file type: ${file.type || 'unknown'}. Allowed: PDF, JPG, PNG, MP4`);
+      e.target.value = '';
+      return;
+    }
+    if (file.size > maxMB * 1024 * 1024) {
+      toast.error(`File is ${(file.size / (1024 * 1024)).toFixed(1)} MB — must be under ${maxMB} MB for ${form.header_type}`);
+      e.target.value = '';
+      return;
+    }
+
     setUploadingMedia(true);
     setMediaHandle('');
     setMediaFileName('');

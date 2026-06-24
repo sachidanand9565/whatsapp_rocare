@@ -63,15 +63,16 @@ export async function POST(req: NextRequest) {
         {
           params: {
             file_length: fileBytes.length,
-            file_type: 'application/pdf',
+            file_type: file.type,
             access_token: accessToken,
           },
+          timeout: 30000,
         }
       );
       sessionId = (sessionRes.data as { id: string }).id;
     } catch (err) {
       const detail = axios.isAxiosError(err)
-        ? JSON.stringify(err.response?.data)
+        ? (err.code === 'ECONNABORTED' ? 'Request timed out' : JSON.stringify(err.response?.data))
         : String(err);
       console.error('[upload-media] create session failed:', detail);
       return apiError(`Meta upload session failed: ${detail}`, 400);
@@ -86,16 +87,18 @@ export async function POST(req: NextRequest) {
         {
           headers: {
             Authorization: `OAuth ${accessToken}`,
-            'Content-Type': 'application/pdf',
+            'Content-Type': file.type,
             file_offset: '0',
           },
           maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+          timeout: 60000,
         }
       );
       handle = (uploadRes.data as { h: string }).h;
     } catch (err) {
       const detail = axios.isAxiosError(err)
-        ? JSON.stringify(err.response?.data)
+        ? (err.code === 'ECONNABORTED' ? 'Request timed out — file may be too large or connection too slow' : JSON.stringify(err.response?.data))
         : String(err);
       console.error('[upload-media] file upload failed:', detail);
       return apiError(`Meta file upload failed: ${detail}`, 400);
