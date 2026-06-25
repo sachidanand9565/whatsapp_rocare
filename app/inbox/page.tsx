@@ -1144,6 +1144,21 @@ export default function InboxPage() {
   }
 
   async function uploadTplHeaderFile(file: File) {
+    const ALLOWED: Record<string, number> = {
+      'application/pdf': 10,
+      'image/jpeg':       5,
+      'image/png':        5,
+      'video/mp4':       16,
+    };
+    const maxMB = ALLOWED[file.type];
+    if (!maxMB) {
+      toast.error(`Unsupported file type: ${file.type || 'unknown'}. Allowed: PDF, JPG, PNG, MP4`);
+      return;
+    }
+    if (file.size > maxMB * 1024 * 1024) {
+      toast.error(`File is ${(file.size / (1024 * 1024)).toFixed(1)} MB — must be under ${maxMB} MB`);
+      return;
+    }
     setTplHeaderUploading(true);
     try {
       const fd = new FormData();
