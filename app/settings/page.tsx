@@ -216,6 +216,8 @@ export default function SettingsPage() {
   // Meta OAuth state
   const [fbLoaded, setFbLoaded]       = useState(false);
   const [fbLoading, setFbLoading]     = useState(false);
+  // Coexistence: connect an existing WhatsApp Business App number (vs. a brand-new Cloud API number)
+  const [coexistMode, setCoexistMode] = useState(false);
   const [wabas, setWabas]             = useState<WABAOption[] | null>(null);
   const [fbToken, setFbToken]         = useState('');
   const [connecting, setConnecting]   = useState(false);
@@ -504,7 +506,11 @@ export default function SettingsPage() {
         config_id:                    CONFIG_ID,
         response_type:                'code',
         override_default_response_type: true,
-        extras: { setup: {}, featureType: '', sessionInfoVersion: '3' },
+        extras: {
+          setup: {},
+          featureType: coexistMode ? 'whatsapp_business_app_onboarding' : '',
+          sessionInfoVersion: '3',
+        },
       });
     } else {
       window.FB.login((res) => {
@@ -896,12 +902,38 @@ export default function SettingsPage() {
                     )}
                   </div>
                 ) : (
+                  <>
+                  {BSP_READY && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setCoexistMode(false)}
+                        className={`text-left rounded-xl border px-3 py-2.5 transition-colors ${!coexistMode ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                        <p className={`text-xs font-semibold ${!coexistMode ? 'text-blue-700' : 'text-gray-700'}`}>New number</p>
+                        <p className="text-[10px] text-gray-400 mt-0.5">Create a fresh Cloud API number</p>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCoexistMode(true)}
+                        className={`text-left rounded-xl border px-3 py-2.5 transition-colors ${coexistMode ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                        <p className={`text-xs font-semibold flex items-center gap-1 ${coexistMode ? 'text-blue-700' : 'text-gray-700'}`}>Existing app number <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">Coexistence</span></p>
+                        <p className="text-[10px] text-gray-400 mt-0.5">Connect your WhatsApp Business App number</p>
+                      </button>
+                    </div>
+                  )}
+                  {BSP_READY && coexistMode && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-[11px] text-amber-700 space-y-0.5">
+                      <p>• Business App v2.24.17+ chahiye, aur number 7+ din se app par active ho.</p>
+                      <p>• Popup mein QR scan karke chat history sync hogi — app access bani rahegi.</p>
+                    </div>
+                  )}
                   <button onClick={loginWithFacebook} disabled={!APP_ID || !fbLoaded || fbLoading || connecting}
                     className="w-full flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-50">
                     {(fbLoading || connecting)
                       ? <><Loader2 size={18} className="animate-spin" /> Connecting...</>
                       : <><Facebook size={18} /> {BSP_READY ? 'Setup WhatsApp Business' : 'Connect via Facebook'}</>}
                   </button>
+                  </>
                 )}
 
                 <div className="text-xs text-gray-400 space-y-1">
