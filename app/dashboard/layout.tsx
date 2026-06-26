@@ -24,7 +24,7 @@ const ALL_NAV = [
   { label: 'Chatbot',    href: '/chatbot',      icon: Bot,             roles: ['admin'] },
   { label: 'Flows',      href: '/flows',        icon: GitBranch,       roles: ['admin'] },
   { label: 'Catalogue',  href: '/catalog',      icon: ShoppingCart,    roles: ['admin'] },
-  { label: 'Scraper',    href: '/scraper',      icon: Building2,       roles: ['admin'] },
+  { label: 'Scraper',    href: '/scraper',      icon: Building2,       roles: ['admin','manager'] },
   { label: 'Analytics',  href: '/analytics',    icon: BarChart3,       roles: ['admin','manager'] },
   { label: 'Agents',     href: '/agents',       icon: UserCog,         roles: ['admin'] },
   { label: 'Sub Admins', href: '/sub-admins',   icon: ShieldCheck,     roles: ['admin'] },
