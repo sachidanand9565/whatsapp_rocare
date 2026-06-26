@@ -2,7 +2,7 @@
  * POST /api/auth/login
  */
 import { NextRequest } from 'next/server';
-import { comparePassword, signToken } from '@/lib/auth';
+import { comparePassword, signToken, signHandoffCode } from '@/lib/auth';
 import { query } from '@/lib/db';
 import { apiSuccess, apiError } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
@@ -44,8 +44,16 @@ export async function POST(req: NextRequest) {
       workspaceId: defaultWs.id as number,
     });
 
+    const handoffCode = signHandoffCode({
+      userId:      user.id as number,
+      email:       user.email as string,
+      role:        defaultWs.role as string,
+      workspaceId: defaultWs.id as number,
+    });
+
     const response = apiSuccess({
       token,
+      handoffCode,
       user: { id: user.id, name: user.name, email: user.email, role: defaultWs.role },
       workspaceId: defaultWs.id,
       workspaces:  workspaces.map((w) => ({ id: w.id, name: w.name, phone_number_id: w.phone_number_id, plan: w.plan, role: w.role })),

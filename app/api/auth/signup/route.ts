@@ -3,7 +3,7 @@
  * Create new user + workspace
  */
 import { NextRequest } from 'next/server';
-import { hashPassword, signToken } from '@/lib/auth';
+import { hashPassword, signToken, signHandoffCode } from '@/lib/auth';
 import { insert, query } from '@/lib/db';
 import { apiSuccess, apiError } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
@@ -44,8 +44,10 @@ export async function POST(req: NextRequest) {
     );
 
     const token = signToken({ userId, email, role: 'admin', workspaceId });
+    // Cross-domain redirect ke liye short-lived handoff code (e.g. limbu.ai -> whatsapp.limbu.ai/auth/sso)
+    const handoffCode = signHandoffCode({ userId, email, role: 'admin', workspaceId });
 
-    const response = apiSuccess({ token, userId, workspaceId }, 201);
+    const response = apiSuccess({ token, userId, workspaceId, handoffCode }, 201);
     response.cookies.set('token', token, {
       httpOnly: true,
       secure:   process.env.NODE_ENV === 'production',

@@ -34,6 +34,22 @@ export function verifyToken(token: string): JWTPayload {
   return jwt.verify(token, JWT_SECRET) as JWTPayload;
 }
 
+// ---- One-time SSO handoff code (short-lived) ----
+// Cross-domain login redirect ke liye: limbu.ai signup/login karta hai, ye chhota
+// code (60s) redirect URL me bhejta hai, aur whatsapp.limbu.ai/auth/sso ise asli
+// session ke liye exchange karta hai. Long-lived token kabhi URL me nahi jaata.
+const HANDOFF_EXPIRES = '60s';
+
+export function signHandoffCode(payload: JWTPayload): string {
+  return jwt.sign({ ...payload, purpose: 'handoff' }, JWT_SECRET, { expiresIn: HANDOFF_EXPIRES } as jwt.SignOptions);
+}
+
+export function verifyHandoffCode(code: string): JWTPayload {
+  const decoded = jwt.verify(code, JWT_SECRET) as JWTPayload & { purpose?: string };
+  if (decoded.purpose !== 'handoff') throw new Error('INVALID_HANDOFF');
+  return { userId: decoded.userId, email: decoded.email, role: decoded.role, workspaceId: decoded.workspaceId };
+}
+
 // ---- Extract token from Authorization header or cookie ----
 export function extractToken(req: NextRequest): string | null {
   const authHeader = req.headers.get('authorization');
