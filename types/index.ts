@@ -57,7 +57,7 @@ export interface Template {
   status:           'PENDING' | 'APPROVED' | 'REJECTED' | 'PAUSED';
   header_type:      'NONE' | 'TEXT' | 'IMAGE' | 'DOCUMENT' | 'VIDEO';
   header_content:   string;
-  body_text:        string;
+  body_text:        string;      
   footer_text:      string;
   buttons:          TemplateButton[];
   variables:        string[];
