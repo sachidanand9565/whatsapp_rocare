@@ -83,6 +83,8 @@ export interface FlowNode {
     template_header_media?: string;     // media id or direct URL (supports {{flow_vars}})
     // transfer
     transferNote?:   string;
+    transfer_agent_id?:   string;   // assign chat to a specific agent (optional)
+    transfer_agent_name?: string;   // display only
     // condition (true/false)
     condition_variable?: string;
     condition_operator?: string;
@@ -590,16 +592,33 @@ async function executeFromNode(
 
       // ── Transfer: send to agent ───────────────────────────────
       case 'transfer': {
-        const note = substituteVars(node.data.transferNote || 'Chat transferred to agent', vars, extras);
-        await execute("UPDATE contacts SET chat_status = 'open' WHERE id = ?", [session.contact_id]);
-        const now = utcNow();
-        await insert(
-          `INSERT INTO messages (workspace_id, contact_id, wamid, direction, type, content, status, sent_at, created_at)
-           VALUES (?, ?, NULL, 'outbound', 'system', ?, 'delivered', ?, ?)`,
-          [workspaceId, session.contact_id, note, now, now]
-        );
+        const note    = node.data.transferNote ? substituteVars(node.data.transferNote, vars, extras) : '';
+        const agentId = Number(node.data.transfer_agent_id) || 0;
+
+        // Agent chuna gaya → chat usi ko assign + 'intervened' (Intervened tab me dikhe).
+        // Agent nahi chuna → 'open' (Requested tab — koi bhi agent uthaye).
+        const newStatus = agentId ? 'intervened' : 'open';
+        if (agentId) {
+          await execute(
+            "UPDATE contacts SET chat_status = 'intervened', assigned_agent_id = ?, intervened_by = 'Chatbot' WHERE id = ?",
+            [agentId, session.contact_id]
+          );
+        } else {
+          await execute("UPDATE contacts SET chat_status = 'open' WHERE id = ?", [session.contact_id]);
+        }
+
+        // Note ko CUSTOMER ko WhatsApp pe bhejo (jaise message node) — taaki use msg mile
+        if (note) {
+          let wamid: string | null = null;
+          try {
+            const res = await sendTextMessage(accessToken, phoneNumberId, contactPhone, note);
+            wamid = res?.messages?.[0]?.id || null;
+          } catch { /* continue even if send fails (e.g. 24h window closed) */ }
+          await saveOutboundMessage(workspaceId, session.contact_id, note, wamid);
+        }
+
         emitSSE({ type: 'new_message', workspaceId, contactId: session.contact_id, direction: 'outbound' });
-        emitSSE({ type: 'chat_status_update', workspaceId, contactId: session.contact_id, chatStatus: 'open' });
+        emitSSE({ type: 'chat_status_update', workspaceId, contactId: session.contact_id, chatStatus: newStatus });
         await endSession(session.id);
         return;
       }

@@ -395,6 +395,9 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
   const [btnFooterText,  setBtnFooterText] = useState(node.data.footer_text||'');
   const [buttons,        setButtons]       = useState<{ id: string; title: string }[]>(node.data.buttons||[]);
   const [transferNote,   setTransferNote]  = useState(node.data.transferNote||'');
+  const [transferAgentId, setTransferAgentId] = useState(node.data.transfer_agent_id||'');
+  const [agentsList,     setAgentsList]    = useState<{id:number;name:string;workspace_role?:string}[]>([]);
+  const [loadingAgents,  setLoadingAgents] = useState(false);
   const [condVar,        setCondVar]       = useState(node.data.condition_variable||'user_message');
   const [condOp,         setCondOp]        = useState(node.data.condition_operator||'equal');
   const [condVal,        setCondVal]       = useState(node.data.condition_value||'');
@@ -516,6 +519,17 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type]);
 
+  // Load agents once when transfer panel opens
+  useEffect(() => {
+    if (type !== 'transfer') return;
+    setLoadingAgents(true);
+    apiFetch('/api/agents')
+      .then(r => setAgentsList((r.data || []).map((a: {id:number;name:string;workspace_role?:string}) => ({ id:a.id, name:a.name, workspace_role:a.workspace_role }))))
+      .catch(() => setAgentsList([]))
+      .finally(() => setLoadingAgents(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type]);
+
   // Load approved templates once when template panel opens
   useEffect(() => {
     if (type !== 'template') return;
@@ -552,7 +566,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
     const updates: Record<string,unknown> = { ...base };
     if (type==='message')        { updates.text = text; }
     if (type==='button_message') { updates.body_text=btnBodyText; updates.header_text=btnHeaderText; updates.footer_text=btnFooterText; updates.buttons=buttons; updates.save_id_as=btnSaveIdAs; updates.save_title_as=btnSaveTitleAs; }
-    if (type==='transfer')       { updates.transferNote = transferNote; }
+    if (type==='transfer')       { updates.transferNote = transferNote; updates.transfer_agent_id = transferAgentId; updates.transfer_agent_name = agentsList.find(a=>String(a.id)===String(transferAgentId))?.name || node.data.transfer_agent_name || ''; }
     if (type==='condition')      { updates.condition_variable = condVar; updates.condition_operator = condOp; updates.condition_value = condVal; }
     if (type==='set_variable')   { updates.variable_name = varName; }
     if (type==='api_call')       { updates.url=apiUrl; updates.method=apiMethod; updates.headers=apiHeaders; updates.body=apiBody; updates.save_response_as=apiSaveAs; updates.extract_fields=apiExtractFields.filter(f=>f.path&&f.variable); }
@@ -1423,6 +1437,25 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
             <input value={transferNote} onChange={e=>setTransferNote(e.target.value)}
               placeholder="e.g. {{user_name}} needs billing help"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 text-sm"/>
+          </div>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Assign to agent (optional)</label>
+            {loadingAgents ? (
+              <div className="flex items-center gap-1.5 text-gray-400 text-[11px] py-2"><Loader2 size={12} className="animate-spin"/> Loading agents…</div>
+            ) : (
+              <select value={transferAgentId} onChange={e=>setTransferAgentId(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-orange-400 bg-white">
+                <option value="">Anyone (open to all agents)</option>
+                {/* Saved agent jo list me nahi (deleted/abhi load nahi) — preserve karo */}
+                {transferAgentId && !agentsList.some(a=>String(a.id)===String(transferAgentId)) && (
+                  <option value={transferAgentId}>{node.data.transfer_agent_name || `Agent #${transferAgentId}`}</option>
+                )}
+                {agentsList.map(a=>(
+                  <option key={a.id} value={a.id}>{a.name}{a.workspace_role ? ` (${a.workspace_role})` : ''}</option>
+                ))}
+              </select>
+            )}
+            <p className="text-[10px] text-gray-400 mt-1">Agent chuno to chat seedhe usi ko assign hogi; warna sabhi agents ko dikhegi.</p>
           </div>
         </>}
 
