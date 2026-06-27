@@ -18,7 +18,7 @@ import {
   MessageSquare, Clock, GitBranch, ArrowRightLeft, XCircle,
   Save, ArrowLeft, Plus, Trash2, X, Loader2, HelpCircle,
   Zap, Globe, Database, UserCheck, Timer, LayoutTemplate, Settings, Image,
-  ChevronLeft, ChevronRight, ShoppingCart, Workflow,
+  ChevronLeft, ChevronRight, ShoppingCart, Workflow, Paperclip,
 } from 'lucide-react';
 
 // ── Node type configs ─────────────────────────────────────────
@@ -290,7 +290,7 @@ function DeleteEdge({ id, sourceX, sourceY, sourcePosition, targetX, targetY, ta
       <BaseEdge
         path={edgePath}
         markerEnd="url(#teal-arrow)"
-        style={{ stroke: '#0d9488', strokeWidth: 2, strokeDasharray: '6 3' }}
+        style={{ stroke: '#0d9488', strokeWidth: 2, strokeDasharray: '6 3', animation: 'flowdash 0.7s linear infinite' }}
       />
       <EdgeLabelRenderer>
         <div
@@ -309,6 +309,12 @@ function DeleteEdge({ id, sourceX, sourceY, sourcePosition, targetX, targetY, ta
 
 const nodeTypes = { flowNode: FlowNode };
 const edgeTypes = { deleteEdge: DeleteEdge };
+
+// ── Count positional vars ({{1}},{{2}}…) in a template body ───
+function templateVarCount(body?: string): number {
+  const m = body?.match(/\{\{\s*(\d+)\s*\}\}/g) || [];
+  return new Set(m.map((x) => x.replace(/\D/g, ''))).size;
+}
 
 // ── Extract flow variables from all nodes ─────────────────────
 function extractFlowVars(allNodes: Node[]): string[] {
@@ -461,6 +467,44 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
   const [allFlows,       setAllFlows]       = useState<{id:number;name:string}[]>([]);
   const [loadingFlows,   setLoadingFlows]   = useState(false);
 
+  // Template Node — approved templates dropdown
+  const [tplList,        setTplList]        = useState<{name:string;language:string;status:string;body_text?:string;header_type?:string;header_content?:string}[]>([]);
+  const [loadingTpls,    setLoadingTpls]    = useState(false);
+  const [tplVars,        setTplVars]        = useState<string[]>(node.data.template_vars||[]);
+  const [tplHeaderType,  setTplHeaderType]  = useState((node.data.template_header_type||'') as string); // fallback when template not in list
+  const [tplHeaderMedia, setTplHeaderMedia] = useState(node.data.template_header_media||'');             // media id OR url
+  const [tplHeaderFileName, setTplHeaderFileName] = useState('');
+  const [tplHeaderUploading, setTplHeaderUploading] = useState(false);
+
+  // Derived from the currently selected approved template (falls back to saved node.data)
+  const selectedTpl     = tplList.find(t=>t.name===tplName);
+  const tplVarCountNum  = selectedTpl ? templateVarCount(selectedTpl.body_text) : tplVars.length;
+  const tplHeaderTypeEff = (() => {
+    const ht = (selectedTpl?.header_type ?? tplHeaderType ?? '').toUpperCase();
+    return ['IMAGE','VIDEO','DOCUMENT'].includes(ht) ? ht : '';
+  })();
+  const isTplMedia = !!tplHeaderTypeEff;
+
+  async function uploadTplNodeHeaderFile(file: File) {
+    const ALLOWED: Record<string, number> = { 'application/pdf':10, 'image/jpeg':5, 'image/png':5, 'video/mp4':16 };
+    const maxMB = ALLOWED[file.type];
+    if (!maxMB) { toast.error(`Unsupported file type: ${file.type || 'unknown'}. Allowed: PDF, JPG, PNG, MP4`); return; }
+    if (file.size > maxMB*1024*1024) { toast.error(`File is ${(file.size/(1024*1024)).toFixed(1)} MB — must be under ${maxMB} MB`); return; }
+    setTplHeaderUploading(true);
+    try {
+      const fd = new FormData(); fd.append('file', file);
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/media', { method:'POST', headers:{ Authorization:`Bearer ${token}` }, body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      setTplHeaderMedia(data.data.mediaId);
+      setTplHeaderFileName(file.name);
+      toast.success('Header media uploaded');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
+    } finally { setTplHeaderUploading(false); }
+  }
+
   // Load list of flows once when connect_flow panel opens
   useEffect(() => {
     if (type !== 'connect_flow') return;
@@ -469,6 +513,17 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
       .then(r => setAllFlows((r.data || []).filter((f: {id:number}) => String(f.id) !== String(currentFlowId))))
       .catch(() => setAllFlows([]))
       .finally(() => setLoadingFlows(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type]);
+
+  // Load approved templates once when template panel opens
+  useEffect(() => {
+    if (type !== 'template') return;
+    setLoadingTpls(true);
+    apiFetch('/api/templates')
+      .then(r => setTplList((r.data || []).filter((t: {status?:string}) => (t.status || '').toUpperCase() === 'APPROVED')))
+      .catch(() => setTplList([]))
+      .finally(() => setLoadingTpls(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type]);
 
@@ -503,7 +558,13 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
     if (type==='api_call')       { updates.url=apiUrl; updates.method=apiMethod; updates.headers=apiHeaders; updates.body=apiBody; updates.save_response_as=apiSaveAs; updates.extract_fields=apiExtractFields.filter(f=>f.path&&f.variable); }
     if (type==='update_contact') { updates.contact_field=contactField; updates.field_value=fieldValue; }
     if (type==='delay')          { updates.seconds=Number(delaySecs); }
-    if (type==='template')       { updates.template_name=tplName; updates.language=tplLang; }
+    if (type==='template')       {
+      updates.template_name=tplName;
+      updates.language=tplLang;
+      updates.template_vars=tplVars.slice(0, tplVarCountNum);
+      updates.template_header_type=tplHeaderTypeEff;
+      updates.template_header_media=isTplMedia ? tplHeaderMedia : '';
+    }
     if (type==='list_message')   { updates.body_text=listBodyText; updates.header_text=listHeaderText; updates.footer_text=listFooterText; updates.list_button_text=listButtonText; updates.list_sections=listSections; updates.save_id_as=listSaveIdAs; updates.save_title_as=listSaveTitleAs; }
     if (type==='dynamic_list')   { updates.url=dynUrl; updates.method=dynMethod; updates.headers=dynHeaders; updates.body=dynReqBody; updates.items_path=dynItemsPath; updates.id_field=dynIdField; updates.title_field=dynTitleField; updates.description_field=dynDescField; updates.body_text=dynBodyText; updates.header_text=dynHeaderText; updates.footer_text=dynFooterText; updates.list_button_text=dynBtnText; updates.save_response_as=dynSaveAs; updates.save_id_as=dynSaveIdAs; updates.save_title_as=dynSaveTitleAs; }
     if (type==='media_message') { updates.media_type=mediaType; updates.media_url=mediaUrl; updates.media_id=mediaId; updates.caption=mediaCaption; updates.buttons=mediaButtons; }
@@ -1266,10 +1327,83 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
           </div>
           <div>
             <label className="block font-semibold text-gray-600 mb-1">Template Name *</label>
-            <input value={tplName} onChange={e=>setTplName(e.target.value)}
-              placeholder="e.g. welcome_message"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-pink-400 text-sm font-mono"/>
+            <select
+              value={tplName}
+              onChange={e=>{
+                const name = e.target.value;
+                setTplName(name);
+                const match = tplList.find(t=>t.name===name);
+                if (match?.language) setTplLang(match.language);
+              }}
+              disabled={loadingTpls}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-pink-400 text-sm bg-white disabled:opacity-60">
+              <option value="">{loadingTpls ? 'Loading templates…' : '— Select an approved template —'}</option>
+              {/* Saved value jo list me nahi hai (deleted/abhi load nahi) — preserve karo */}
+              {tplName && !tplList.some(t=>t.name===tplName) && (
+                <option value={tplName}>{tplName} (not in approved list)</option>
+              )}
+              {tplList.map((t,i)=>(
+                <option key={`${t.name}-${t.language}-${i}`} value={t.name}>
+                  {t.name} ({t.language})
+                </option>
+              ))}
+            </select>
+            {!loadingTpls && tplList.length===0 && (
+              <p className="text-[11px] text-gray-400 mt-1">No approved templates found. Create &amp; get a template approved first.</p>
+            )}
           </div>
+
+          {/* Header media — jab template ka header IMAGE/VIDEO/DOCUMENT ho */}
+          {isTplMedia && (
+            <div>
+              <label className="block font-semibold text-gray-600 mb-1">{tplHeaderTypeEff} header *</label>
+              <label className="flex items-center gap-2 border border-dashed border-gray-300 rounded-lg px-3 py-2 text-xs text-gray-500 hover:bg-gray-50 cursor-pointer">
+                {tplHeaderUploading
+                  ? <Loader2 size={14} className="animate-spin" />
+                  : <Paperclip size={14} />}
+                <span className="truncate">
+                  {tplHeaderFileName
+                    || (tplHeaderMedia && !tplHeaderMedia.startsWith('http') ? 'Uploaded media' : `Upload ${tplHeaderTypeEff.toLowerCase()}`)}
+                </span>
+                <input
+                  type="file"
+                  className="hidden"
+                  accept={tplHeaderTypeEff==='IMAGE' ? 'image/*' : tplHeaderTypeEff==='VIDEO' ? 'video/*' : '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx'}
+                  disabled={tplHeaderUploading}
+                  onChange={e=>{ const f=e.target.files?.[0]; if (f) uploadTplNodeHeaderFile(f); e.target.value=''; }}
+                />
+              </label>
+              <div className="flex items-center gap-2 mt-1.5">
+                <span className="text-[10px] text-gray-400">or</span>
+                <input
+                  value={tplHeaderMedia.startsWith('http') ? tplHeaderMedia : ''}
+                  onChange={e=>{ setTplHeaderMedia(e.target.value); setTplHeaderFileName(''); }}
+                  placeholder="paste a direct media URL (supports {{vars}})"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-pink-400 text-xs font-mono"/>
+              </div>
+            </div>
+          )}
+
+          {/* Body variables — {{1}}, {{2}}… (supports {{flow_vars}}) */}
+          {tplVarCountNum > 0 && (
+            <div>
+              <label className="block font-semibold text-gray-600 mb-1">Template Variables</label>
+              <div className="space-y-1.5">
+                {Array.from({length: tplVarCountNum}).map((_, i)=>(
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="text-[11px] font-mono text-gray-400 w-8 shrink-0 text-right">{`{{${i+1}}}`}</span>
+                    <input
+                      value={tplVars[i] || ''}
+                      onChange={e=>setTplVars(prev=>{ const next=[...prev]; while(next.length<tplVarCountNum) next.push(''); next[i]=e.target.value; return next; })}
+                      placeholder={`Value for {{${i+1}}}`}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-pink-400 text-xs"/>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-gray-400 mt-1">Flow variables bhi use kar sakte ho, e.g. <span className="font-mono">{'{{contact_name}}'}</span></p>
+            </div>
+          )}
+
           <div>
             <label className="block font-semibold text-gray-600 mb-1">Language Code</label>
             <input value={tplLang} onChange={e=>setTplLang(e.target.value)}
@@ -1863,6 +1997,7 @@ export default function FlowBuilderPage() {
             onMove={(_,vp)=>setViewport(vp)}
             deleteKeyCode={['Backspace','Delete']}
             fitView
+            connectionLineStyle={{ stroke: '#0d9488', strokeWidth: 2, strokeDasharray: '6 3' }}
             defaultEdgeOptions={{ type: 'deleteEdge' }}>
             {/* Custom teal arrowhead */}
             <svg style={{ position:'absolute', width:0, height:0 }}>

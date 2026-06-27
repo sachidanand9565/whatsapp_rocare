@@ -32,3 +32,8 @@
     @apply block text-sm font-medium text-gray-700 mb-1;
   }
 }
+
+/* Flow builder — animated (flowing) connection edges */
+@keyframes flowdash {
+  to { stroke-dashoffset: -18; }
+}

@@ -78,6 +78,9 @@ export interface FlowNode {
     // template
     template_name?:  string;
     language?:       string;
+    template_vars?:         string[];   // positional {{1}},{{2}} values (supports {{flow_vars}})
+    template_header_type?:  'IMAGE' | 'VIDEO' | 'DOCUMENT';
+    template_header_media?: string;     // media id or direct URL (supports {{flow_vars}})
     // transfer
     transferNote?:   string;
     // condition (true/false)
@@ -550,7 +553,32 @@ async function executeFromNode(
         const tLang = node.data.language || 'en';
         if (tName) {
           try {
-            const res = await sendTemplateMessage(accessToken, phoneNumberId, contactPhone, tName, tLang, []);
+            const components: object[] = [];
+
+            // Header media (IMAGE/VIDEO/DOCUMENT) — supports {{flow_vars}} in URL/id
+            const hType  = (node.data.template_header_type || '').toUpperCase();
+            const hMedia = node.data.template_header_media
+              ? substituteVars(node.data.template_header_media, vars, extras).trim()
+              : '';
+            if (['IMAGE', 'VIDEO', 'DOCUMENT'].includes(hType) && hMedia) {
+              const mt    = hType.toLowerCase() as 'image' | 'video' | 'document';
+              const isUrl = hMedia.startsWith('http');
+              components.push({
+                type: 'header',
+                parameters: [{ type: mt, [mt]: isUrl ? { link: hMedia } : { id: hMedia } }],
+              });
+            }
+
+            // Body variables — substitute flow vars into each {{n}} value
+            const tVars = (node.data.template_vars || []).map((v) => substituteVars(v || '', vars, extras));
+            if (tVars.length > 0) {
+              components.push({
+                type: 'body',
+                parameters: tVars.map((t) => ({ type: 'text', text: t })),
+              });
+            }
+
+            const res = await sendTemplateMessage(accessToken, phoneNumberId, contactPhone, tName, tLang, components);
             const wamid = res?.messages?.[0]?.id || null;
             await saveOutboundMessage(workspaceId, session.contact_id, `[Template: ${tName}]`, wamid, 'template');
           } catch { /* continue */ }
