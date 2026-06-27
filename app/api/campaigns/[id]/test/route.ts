@@ -17,7 +17,7 @@ export async function POST(
   try {
     const payload    = requireAuth(req);
     const campaignId = Number(params.id);
-    const body       = await req.json() as { phone?: string; vars?: Record<string, string> };
+    const body       = await req.json() as { phone?: string; vars?: Record<string, string>; headerMedia?: string };
 
     if (!body.phone) return apiError('phone is required', 400);
     const phone = normalizePhone(body.phone);
@@ -46,9 +46,10 @@ export async function POST(
 
     const components: object[] = [];
 
-    // Header media
+    // Header media — test-time override (upload/URL) ko prefer karo, warna campaign ka saved media
     const headerType    = (camp.header_type as string || '').toUpperCase();
-    const headerContent = (camp.header_content as string) || '';
+    const overrideMedia = (body.headerMedia || '').trim();
+    const headerContent = overrideMedia || ((camp.header_content as string) || '');
     if (['IMAGE', 'DOCUMENT', 'VIDEO'].includes(headerType) && headerContent) {
       const mediaType = headerType.toLowerCase() as 'image' | 'document' | 'video';
       const isUrl = headerContent.startsWith('http');

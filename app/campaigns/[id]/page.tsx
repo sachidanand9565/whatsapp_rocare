@@ -22,6 +22,8 @@ interface CampaignDetail {
   language: string;
   body_text: string;
   buttons: string;
+  header_type?: string;        // TEXT | IMAGE | VIDEO | DOCUMENT | none
+  header_content?: string;     // stored media id / url (campaign default)
   template_vars: string; // JSON object stored as string
   total_contacts: number;
   sent_count: number;
@@ -152,6 +154,11 @@ export default function CampaignDetailPage() {
   const [testPhone, setTestPhone]   = useState('');
   const [testVars, setTestVars]     = useState<Record<string, string>>({});
   const [sendingTest, setSendingTest] = useState(false);
+  // Test header media override (when template has IMAGE/VIDEO/DOCUMENT header)
+  const [testHeaderMediaId, setTestHeaderMediaId]   = useState('');
+  const [testHeaderUrl, setTestHeaderUrl]           = useState('');
+  const [testHeaderFileName, setTestHeaderFileName] = useState('');
+  const [testHeaderUploading, setTestHeaderUploading] = useState(false);
   const [launching, setLaunching]   = useState(false);
   const [stopping, setStopping]     = useState(false);
   const [processing, setProcessing]       = useState(false);
@@ -343,17 +350,57 @@ export default function CampaignDetailPage() {
     }
   }
 
+  async function uploadTestHeaderFile(file: File) {
+    const ALLOWED: Record<string, number> = {
+      'application/pdf': 10,
+      'image/jpeg':       5,
+      'image/png':        5,
+      'video/mp4':       16,
+    };
+    const maxMB = ALLOWED[file.type];
+    if (!maxMB) {
+      toast.error(`Unsupported file type: ${file.type || 'unknown'}. Allowed: PDF, JPG, PNG, MP4`);
+      return;
+    }
+    if (file.size > maxMB * 1024 * 1024) {
+      toast.error(`File is ${(file.size / (1024 * 1024)).toFixed(1)} MB — must be under ${maxMB} MB`);
+      return;
+    }
+    setTestHeaderUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const token = localStorage.getItem('token');
+      const res  = await fetch('/api/media', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      setTestHeaderMediaId(data.data.mediaId);
+      setTestHeaderUrl('');
+      setTestHeaderFileName(file.name);
+      toast.success('Header media uploaded');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setTestHeaderUploading(false);
+    }
+  }
+
   async function sendTest() {
     if (!testPhone.trim()) { toast.error('Phone number required'); return; }
     setSendingTest(true);
     try {
+      // Override media: uploaded media id, ya pasted URL (warna API stored header_content use karega)
+      const headerMedia = testHeaderMediaId || testHeaderUrl.trim() || undefined;
       await apiFetch(`/api/campaigns/${id}/test`, {
         method: 'POST',
-        body: JSON.stringify({ phone: testPhone.trim(), vars: testVars }),
+        body: JSON.stringify({ phone: testPhone.trim(), vars: testVars, headerMedia }),
       });
       toast.success('Test message sent!');
       setShowTest(false);
       setTestPhone('');
+      setTestHeaderMediaId('');
+      setTestHeaderUrl('');
+      setTestHeaderFileName('');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to send test');
     } finally {
@@ -903,6 +950,42 @@ export default function CampaignDetailPage() {
                     className="input text-sm w-full"
                   />
                 </div>
+
+                {/* Header media (only when template header is IMAGE/VIDEO/DOCUMENT) */}
+                {['IMAGE', 'VIDEO', 'DOCUMENT'].includes((campaign.header_type || '').toUpperCase()) && (() => {
+                  const ht = (campaign.header_type || '').toUpperCase();
+                  return (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-gray-600 flex items-center gap-1">
+                        <ImageIcon size={12} /> {ht} header
+                        <span className="font-normal text-gray-400">(optional — override)</span>
+                      </p>
+                      <label className="flex items-center gap-2 border border-dashed border-gray-300 rounded-lg px-3 py-2 text-xs text-gray-500 hover:bg-gray-50 cursor-pointer">
+                        {testHeaderUploading ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />}
+                        <span className="truncate">{testHeaderFileName || `Upload ${ht.toLowerCase()}`}</span>
+                        <input
+                          type="file"
+                          className="hidden"
+                          accept={ht === 'IMAGE' ? 'image/*' : ht === 'VIDEO' ? 'video/*' : '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx'}
+                          disabled={testHeaderUploading}
+                          onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadTestHeaderFile(f); e.target.value = ''; }}
+                        />
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-gray-400">or</span>
+                        <input
+                          value={testHeaderUrl}
+                          onChange={(e) => { setTestHeaderUrl(e.target.value); setTestHeaderMediaId(''); setTestHeaderFileName(''); }}
+                          placeholder="paste a direct media URL"
+                          className="input text-xs py-1.5 flex-1"
+                        />
+                      </div>
+                      {!testHeaderMediaId && !testHeaderUrl.trim() && campaign.header_content && (
+                        <p className="text-[10px] text-gray-400">Khaali chhoda to campaign ka saved media use hoga.</p>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Template variable inputs */}
                 {varNums.length > 0 && (
@@ -1475,6 +1558,42 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
   const [vars, setVars]       = useState(defaultParams);
   const [sending, setSending] = useState(false);
   const [wsApiKey, setWsApiKey] = useState<string>('');
+  // Header media override (when template has IMAGE/VIDEO/DOCUMENT header)
+  const headerType = (campaign.header_type || '').toUpperCase();
+  const hasMediaHeader = ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerType);
+  const [mediaId, setMediaId]             = useState('');
+  const [mediaUrl, setMediaUrl]           = useState('');
+  const [mediaFileName, setMediaFileName] = useState('');
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+
+  async function uploadHeaderFile(file: File) {
+    const ALLOWED: Record<string, number> = {
+      'application/pdf': 10, 'image/jpeg': 5, 'image/png': 5, 'video/mp4': 16,
+    };
+    const maxMB = ALLOWED[file.type];
+    if (!maxMB) { toast.error(`Unsupported file type: ${file.type || 'unknown'}. Allowed: PDF, JPG, PNG, MP4`); return; }
+    if (file.size > maxMB * 1024 * 1024) { toast.error(`File is ${(file.size / (1024 * 1024)).toFixed(1)} MB — must be under ${maxMB} MB`); return; }
+    setUploadingMedia(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const token = localStorage.getItem('token');
+      const res  = await fetch('/api/media', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      setMediaId(data.data.mediaId);
+      setMediaUrl('');
+      setMediaFileName(file.name);
+      toast.success('Header media uploaded');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploadingMedia(false);
+    }
+  }
+
+  // Media object for request/cURL: uploaded id, ya pasted url, warna empty (saved media use hoga)
+  const mediaPayload: Record<string, string> = mediaId ? { id: mediaId } : mediaUrl.trim() ? { url: mediaUrl.trim() } : {};
 
   useEffect(() => {
     apiFetch('/api/workspace/api-key').then((r) => {
@@ -1496,7 +1615,7 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
     userName:            'YOUR_BRAND_NAME',
     templateParams:      parsedParams,
     source:              'api',
-    media:               {},
+    media:               mediaPayload,
     buttons:             [],
     carouselCards:       [],
     location:            {},
@@ -1522,6 +1641,7 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
           destination:         phone,
           templateParams,
           paramsFallbackValue: buildFallback(templateParams),
+          ...(Object.keys(mediaPayload).length > 0 ? { media: mediaPayload } : {}),
         }),
       });
       toast.success(`Message sent to ${phone}!`);
@@ -1562,6 +1682,39 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
             <input value={phone} onChange={(e) => setPhone(e.target.value)}
               className="input font-mono text-sm w-full" placeholder="919876543210" />
           </div>
+
+          {/* Header media (only when template header is IMAGE/VIDEO/DOCUMENT) */}
+          {hasMediaHeader && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1">
+                <ImageIcon size={13} /> {headerType} header{' '}
+                <span className="text-gray-400 font-normal text-xs">(optional — override)</span>
+              </label>
+              <label className="flex items-center gap-2 border border-dashed border-gray-300 rounded-lg px-3 py-2 text-xs text-gray-500 hover:bg-gray-50 cursor-pointer">
+                {uploadingMedia ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />}
+                <span className="truncate">{mediaFileName || `Upload ${headerType.toLowerCase()}`}</span>
+                <input
+                  type="file"
+                  className="hidden"
+                  accept={headerType === 'IMAGE' ? 'image/*' : headerType === 'VIDEO' ? 'video/*' : '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx'}
+                  disabled={uploadingMedia}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadHeaderFile(f); e.target.value = ''; }}
+                />
+              </label>
+              <div className="flex items-center gap-2 mt-1.5">
+                <span className="text-[10px] text-gray-400">or</span>
+                <input
+                  value={mediaUrl}
+                  onChange={(e) => { setMediaUrl(e.target.value); setMediaId(''); setMediaFileName(''); }}
+                  placeholder="paste a direct media URL"
+                  className="input text-xs py-1.5 flex-1"
+                />
+              </div>
+              {!mediaId && !mediaUrl.trim() && campaign.header_content && (
+                <p className="text-[10px] text-gray-400 mt-1">Khaali chhoda to campaign ka saved media use hoga.</p>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">

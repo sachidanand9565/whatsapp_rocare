@@ -21,8 +21,16 @@ function createPool(): mysql.Pool {
     password:           process.env.DB_PASSWORD,
     database:           process.env.DB_NAME,
     waitForConnections: true,
-    connectionLimit:    5,   // lower limit for serverless (Vercel) — DB user has max_user_connections=30, shared across ALL panel users
-    queueLimit:         0,
+    // Serverless (Vercel): har instance apna pool banata hai. DB user ki
+    // max_user_connections (e.g. 30) SABHI instances ke beech shared hai, isliye
+    // per-instance limit chhota rakho. Env se tune ho sakta hai bina redeploy.
+    connectionLimit:    Number(process.env.DB_CONNECTION_LIMIT) || 3,
+    queueLimit:         0,            // 0 = unlimited queue (error ke bajaye wait)
+    // Idle connections ko jaldi band karo taaki dusre instances ke liye slot khaali ho
+    maxIdle:            1,
+    idleTimeout:        15000,        // 15s baad idle connection close
+    enableKeepAlive:    true,
+    keepAliveInitialDelay: 10000,
     charset:            'utf8mb4',
     timezone:           'Z',         // session timezone = UTC
     dateStrings:        true,        // return datetime as strings, not Date objects
