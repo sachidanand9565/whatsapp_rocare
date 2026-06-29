@@ -130,6 +130,20 @@ export async function GET(req: NextRequest) {
         )`;
     }
 
+    // Date filter — chat ki LAST message date is range me ho (History date filter)
+    const dateFrom = sp.get('dateFrom') || '';
+    const dateTo   = sp.get('dateTo')   || '';
+    if (dateFrom) {
+      sql      += ' AND (SELECT MAX(md.created_at) FROM messages md WHERE md.contact_id = c.id) >= ?';
+      countSql += ' AND (SELECT MAX(md.created_at) FROM messages md WHERE md.contact_id = id) >= ?';
+      params.push(`${dateFrom} 00:00:00`);
+    }
+    if (dateTo) {
+      sql      += ' AND (SELECT MAX(md.created_at) FROM messages md WHERE md.contact_id = c.id) <= ?';
+      countSql += ' AND (SELECT MAX(md.created_at) FROM messages md WHERE md.contact_id = id) <= ?';
+      params.push(`${dateTo} 23:59:59`);
+    }
+
     const campaignId = sp.get('campaignId') || '';
     if (campaignId) {
       const cid = Number(campaignId);

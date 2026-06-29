@@ -249,19 +249,24 @@ export default function HistoryPage() {
   const bottomRef                         = useRef<HTMLDivElement>(null);
   const debounceRef                       = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo,   setDateTo]   = useState('');
+
   const loadContacts = useCallback((q = '') => {
     setSearching(true);
-    const qs = q.trim() ? `&search=${encodeURIComponent(q.trim())}` : '';
-    apiFetch(`/api/contacts?limit=500&chatStatus=history${qs}`)
+    const params = new URLSearchParams({ limit: '500', chatStatus: 'history' });
+    if (q.trim()) params.set('search', q.trim());
+    if (dateFrom) params.set('dateFrom', dateFrom);
+    if (dateTo)   params.set('dateTo', dateTo);
+    apiFetch(`/api/contacts?${params.toString()}`)
       .then((r) => setContacts(r.data?.data || []))
       .finally(() => setSearching(false));
-  }, []);
+  }, [dateFrom, dateTo]);
 
-  useEffect(() => { loadContacts(); }, [loadContacts]);
-
+  // Reload on mount, search change, or date filter change (debounced)
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => loadContacts(search), 400);
+    debounceRef.current = setTimeout(() => loadContacts(search), 350);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [search, loadContacts]);
 
@@ -346,6 +351,23 @@ export default function HistoryPage() {
             <input value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by name or phone..." className="input pl-9 text-sm py-2 w-full" />
           </div>
+          {/* Date filter — chats by last-activity date */}
+          <div className="flex items-center gap-1.5 mt-2">
+            <input type="date" value={dateFrom} max={dateTo || undefined}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="input text-xs py-1.5 flex-1 min-w-0" title="From date" />
+            <span className="text-gray-300 text-xs">→</span>
+            <input type="date" value={dateTo} min={dateFrom || undefined}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="input text-xs py-1.5 flex-1 min-w-0" title="To date" />
+            {(dateFrom || dateTo) && (
+              <button onClick={() => { setDateFrom(''); setDateTo(''); }}
+                title="Clear date filter"
+                className="text-gray-400 hover:text-gray-600 p-1 flex-shrink-0">
+                <X size={14} />
+              </button>
+            )}
+          </div>
         </div>
         <div className="px-4 py-2 border-b border-gray-100 flex items-center gap-2">
           <CheckCircle size={14} className="text-gray-400" />
@@ -369,13 +391,18 @@ export default function HistoryPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-1">
                     <p className="text-sm truncate font-medium text-gray-700">{c.name || c.phone}</p>
-                    {c.last_message_at && (
-                      <span className="text-xs text-gray-400 flex-shrink-0">
-                        {toLocalDate(c.last_message_at).toLocaleTimeString('en-IN', {
-                          hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata',
-                        })}
-                      </span>
-                    )}
+                    {c.last_message_at && (() => {
+                      const d = toLocalDate(c.last_message_at);
+                      const isToday = d.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })
+                        === new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+                      return (
+                        <span className="text-xs text-gray-400 flex-shrink-0">
+                          {isToday
+                            ? d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
+                            : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit', timeZone: 'Asia/Kolkata' })}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <p className="text-xs text-gray-400 truncate mt-0.5">+{c.phone}</p>
                 </div>
