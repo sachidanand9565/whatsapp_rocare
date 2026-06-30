@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
         (SELECT COUNT(*) FROM messages mi
          WHERE mi.contact_id = c.id AND mi.direction = 'inbound'
         ) AS inbound_count,
-        (SELECT MAX(m3.created_at) FROM messages m3 WHERE m3.contact_id = c.id) AS last_message_at
+        c.last_message_at AS last_message_at
       FROM contacts c WHERE c.workspace_id = ? ${agentFilterMain}`;
     let countSql = `SELECT COUNT(*) as total FROM contacts WHERE workspace_id = ? ${agentFilterCount}`;
     const params: unknown[] = [payload.workspaceId];
@@ -89,22 +89,11 @@ export async function GET(req: NextRequest) {
       sql      += " AND (c.chat_status IS NULL OR c.chat_status != 'resolved')";
       countSql += " AND (chat_status IS NULL OR chat_status != 'resolved')";
     } else if (chatStatus === 'inbox') {
-      // Only contacts who have sent an INBOUND message within 24h appear in inbox.
-      // Outbound-only contacts (campaign recipients who haven't replied) stay in History.
-      // Transferred contacts: only visible to the assigned agent (hide from everyone else in inbox).
-      sql += ` AND EXISTS (
-          SELECT 1 FROM messages m
-          WHERE m.contact_id = c.id
-          AND m.direction = 'inbound'
-          AND m.created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
-        )
+      // Only contacts with an INBOUND message within 24h appear in inbox (uses denormalized
+      // last_inbound_at — indexed, no per-row subquery). Outbound-only contacts stay in History.
+      sql += ` AND c.last_inbound_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
         AND (c.assigned_agent_id IS NULL OR c.assigned_agent_id = ${payload.userId})`;
-      countSql += ` AND EXISTS (
-          SELECT 1 FROM messages m
-          WHERE m.contact_id = id
-          AND m.direction = 'inbound'
-          AND m.created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
-        )
+      countSql += ` AND last_inbound_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
         AND (assigned_agent_id IS NULL OR assigned_agent_id = ${payload.userId})`;
     } else if (chatStatus === 'intervened') {
       sql      += " AND c.chat_status = 'intervened'";
@@ -115,32 +104,22 @@ export async function GET(req: NextRequest) {
         countSql += ` AND assigned_agent_id = ${payload.userId}`;
       }
     } else if (chatStatus === 'history') {
-      // Contacts with no inbound message in last 24h (exact inverse of inbox)
-      sql += ` AND NOT EXISTS (
-          SELECT 1 FROM messages m
-          WHERE m.contact_id = c.id
-          AND m.direction = 'inbound'
-          AND m.created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
-        )`;
-      countSql += ` AND NOT EXISTS (
-          SELECT 1 FROM messages m
-          WHERE m.contact_id = id
-          AND m.direction = 'inbound'
-          AND m.created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
-        )`;
+      // No inbound message in last 24h (exact inverse of inbox) — uses denormalized column
+      sql += ` AND (c.last_inbound_at IS NULL OR c.last_inbound_at <= DATE_SUB(NOW(), INTERVAL 24 HOUR))`;
+      countSql += ` AND (last_inbound_at IS NULL OR last_inbound_at <= DATE_SUB(NOW(), INTERVAL 24 HOUR))`;
     }
 
     // Date filter — chat ki LAST message date is range me ho (History date filter)
     const dateFrom = sp.get('dateFrom') || '';
     const dateTo   = sp.get('dateTo')   || '';
     if (dateFrom) {
-      sql      += ' AND (SELECT MAX(md.created_at) FROM messages md WHERE md.contact_id = c.id) >= ?';
-      countSql += ' AND (SELECT MAX(md.created_at) FROM messages md WHERE md.contact_id = id) >= ?';
+      sql      += ' AND c.last_message_at >= ?';
+      countSql += ' AND last_message_at >= ?';
       params.push(`${dateFrom} 00:00:00`);
     }
     if (dateTo) {
-      sql      += ' AND (SELECT MAX(md.created_at) FROM messages md WHERE md.contact_id = c.id) <= ?';
-      countSql += ' AND (SELECT MAX(md.created_at) FROM messages md WHERE md.contact_id = id) <= ?';
+      sql      += ' AND c.last_message_at <= ?';
+      countSql += ' AND last_message_at <= ?';
       params.push(`${dateTo} 23:59:59`);
     }
 

@@ -112,6 +112,9 @@ export async function POST(req: NextRequest) {
     [workspaceId, contactId, wamid, message.trim(), now, now]
   );
 
+  // Denormalized last-activity for fast inbox ordering
+  await execute('UPDATE contacts SET last_message_at = ? WHERE id = ?', [now, contactId]).catch(() => {});
+
   // ── Notify inbox via SSE ─────────────────────────────────────
   emitSSE({ type: 'new_message', workspaceId, contactId });
 

@@ -202,7 +202,13 @@ export async function POST(req: NextRequest) {
         [workspaceId, contactId, msg.wamid, msg.type, content, msgSentAt, msgNow]
       );
     }
-    
+
+    // Denormalized last-activity (powers fast Inbox/History list ordering & filtering)
+    await execute(
+      'UPDATE contacts SET last_message_at = ?, last_inbound_at = ? WHERE id = ?',
+      [msgNow, msgNow, contactId]
+    ).catch(() => {});
+
     // Notify connected inbox clients instantly via SSE
     emitSSE({ type: 'new_message', workspaceId, contactId, direction: 'inbound' });
 

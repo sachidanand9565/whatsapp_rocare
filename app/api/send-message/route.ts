@@ -4,7 +4,7 @@
  */
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
-import { query, insert } from '@/lib/db';
+import { query, insert, execute } from '@/lib/db';
 import { sendTextMessage, sendTemplateMessage, sendMediaMessage } from '@/lib/whatsapp';
 import { apiSuccess, apiError, normalizePhone, utcNow } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
@@ -117,6 +117,9 @@ export async function POST(req: NextRequest) {
        VALUES (?, ?, ?, 'outbound', ?, ?, 'sent', ?, ?)`,
       [payload.workspaceId, contactId, wamid, msgType, content, utcNow(), utcNow()]
     );
+
+    // Denormalized last-activity (keeps the contact at top of inbox after an agent reply)
+    await execute('UPDATE contacts SET last_message_at = ? WHERE id = ?', [utcNow(), contactId]).catch(() => {});
 
     return apiSuccess({ messageId: msgId, wamid });
   } catch (err: unknown) {

@@ -160,6 +160,7 @@ async function saveOutboundMessage(workspaceId: number, contactId: number, text:
      VALUES (?, ?, ?, 'outbound', ?, ?, 'sent', ?, ?)`,
     [workspaceId, contactId, wamid, type, text, now, now]
   );
+  await execute('UPDATE contacts SET last_message_at = ? WHERE id = ?', [now, contactId]).catch(() => {});
   emitSSE({ type: 'new_message', workspaceId, contactId, direction: 'outbound' });
 }
 
