@@ -34,6 +34,14 @@ export function verifyToken(token: string): JWTPayload {
   return jwt.verify(token, JWT_SECRET) as JWTPayload;
 }
 
+// ---- Super-admin bootstrap via env (comma-separated emails) ----
+const SUPER_ADMIN_EMAILS = (process.env.SUPER_ADMIN_EMAILS || '')
+  .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+export function isSuperAdminEmail(email: string): boolean {
+  return SUPER_ADMIN_EMAILS.includes((email || '').toLowerCase());
+}
+
 // ---- One-time SSO handoff code (short-lived) ----
 // Cross-domain login redirect ke liye: limbu.ai signup/login karta hai, ye chhota
 // code (60s) redirect URL me bhejta hai, aur whatsapp.limbu.ai/auth/sso ise asli

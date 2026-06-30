@@ -12,6 +12,20 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import MediaLibrary, { type MediaItem as MLItem } from '@/app/components/MediaLibrary';
 import { decryptId } from '@/lib/idCrypt';
 
+// Stored datetimes are UTC ("YYYY-MM-DD HH:mm:ss"). Parse as UTC, display in IST.
+function toUtcDate(s: string): Date {
+  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(s)) return new Date(s);
+  return new Date(s.replace(' ', 'T') + 'Z');
+}
+function fmtIST(s?: string | null): string {
+  if (!s) return '—';
+  return toUtcDate(s).toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true,
+    timeZone: 'Asia/Kolkata',
+  });
+}
+
 // ── Types ─────────────────────────────────────────────────────
 interface CampaignDetail {
   id: number;
@@ -620,7 +634,7 @@ export default function CampaignDetailPage() {
             <div className="border-t px-4 py-3">
               <p className="text-xs text-gray-400 mb-1">Created At</p>
               <p className="text-sm font-medium text-gray-800">
-                {campaign.created_at ? new Date(campaign.created_at).toLocaleString() : '—'}
+                {fmtIST(campaign.created_at)}
               </p>
             </div>
           </div>
@@ -870,7 +884,7 @@ export default function CampaignDetailPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-gray-400 text-xs">
-                        {c.sent_at ? new Date(c.sent_at).toLocaleString() : '—'}
+                        {fmtIST(c.sent_at)}
                       </td>
                       <td className="px-4 py-3 text-red-400 text-xs max-w-xs truncate">
                         {c.error || '—'}
