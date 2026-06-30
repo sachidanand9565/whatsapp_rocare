@@ -15,8 +15,8 @@ export default function AdminLogin() {
     setLoading(true);
     setError('');
     try {
-      // 1) Normal login to get a token
-      const res = await fetch('/api/auth/login', {
+      // Dedicated super-admin login (no workspace required, verifies super-admin)
+      const res = await fetch('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -26,12 +26,7 @@ export default function AdminLogin() {
       const token = data.data?.token;
       if (!token) throw new Error('Login failed');
 
-      // 2) Verify this account is a platform super-admin
-      const meRes = await fetch('/api/admin/me', { headers: { Authorization: `Bearer ${token}` } });
-      const me = await meRes.json();
-      if (!me.data?.isSuperAdmin) throw new Error('This account is not a super-admin.');
-
-      // 3) Store in a SEPARATE admin token + go to panel
+      // Store in a SEPARATE admin token + go to panel
       localStorage.setItem('admin_token', token);
       router.replace('/admin');
     } catch (err) {
