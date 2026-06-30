@@ -11,7 +11,7 @@ type Ctx = { params: { id: string } };
 
 export async function PATCH(req: NextRequest, { params }: Ctx) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const body = await req.json();
     const id = Number(params.id);
 
@@ -30,7 +30,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 
 export async function DELETE(req: NextRequest, { params }: Ctx) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     await execute(
       'DELETE FROM crm_integrations WHERE id = ? AND workspace_id = ?',
       [Number(params.id), payload.workspaceId]

@@ -14,7 +14,7 @@ type Params = { params: { id: string } };
 
 export async function GET(req: NextRequest, { params }: Params) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const rows = await query<RowDataPacket[]>(
       'SELECT * FROM contacts WHERE id = ? AND workspace_id = ?',
       [params.id, payload.workspaceId]
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest, { params }: Params) {
 
 export async function PUT(req: NextRequest, { params }: Params) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const body = await req.json();
     const { name, email, city, source, status, tags, notes, opted_in, chat_status, transfer_to_id, reset_unread } = body;
 
@@ -141,7 +141,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
 
 export async function DELETE(req: NextRequest, { params }: Params) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     await execute(
       'DELETE FROM contacts WHERE id = ? AND workspace_id = ?',
       [params.id, payload.workspaceId]

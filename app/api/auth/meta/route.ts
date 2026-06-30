@@ -11,7 +11,7 @@ const GV = 'v20.0';
 
 export async function POST(req: NextRequest) {
   try {
-    requireAuth(req);
+    await requireAuth(req);
     const { access_token } = await req.json();
     if (!access_token) return apiError('access_token required', 400);
 

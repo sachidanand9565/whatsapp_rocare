@@ -39,7 +39,7 @@ function parseComponents(components: MetaComponent[]) {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
 
     const { access_token, waba_id, phone_number_id, business_name, display_phone_number } = await req.json();
     if (!access_token || !waba_id || !phone_number_id) {

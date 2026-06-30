@@ -77,7 +77,7 @@ function extractFooterText(components: MetaComponent[]): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
 
     // ── Resolve credentials ───────────────────────────────
     const ws = await query<RowDataPacket[]>(

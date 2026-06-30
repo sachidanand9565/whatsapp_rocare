@@ -12,7 +12,7 @@ type Params = { params: { id: string } };
 
 export async function DELETE(req: NextRequest, { params }: Params) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const id = Number(params.id);
     if (!id || isNaN(id)) return apiError('Invalid id', 400);
 

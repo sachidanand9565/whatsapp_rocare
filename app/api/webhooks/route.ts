@@ -10,7 +10,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const rows = await query<RowDataPacket[]>(
       'SELECT id, name, url, secret, is_active, created_at FROM chatbot_webhooks WHERE workspace_id = ? ORDER BY created_at ASC',
       [payload.workspaceId]
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { name, url, secret } = await req.json();
 
     if (!name?.trim())  return apiError('Name is required', 400);

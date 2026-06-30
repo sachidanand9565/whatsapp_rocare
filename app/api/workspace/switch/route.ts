@@ -11,7 +11,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { workspaceId } = await req.json();
     if (!workspaceId) return apiError('workspaceId is required');
 

@@ -10,7 +10,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const rows = await query<RowDataPacket[]>(
       'SELECT auto_pause_campaigns FROM workspaces WHERE id = ?',
       [payload.workspaceId]
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     if (payload.role !== 'admin') return apiError('Admin only', 403);
     const { auto_pause_campaigns } = await req.json();
     await execute(

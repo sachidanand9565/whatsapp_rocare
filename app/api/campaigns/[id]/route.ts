@@ -14,7 +14,7 @@ const VALID_STATUSES = ['all', 'sent', 'delivered', 'read', 'failed', 'pending',
 
 export async function GET(req: NextRequest, { params }: Params) {
   try {
-    const payload    = requireAuth(req);
+    const payload    = await requireAuth(req);
     const campaignId = Number(params.id);
     const url        = new URL(req.url);
 
@@ -171,7 +171,7 @@ export async function GET(req: NextRequest, { params }: Params) {
 
 export async function DELETE(req: NextRequest, { params }: Params) {
   try {
-    const payload    = requireAuth(req);
+    const payload    = await requireAuth(req);
     const campaignId = Number(params.id);
     if (!campaignId || isNaN(campaignId)) return apiError('Invalid id', 400);
 

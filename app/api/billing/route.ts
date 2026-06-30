@@ -25,7 +25,7 @@ interface MsgDataPoint {
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { searchParams } = new URL(req.url);
 
     // Support both month param and start/end date params

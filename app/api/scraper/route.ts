@@ -10,7 +10,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const rows = await query<RowDataPacket[]>(
       `SELECT id, city, category, total_count, phone_count, created_at
        FROM scraper_sessions
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { city, category, places } = await req.json() as {
       city:     string;
       category: string;

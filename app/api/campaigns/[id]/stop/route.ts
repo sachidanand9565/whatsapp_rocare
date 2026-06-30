@@ -13,7 +13,7 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const payload    = requireAuth(req);
+    const payload    = await requireAuth(req);
     const campaignId = Number(params.id);
 
     const camps = await query<RowDataPacket[]>(

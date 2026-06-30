@@ -10,7 +10,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
 
     const agents = await query<RowDataPacket[]>(
       `SELECT u.id, u.name, u.email, u.phone, u.role, u.is_active, u.created_at,
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     if (payload.role !== 'admin') return apiError('Admin only', 403);
 
     const { name, email, phone, role, password } = await req.json();

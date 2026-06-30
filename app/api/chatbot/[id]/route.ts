@@ -11,7 +11,7 @@ type Params = { params: { id: string } };
 
 export async function PUT(req: NextRequest, { params }: Params) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { trigger_type, trigger_value, response_type, response_text, priority, is_active } = await req.json();
 
     await execute(
@@ -28,7 +28,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
 
 export async function DELETE(req: NextRequest, { params }: Params) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     await execute('DELETE FROM chatbot_rules WHERE id = ? AND workspace_id = ?', [params.id, payload.workspaceId]);
     return apiSuccess({ deleted: true });
   } catch (err: unknown) {

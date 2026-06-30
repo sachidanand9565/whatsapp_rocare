@@ -11,7 +11,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload    = requireAuth(req);
+    const payload    = await requireAuth(req);
     const sp         = new URL(req.url).searchParams;
     const contactId  = sp.get('contactId');
     const limit      = Math.min(100, Number(sp.get('limit') || 80));

@@ -5,6 +5,8 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { NextRequest } from 'next/server';
+import { query, execute } from './db';
+import { RowDataPacket } from 'mysql2';
 
 const JWT_SECRET  = process.env.JWT_SECRET  || 'change-me-in-production';
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '7d';
@@ -16,12 +18,34 @@ export interface JWTPayload {
   workspaceId: number;
 }
 
-// ---- In-memory token invalidation (password change force-logout) ----
-// userId -> unix timestamp: tokens issued BEFORE this time are rejected
-const invalidatedAt = new Map<number, number>();
+// ---- DB-backed token invalidation (serverless-safe force-logout) ----
+// users.tokens_valid_from (unix secs): tokens issued BEFORE this are rejected.
+// A short in-memory cache avoids a DB hit on every request (warm instances).
+const CACHE_TTL_MS = 60_000;
+const validFromCache = new Map<number, { validFrom: number; at: number }>();
 
-export function invalidateUserTokens(userId: number): void {
-  invalidatedAt.set(userId, Math.floor(Date.now() / 1000));
+async function getTokensValidFrom(userId: number): Promise<number> {
+  const cached = validFromCache.get(userId);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.validFrom;
+  let validFrom = 0;
+  try {
+    const rows = await query<RowDataPacket[]>(
+      'SELECT tokens_valid_from FROM users WHERE id = ? LIMIT 1',
+      [userId]
+    );
+    validFrom = Number(rows[0]?.tokens_valid_from) || 0;
+  } catch { validFrom = 0; /* column may not exist yet → treat as no invalidation */ }
+  validFromCache.set(userId, { validFrom, at: Date.now() });
+  return validFrom;
+}
+
+// Force-logout all of a user's existing sessions (password change / disable).
+export async function invalidateUserTokens(userId: number): Promise<void> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  try {
+    await execute('UPDATE users SET tokens_valid_from = ? WHERE id = ?', [nowSec, userId]);
+  } catch { /* column may not exist yet */ }
+  validFromCache.set(userId, { validFrom: nowSec, at: Date.now() });
 }
 
 // ---- Token generation ----
@@ -68,14 +92,14 @@ export function extractToken(req: NextRequest): string | null {
 }
 
 // ---- Authenticate request — returns payload or null ----
-export function authenticate(req: NextRequest): JWTPayload | null {
+export async function authenticate(req: NextRequest): Promise<JWTPayload | null> {
   try {
     const token = extractToken(req);
     if (!token) return null;
     const decoded = jwt.verify(token, JWT_SECRET) as JWTPayload & { iat: number };
-    // Check if token was issued before a password-change invalidation
-    const minIat = invalidatedAt.get(decoded.userId);
-    if (minIat && decoded.iat < minIat) return null;
+    // Reject tokens issued before a password-change / disable invalidation
+    const validFrom = await getTokensValidFrom(decoded.userId);
+    if (validFrom && decoded.iat < validFrom) return null;
     return decoded;
   } catch {
     return null;
@@ -91,9 +115,9 @@ export async function comparePassword(plain: string, hash: string): Promise<bool
   return bcrypt.compare(plain, hash);
 }
 
-// ---- Middleware guard — use inside API routes ----
-export function requireAuth(req: NextRequest): JWTPayload {
-  const payload = authenticate(req);
+// ---- Middleware guard — use inside API routes (await it) ----
+export async function requireAuth(req: NextRequest): Promise<JWTPayload> {
+  const payload = await authenticate(req);
   if (!payload) throw new Error('UNAUTHORIZED');
   return payload;
 }

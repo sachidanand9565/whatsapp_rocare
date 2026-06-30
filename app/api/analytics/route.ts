@@ -10,7 +10,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const wid = payload.workspaceId;
     const isAgent = payload.role === 'agent';
     const uid = payload.userId;

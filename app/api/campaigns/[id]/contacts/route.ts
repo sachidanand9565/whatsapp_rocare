@@ -12,7 +12,7 @@ type Ctx = { params: { id: string } };
 
 export async function GET(req: NextRequest, { params }: Ctx) {
   try {
-    const payload    = requireAuth(req);
+    const payload    = await requireAuth(req);
     const campaignId = Number(params.id);
 
     // Check both campaign_contacts (explicit) and messages (outbound sends)

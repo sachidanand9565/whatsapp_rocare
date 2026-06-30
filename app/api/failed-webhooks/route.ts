@@ -10,7 +10,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const rows = await query<RowDataPacket[]>(
       `SELECT fw.id, fw.name, fw.campaign_id, c.name AS campaign_name,
               fw.api_url, fw.api_method, fw.api_headers, fw.is_active, fw.created_at
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { name, campaign_id, api_url, api_method, api_headers } = await req.json();
 
     if (!name)        return apiError('name is required', 400);

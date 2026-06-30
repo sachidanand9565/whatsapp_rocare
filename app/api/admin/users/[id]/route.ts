@@ -35,7 +35,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     await execute(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, vals);
 
     // If disabled, force-logout that user's existing tokens
-    if (body.is_active === 0) invalidateUserTokens(id);
+    if (body.is_active === 0) await invalidateUserTokens(id);
 
     const rows = await query<RowDataPacket[]>(
       'SELECT id, name, email, role, is_active, is_super_admin FROM users WHERE id = ? LIMIT 1', [id]

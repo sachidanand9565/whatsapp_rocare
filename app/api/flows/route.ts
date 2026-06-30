@@ -10,7 +10,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const flows = await query<RowDataPacket[]>(
       'SELECT id, name, trigger_type, trigger_value, is_active, created_at FROM flows WHERE workspace_id = ? ORDER BY id DESC',
       [payload.workspaceId]
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { name, trigger_type, trigger_value, nodes, edges } = await req.json();
     if (!name) return apiError('name is required');
 

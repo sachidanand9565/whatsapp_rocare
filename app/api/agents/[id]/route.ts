@@ -11,7 +11,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: NextRequest, ctx: Ctx) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     if (payload.role !== 'admin') return apiError('Admin only', 403);
 
     const { id } = await ctx.params;
@@ -49,7 +49,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
 
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     if (payload.role !== 'admin') return apiError('Admin only', 403);
 
     const { id } = await ctx.params;

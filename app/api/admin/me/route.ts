@@ -8,7 +8,7 @@ import { apiSuccess, apiError } from '@/lib/utils';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const ok = await isSuperAdmin(payload);
     return apiSuccess({ isSuperAdmin: ok, email: payload.email });
   } catch (err) {

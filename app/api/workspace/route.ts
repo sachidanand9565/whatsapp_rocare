@@ -10,7 +10,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
 
     // Try with phone_display column, fallback if column doesn't exist yet
     let rows: RowDataPacket[];
@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     if (payload.role !== 'admin') return apiError('Admin only', 403);
 
     const { name, phone_number_id, waba_id, access_token } = await req.json();

@@ -11,7 +11,7 @@ type Ctx = { params: { id: string } };
 
 export async function PATCH(req: NextRequest, { params }: Ctx) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const body = await req.json();
     if ('is_active' in body) {
       await execute(
@@ -28,7 +28,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 
 export async function DELETE(req: NextRequest, { params }: Ctx) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     await execute(
       'DELETE FROM failed_msg_webhooks WHERE id = ? AND workspace_id = ?',
       [Number(params.id), payload.workspaceId]

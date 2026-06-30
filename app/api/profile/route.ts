@@ -11,7 +11,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
 
     const rows = await query<RowDataPacket[]>(
       'SELECT id, name, email, phone FROM users WHERE id = ? LIMIT 1',
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { name, email, phone, current_password, new_password } = await req.json();
 
     const userRows = await query<RowDataPacket[]>(
@@ -52,8 +52,8 @@ export async function PUT(req: NextRequest) {
         [hashed, new_password, payload.userId]
       );
 
-      // Invalidate all existing sessions for this user
-      invalidateUserTokens(payload.userId);
+      // Invalidate all existing sessions for this user (DB-backed, serverless-safe)
+      await invalidateUserTokens(payload.userId);
 
       // Issue a fresh token for the current session
       newToken = signToken({

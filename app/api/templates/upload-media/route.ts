@@ -12,7 +12,7 @@ import axios from 'axios';
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
 
     const ws = await query<RowDataPacket[]>(
       'SELECT access_token FROM workspaces WHERE id = ?',

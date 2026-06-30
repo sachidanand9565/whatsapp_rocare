@@ -10,7 +10,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const rules = await query<RowDataPacket[]>(
       'SELECT * FROM chatbot_rules WHERE workspace_id = ? ORDER BY priority DESC, id ASC',
       [payload.workspaceId]
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const {
       trigger_type, trigger_value,
       response_type, response_text,

@@ -9,7 +9,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const now = utcNow();
 
     // Get all contacts that don't already have a lead (match by phone)

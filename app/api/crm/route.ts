@@ -10,7 +10,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const rows = await query<RowDataPacket[]>(
       `SELECT id, name, template_name, api_url, api_method, api_headers, is_active, created_at
        FROM crm_integrations WHERE workspace_id = ? ORDER BY created_at DESC`,
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { name, template_name, api_url, api_method, api_headers } = await req.json();
 
     if (!name)          return apiError('name is required', 400);

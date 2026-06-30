@@ -10,7 +10,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const rows = await query<RowDataPacket[]>(
       'SELECT id, title, content FROM quick_replies WHERE workspace_id = ? ORDER BY title ASC',
       [payload.workspaceId]
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { title, content } = await req.json();
     if (!title?.trim() || !content?.trim()) return apiError('Title and content are required');
 

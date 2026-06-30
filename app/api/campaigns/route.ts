@@ -10,7 +10,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
 
     // Optional date filter (YYYY-MM-DD) — counts messages sent ON that date for each campaign
     const dateParam = req.nextUrl.searchParams.get('date');
@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     if (payload.role === 'agent') return apiError('Agents cannot create campaigns', 403);
 
     const { name, template_id, scheduled_at, template_vars, contact_ids, campaign_type, csv_contacts, header_media } = await req.json() as {

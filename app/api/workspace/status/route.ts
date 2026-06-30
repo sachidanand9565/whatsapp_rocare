@@ -33,7 +33,7 @@ const TIER_MAP: Record<string, string> = {
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
 
     const rows = await query<RowDataPacket[]>(
       'SELECT phone_number_id, access_token FROM workspaces WHERE id = ? LIMIT 1',

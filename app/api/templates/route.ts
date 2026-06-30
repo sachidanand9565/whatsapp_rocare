@@ -12,7 +12,7 @@ import axios from 'axios';
 // ─── GET ─────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const templates = await query<RowDataPacket[]>(
       'SELECT * FROM templates WHERE workspace_id = ? ORDER BY created_at DESC',
       [payload.workspaceId]
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
 // ─── POST ────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const body = await req.json();
 
     const {

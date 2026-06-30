@@ -20,7 +20,7 @@ async function getAdminWorkspaceIds(userId: number): Promise<number[]> {
 
 export async function PATCH(req: NextRequest, { params }: Ctx) {
   try {
-    const payload      = requireAuth(req);
+    const payload      = await requireAuth(req);
     const subAdminId   = Number(params.id);
     const workspaceIds = await getAdminWorkspaceIds(payload.userId);
     if (workspaceIds.length === 0) return apiError('Unauthorized', 403);
@@ -64,7 +64,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 
 export async function DELETE(req: NextRequest, { params }: Ctx) {
   try {
-    const payload      = requireAuth(req);
+    const payload      = await requireAuth(req);
     const subAdminId   = Number(params.id);
     const workspaceIds = await getAdminWorkspaceIds(payload.userId);
     if (workspaceIds.length === 0) return apiError('Unauthorized', 403);

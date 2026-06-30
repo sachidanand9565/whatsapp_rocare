@@ -14,7 +14,7 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const payload    = requireAuth(req);
+    const payload    = await requireAuth(req);
     const campaignId = Number(params.id);
     const body       = await req.json().catch(() => ({})) as { contact_ids?: number[] };
 

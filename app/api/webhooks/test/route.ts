@@ -7,7 +7,7 @@ import { apiError } from '@/lib/utils';
 
 export async function POST(req: NextRequest) {
   try {
-    requireAuth(req);
+    await requireAuth(req);
     const { url, secret } = await req.json();
 
     if (!url || !url.startsWith('http')) return apiError('Invalid URL', 400);

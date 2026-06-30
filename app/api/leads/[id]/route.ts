@@ -13,7 +13,7 @@ type Ctx = { params: { id: string } };
 
 export async function GET(req: NextRequest, { params }: Ctx) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const [lead] = await query<RowDataPacket[]>(
       `SELECT l.*, u.name AS assigned_name
        FROM leads l
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
 
 export async function PATCH(req: NextRequest, { params }: Ctx) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const body = await req.json();
     const id   = Number(params.id);
     const now  = utcNow();
@@ -77,7 +77,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 
 export async function DELETE(req: NextRequest, { params }: Ctx) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     await execute(
       'DELETE FROM leads WHERE id = ? AND workspace_id = ?',
       [Number(params.id), payload.workspaceId]

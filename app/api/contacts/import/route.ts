@@ -12,7 +12,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
 
     const formData = await req.formData();
     const file = formData.get('file') as File | null;

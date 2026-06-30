@@ -10,7 +10,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const sp = new URL(req.url).searchParams;
     const { limit, offset, page } = getPagination(sp, 500);
     const search     = sp.get('search')     || '';
@@ -125,7 +125,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { name, phone, email, source, stage, assigned_to, deal_value, notes, contact_id } = await req.json();
 
     if (!name && !phone) return apiError('name or phone is required', 400);

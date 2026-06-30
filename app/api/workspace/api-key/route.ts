@@ -11,7 +11,7 @@ import { randomBytes } from 'crypto';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const rows = await query<RowDataPacket[]>(
       'SELECT api_key FROM workspaces WHERE id = ? LIMIT 1',
       [payload.workspaceId]
@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     if (payload.role !== 'admin') return apiError('Only admins can regenerate API keys', 403);
 
     const newKey = 'ws_' + randomBytes(24).toString('hex');

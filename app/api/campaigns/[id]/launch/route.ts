@@ -13,7 +13,7 @@ type Params = { params: { id: string } };
 
 export async function POST(req: NextRequest, { params }: Params) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const campaignId = Number(params.id);
 
     // Load campaign

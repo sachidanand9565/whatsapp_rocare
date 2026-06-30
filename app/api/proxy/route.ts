@@ -8,7 +8,7 @@ import { requireAuth } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
   try {
-    requireAuth(req);
+    await requireAuth(req);
 
     const { url, method = 'GET', headers: extraHeaders = {}, body } = await req.json();
 

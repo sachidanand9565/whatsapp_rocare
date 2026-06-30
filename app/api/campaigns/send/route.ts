@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Auth: workspace api_key (ws_...) OR JWT Bearer token ────
-    let payload: ReturnType<typeof requireAuth>;
+    let payload: Awaited<ReturnType<typeof requireAuth>>;
     const incomingKey = rawBody.apiKey as string | undefined;
 
     if (incomingKey?.startsWith('ws_')) {
@@ -57,9 +57,9 @@ export async function POST(req: NextRequest) {
         headers: { ...Object.fromEntries(req.headers), authorization: `Bearer ${incomingKey}` },
         body:    JSON.stringify(rawBody),
       });
-      payload = requireAuth(syntheticReq as unknown as NextRequest);
+      payload = await requireAuth(syntheticReq as unknown as NextRequest);
     } else {
-      payload = requireAuth(req);
+      payload = await requireAuth(req);
     }
 
     // ── Validate required fields ──────────────────────────────

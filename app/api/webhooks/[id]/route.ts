@@ -10,7 +10,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const id = Number(params.id);
 
     // Verify ownership
@@ -48,7 +48,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const id = Number(params.id);
 
     await execute(

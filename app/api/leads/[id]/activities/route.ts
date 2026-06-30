@@ -12,7 +12,7 @@ type Ctx = { params: { id: string } };
 
 export async function GET(req: NextRequest, { params }: Ctx) {
   try {
-    requireAuth(req);
+    await requireAuth(req);
     const rows = await query<RowDataPacket[]>(
       `SELECT a.*, u.name AS done_by_name
        FROM lead_activities a
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
 
 export async function POST(req: NextRequest, { params }: Ctx) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { type, description, scheduled_at } = await req.json();
     if (!description) return apiError('description is required', 400);
 

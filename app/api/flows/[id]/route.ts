@@ -13,7 +13,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { id } = await ctx.params;
     const rows = await query<RowDataPacket[]>(
       'SELECT * FROM flows WHERE id = ? AND workspace_id = ? LIMIT 1',
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
 export async function PUT(req: NextRequest, ctx: Ctx) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { id } = await ctx.params;
     const { name, trigger_type, trigger_value, nodes, edges, is_active } = await req.json();
 
@@ -64,7 +64,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
 
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { id } = await ctx.params;
     await execute('DELETE FROM flows WHERE id = ? AND workspace_id = ?', [id, payload.workspaceId]);
     await execute('DELETE FROM flow_sessions WHERE flow_id = ? AND workspace_id = ?', [id, payload.workspaceId]);

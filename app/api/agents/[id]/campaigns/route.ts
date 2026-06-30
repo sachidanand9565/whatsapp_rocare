@@ -11,7 +11,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     if (!['admin', 'manager'].includes(payload.role)) return apiError('Admin or Manager only', 403);
 
     const { id } = await ctx.params;

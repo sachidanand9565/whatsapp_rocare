@@ -19,7 +19,7 @@ export async function isSuperAdmin(payload: JWTPayload): Promise<boolean> {
 
 // Throws 'UNAUTHORIZED' (no/invalid token) or 'FORBIDDEN' (not super-admin)
 export async function requireSuperAdmin(req: NextRequest): Promise<JWTPayload> {
-  const payload = requireAuth(req);
+  const payload = await requireAuth(req);
   if (!(await isSuperAdmin(payload))) throw new Error('FORBIDDEN');
   return payload;
 }

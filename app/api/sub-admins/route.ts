@@ -22,7 +22,7 @@ async function getAdminWorkspaceIds(userId: number): Promise<number[]> {
 
 export async function GET(req: NextRequest) {
   try {
-    const payload      = requireAuth(req);
+    const payload      = await requireAuth(req);
     const workspaceIds = await getAdminWorkspaceIds(payload.userId);
 
     if (workspaceIds.length === 0) return apiSuccess([]);
@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload      = requireAuth(req);
+    const payload      = await requireAuth(req);
     const workspaceIds = await getAdminWorkspaceIds(payload.userId);
     if (workspaceIds.length === 0) return apiError('No admin workspaces found', 403);
 

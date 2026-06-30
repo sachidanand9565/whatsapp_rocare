@@ -29,7 +29,7 @@ export async function POST(
 ) {
   try {
     // Support apiKey in body as alternative to Authorization header
-    let payload: ReturnType<typeof requireAuth>;
+    let payload: Awaited<ReturnType<typeof requireAuth>>;
     let rawBody: Record<string, unknown>;
     try {
       rawBody = await req.clone().json() as Record<string, unknown>;
@@ -58,9 +58,9 @@ export async function POST(
         headers: { ...Object.fromEntries(req.headers), authorization: `Bearer ${incomingKey}` },
         body:    JSON.stringify(rawBody),
       });
-      payload = requireAuth(syntheticReq as unknown as NextRequest);
+      payload = await requireAuth(syntheticReq as unknown as NextRequest);
     } else {
-      payload = requireAuth(req);
+      payload = await requireAuth(req);
     }
 
     const campaignId = Number(params.id);

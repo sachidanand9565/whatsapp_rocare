@@ -8,7 +8,7 @@ import { apiSuccess, apiError } from '@/lib/utils';
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     await execute(
       'DELETE FROM quick_replies WHERE id = ? AND workspace_id = ?',
       [params.id, payload.workspaceId]

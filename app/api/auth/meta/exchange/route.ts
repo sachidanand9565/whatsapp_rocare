@@ -8,7 +8,7 @@ import { apiSuccess, apiError } from '@/lib/utils';
 
 export async function POST(req: NextRequest) {
   try {
-    requireAuth(req);
+    await requireAuth(req);
     const { code } = await req.json();
     if (!code) return apiError('code is required', 400);
 

@@ -21,7 +21,8 @@ export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization') || '';
 
   const isCron    = cronSecret && authHeader === `Bearer ${cronSecret}`;
-  const isUser    = (() => { try { requireAuth(req); return true; } catch { return false; } })();
+  let isUser = false;
+  try { await requireAuth(req); isUser = true; } catch { isUser = false; }
 
   if (cronSecret && !isCron && !isUser) {
     return new NextResponse('Unauthorized', { status: 401 });

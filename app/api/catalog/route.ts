@@ -13,7 +13,7 @@ const GV = 'v20.0';
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const sp      = new URL(req.url).searchParams;
     const action  = sp.get('action') || 'catalogs';
 
@@ -68,7 +68,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload    = requireAuth(req);
+    const payload    = await requireAuth(req);
     const { catalog_id } = await req.json();
 
     // Ensure column exists (safe to run each time — IF NOT EXISTS)

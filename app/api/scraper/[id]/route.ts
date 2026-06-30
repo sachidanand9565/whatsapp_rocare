@@ -10,7 +10,7 @@ import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const rows = await query<RowDataPacket[]>(
       `SELECT * FROM scraper_sessions WHERE id = ? AND workspace_id = ? LIMIT 1`,
       [params.id, payload.workspaceId]
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { places } = await req.json() as { places: unknown[] };
     if (!Array.isArray(places)) return apiError('places array required');
     const phoneCount = (places as { phone?: string }[]).filter((p) => p.phone).length;
@@ -45,7 +45,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const affected = await execute(
       `DELETE FROM scraper_sessions WHERE id = ? AND workspace_id = ?`,
       [params.id, payload.workspaceId]

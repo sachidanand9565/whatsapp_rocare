@@ -23,7 +23,7 @@ const ENSURE = `CREATE TABLE IF NOT EXISTS media_library (
 
 export async function GET(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     // await query(ENSURE);
 
     const sp     = new URL(req.url).searchParams;
@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     await query(ENSURE);
 
     const ws = await query<RowDataPacket[]>(
@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const payload = requireAuth(req);
+    const payload = await requireAuth(req);
     const { ids } = await req.json() as { ids: number[] };
     if (!Array.isArray(ids) || !ids.length) return apiError('No ids provided');
 
