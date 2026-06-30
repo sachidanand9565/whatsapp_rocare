@@ -58,25 +58,35 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     setRole(r);
     setUserName(localStorage.getItem('userName') || '');
 
-    // Load workspaces from localStorage (set at login)
+    const wsId = Number(localStorage.getItem('workspaceId'));
+
+    // 1) Instant render from cache (set at login) — taaki UI turant dikhe
     const stored = localStorage.getItem('workspaces');
-    const wsId   = Number(localStorage.getItem('workspaceId'));
     if (stored) {
-      const list: Workspace[] = JSON.parse(stored);
-      setWorkspaces(list);
-      setCurrentWs(list.find((w) => w.id === wsId) || list[0] || null);
-    } else {
-      // Fallback: fetch from API
-      fetch('/api/workspaces', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
-        .then((r) => r.json())
-        .then((res) => {
-          if (res?.data) {
-            setWorkspaces(res.data);
-            localStorage.setItem('workspaces', JSON.stringify(res.data));
-            setCurrentWs(res.data.find((w: Workspace) => w.id === wsId) || res.data[0] || null);
-          }
-        });
+      try {
+        const list: Workspace[] = JSON.parse(stored);
+        setWorkspaces(list);
+        setCurrentWs(list.find((w) => w.id === wsId) || list[0] || null);
+      } catch { /* ignore bad cache */ }
     }
+
+    // 2) Always refresh from server so projects added/deleted elsewhere reflect here
+    fetch('/api/workspaces', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+      .then((r) => r.json())
+      .then((res) => {
+        if (!res?.data) return;
+        const list: Workspace[] = res.data;
+        setWorkspaces(list);
+        localStorage.setItem('workspaces', JSON.stringify(list));
+        const currentId = Number(localStorage.getItem('workspaceId'));
+        const current = list.find((w) => w.id === currentId) || list[0] || null;
+        setCurrentWs(current);
+        // Agar current project kahin aur se delete ho gaya → pehle available pe switch
+        if (current && current.id !== currentId) {
+          localStorage.setItem('workspaceId', String(current.id));
+        }
+      })
+      .catch(() => {});
   }, [router]);
 
   // Close switcher when clicking outside

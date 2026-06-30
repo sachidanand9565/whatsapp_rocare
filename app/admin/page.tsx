@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { apiFetch } from '@/hooks/useApi';
+import { adminFetch } from '@/hooks/useAdminApi';
 import { Building2, Users, MessageSquare, Megaphone, UserPlus, Loader2 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -17,7 +17,7 @@ export default function AdminOverview() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiFetch('/api/admin/stats').then((r) => setS(r.data)).finally(() => setLoading(false));
+    adminFetch('/api/admin/stats').then((r) => setS(r.data)).finally(() => setLoading(false));
   }, []);
 
   if (loading) return <div className="p-10 flex justify-center text-gray-400"><Loader2 className="animate-spin" /></div>;
@@ -36,7 +36,7 @@ export default function AdminOverview() {
     <div className="p-6 space-y-6 max-w-6xl">
       <div>
         <h1 className="text-xl font-bold text-gray-900">Platform Overview</h1>
-        <p className="text-sm text-gray-500">Saare accounts ka summary.</p>
+        <p className="text-sm text-gray-500">Summary across all accounts.</p>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">

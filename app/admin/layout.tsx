@@ -2,44 +2,48 @@
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { apiFetch } from '@/hooks/useApi';
-import { LayoutDashboard, Building2, Users, ShieldAlert, ArrowLeft, Loader2 } from 'lucide-react';
+import { adminFetch } from '@/hooks/useAdminApi';
+import { LayoutDashboard, Building2, ShieldAlert, LogOut, Loader2 } from 'lucide-react';
 
 const NAV = [
   { label: 'Overview',   href: '/admin',            icon: LayoutDashboard },
   { label: 'Workspaces', href: '/admin/workspaces', icon: Building2 },
-  { label: 'Users',      href: '/admin/users',      icon: Users },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router   = useRouter();
   const pathname = usePathname();
-  const [state, setState] = useState<'checking' | 'ok' | 'denied'>('checking');
+  const isLoginPage = pathname === '/admin/login';
+  const [state, setState] = useState<'checking' | 'ok'>('checking');
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && !localStorage.getItem('token')) { router.replace('/login'); return; }
-    apiFetch('/api/admin/me')
-      .then((r) => setState(r.data?.isSuperAdmin ? 'ok' : 'denied'))
-      .catch(() => setState('denied'));
-  }, [router]);
+    if (isLoginPage) return;
+    if (typeof window !== 'undefined' && !localStorage.getItem('admin_token')) {
+      router.replace('/admin/login');
+      return;
+    }
+    adminFetch('/api/admin/me')
+      .then((r) => {
+        if (r.data?.isSuperAdmin) setState('ok');
+        else { localStorage.removeItem('admin_token'); router.replace('/admin/login'); }
+      })
+      .catch(() => { localStorage.removeItem('admin_token'); router.replace('/admin/login'); });
+  }, [isLoginPage, router]);
+
+  // Login page: render standalone (no sidebar, no guard)
+  if (isLoginPage) return <>{children}</>;
 
   if (state === 'checking') {
     return (
-      <div className="min-h-screen flex items-center justify-center text-gray-400">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-400">
         <Loader2 size={20} className="animate-spin" />
       </div>
     );
   }
 
-  if (state === 'denied') {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-3 text-center px-4">
-        <ShieldAlert size={40} className="text-red-400" />
-        <h1 className="text-lg font-bold text-gray-800">Access denied</h1>
-        <p className="text-sm text-gray-500">Ye platform super-admin panel hai. Aapke paas access nahi hai.</p>
-        <Link href="/dashboard" className="text-sm text-whatsapp-teal font-medium hover:underline mt-2">← Go to dashboard</Link>
-      </div>
-    );
+  function logout() {
+    localStorage.removeItem('admin_token');
+    router.replace('/admin/login');
   }
 
   return (
@@ -61,9 +65,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           })}
         </nav>
         <div className="p-3 border-t border-gray-800">
-          <Link href="/dashboard" className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-gray-800">
-            <ArrowLeft size={16} /> Back to dashboard
-          </Link>
+          <button onClick={logout}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-gray-800">
+            <LogOut size={16} /> Logout
+          </button>
         </div>
       </aside>
       <main className="flex-1 overflow-y-auto">{children}</main>

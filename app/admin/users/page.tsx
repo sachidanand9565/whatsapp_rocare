@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from '@/hooks/useApi';
+import { adminFetch } from '@/hooks/useAdminApi';
 import toast from 'react-hot-toast';
 import { Search, Loader2, Ban, CheckCircle, ShieldAlert } from 'lucide-react';
 
@@ -22,7 +22,7 @@ export default function AdminUsers() {
     const p = new URLSearchParams();
     if (search.trim()) p.set('search', search.trim());
     if (status) p.set('status', status);
-    apiFetch(`/api/admin/users?${p.toString()}`)
+    adminFetch(`/api/admin/users?${p.toString()}`)
       .then((r) => setRows(r.data || []))
       .catch((e) => toast.error(e.message))
       .finally(() => setLoading(false));
@@ -33,7 +33,7 @@ export default function AdminUsers() {
   async function patch(id: number, body: Record<string, unknown>) {
     setBusy(id);
     try {
-      const r = await apiFetch(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+      const r = await adminFetch(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
       setRows((prev) => prev.map((u) => u.id === id ? { ...u, ...r.data } : u));
       toast.success('Updated');
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed'); }
