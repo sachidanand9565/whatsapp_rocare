@@ -739,6 +739,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
 
           {/* Response Mapping */}
           <p className="font-semibold text-gray-700 text-[11px] uppercase tracking-wide">Response → List Items</p>
+          <p className="text-[10px] text-gray-400">WhatsApp list = max 10 rows. 10+ items hone par flow apne aap <span className="font-medium">"➡️ Show more"</span> row daal deta hai jo agli page dikhata hai.</p>
           <div>
             <label className="block font-semibold text-gray-600 mb-1">Items path (optional)</label>
             <input value={dynItemsPath} onChange={e=>setDynItemsPath(e.target.value)}
@@ -907,36 +908,6 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
                 })()}
               </div>
             )}
-          </div>
-
-          {/* Expected Response Format Preview */}
-          <div className="bg-gray-900 rounded-lg p-3 space-y-1">
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Expected API Response Format</p>
-            <pre className="text-[10px] text-green-400 font-mono whitespace-pre-wrap leading-relaxed overflow-x-auto">{(() => {
-              const idF    = dynIdField    || 'id';
-              const titleF = dynTitleField || 'title';
-              const descF  = dynDescField  || null;
-              const path   = dynItemsPath  ? dynItemsPath.split('.') : null;
-
-              const item: Record<string, string> = {
-                [idF]:    '\"abc123\"',
-                [titleF]: '\"Sample Item\"',
-                ...(descF ? { [descF]: '\"Optional description\"' } : {}),
-              };
-              const itemStr = '{\n' + Object.entries(item).map(([k,v]) => `          "${k}": ${v}`).join(',\n') + '\n        }';
-              const arr = `[\n        ${itemStr},\n        { ... }\n      ]`;
-
-              if (!path) {
-                return arr;
-              }
-              // Build nested object from path e.g. ["data","products"]
-              let result = arr;
-              for (let i = path.length - 1; i >= 0; i--) {
-                const indent = '  '.repeat(i + 1);
-                result = `{\n${indent}"${path[i]}": ${result.split('\n').map((l, li) => li === 0 ? l : indent + l).join('\n')}\n${'  '.repeat(i)}}`;
-              }
-              return result;
-            })()}</pre>
           </div>
 
           {/* Message Config */}

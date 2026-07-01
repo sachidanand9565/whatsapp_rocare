@@ -367,14 +367,25 @@ async function executeFromNode(
           if (!Array.isArray(data)) data = findFirstArray(json);
 
           if (Array.isArray(data)) {
-            rows = data.slice(0, 10).map((item: unknown, idx: number) => {
+            // WhatsApp list = max 10 rows. >10 items ho to paginate: 9 items + "Show more".
+            const total   = data.length;
+            const PAGE    = 9;
+            const offKey  = `__dlo_${nodeId}`;
+            const offset  = Math.max(0, Number(vars[offKey] || 0));
+            const paging  = total > 10;
+            const endIdx  = paging ? offset + PAGE : 10;
+            rows = data.slice(offset, endIdx).map((item: unknown, idx: number) => {
               const obj = (item || {}) as Record<string, unknown>;
               return {
-                id:    String(obj[idField]    ?? idx + 1),
-                title: String(obj[titleField] ?? `Item ${idx + 1}`).slice(0, 24),
+                id:    String(obj[idField]    ?? offset + idx + 1),
+                title: String(obj[titleField] ?? `Item ${offset + idx + 1}`).slice(0, 24),
                 ...(descField && obj[descField] ? { description: String(obj[descField]).slice(0, 72) } : {}),
               };
             });
+            // "Show more" row agar aur items bache hain
+            if (paging && offset + PAGE < total) {
+              rows.push({ id: '__more__', title: '➡️ Show more', description: `${total - (offset + PAGE)} more options` });
+            }
           }
 
           // Optionally save raw JSON response as a variable
@@ -819,6 +830,17 @@ export async function tryResumeFlow(
     }
   } else if (currentNode.type === 'dynamic_list') {
     if (buttonPayload) {
+      // Pagination: "Show more" select hua → agli page dikhao, wahi node dobara chalao
+      if (effectiveMsg === '__more__') {
+        const offKey = `__dlo_${currentNode.id}`;
+        const moreVars: Record<string, string> = { ...session.variables };
+        moreVars[offKey] = String(Number(session.variables[offKey] || 0) + 9);
+        await updateSessionNode(session.id, currentNode.id, moreVars);
+        session.variables = moreVars;
+        const cRows = await query<RowDataPacket[]>('SELECT name FROM contacts WHERE id = ? LIMIT 1', [contactId]);
+        await executeFromNode(flow, session, currentNode, accessToken, phoneNumberId, contactPhone, workspaceId, '', (cRows[0]?.name as string) || '');
+        return true;
+      }
       // Pehle check: kya dynamic_list ka koi connected output node hai?
       const anyNext = getNextNode(edges, nodes, currentNode.id);
       if (anyNext) {
@@ -831,6 +853,7 @@ export async function tryResumeFlow(
         const rerunVars: Record<string, string> = { ...session.variables };
         rerunVars['selected_id']    = effectiveMsg;
         rerunVars['selected_title'] = userMessage;
+        rerunVars[`__dlo_${currentNode.id}`] = '0';   // fresh page after a real selection
         if (currentNode.data.save_id_as?.trim())    rerunVars[currentNode.data.save_id_as.trim()]    = effectiveMsg;
         if (currentNode.data.save_title_as?.trim()) rerunVars[currentNode.data.save_title_as.trim()] = userMessage;
         await updateSessionNode(session.id, currentNode.id, rerunVars);
@@ -860,6 +883,8 @@ export async function tryResumeFlow(
     // Also save to custom variable names if defined
     if (currentNode.data.save_id_as?.trim())    updatedVars[currentNode.data.save_id_as.trim()]    = effectiveMsg;
     if (currentNode.data.save_title_as?.trim()) updatedVars[currentNode.data.save_title_as.trim()] = userMessage;
+    // Real item selected → dynamic_list ka pagination offset reset karo
+    if (currentNode.type === 'dynamic_list') updatedVars[`__dlo_${currentNode.id}`] = '0';
   }
 
   await updateSessionNode(session.id, nextNode.id, updatedVars);
