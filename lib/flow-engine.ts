@@ -135,6 +135,17 @@ function getByPath(obj: unknown, path: string): unknown {
   return cur;
 }
 
+// Interactive wait-node ne jo message bheja uska wamid → nodeId map me track karo.
+// Isse jab user kisi (purani ya current) list pe tap kare to pata chale wo kaunse
+// step ka reply hai, aur flow us step se sahi selection ke saath aage/wapas ja sake.
+function trackWaitWamid(vars: Record<string, string>, wamid: string | null, nodeId: string) {
+  if (!wamid) return;
+  let map: Record<string, string> = {};
+  try { map = JSON.parse(vars['__wamid_map'] || '{}'); } catch { /* ignore */ }
+  map[wamid] = nodeId;
+  vars['__wamid_map'] = JSON.stringify(map);
+}
+
 // Auto-detect: response me se pehli array dhoondo (kisi bhi key ke andar / nested).
 // Object-arrays ko prefer karta hai (list items aksar objects hote hain).
 function findFirstArray(obj: unknown): unknown[] | null {
@@ -279,6 +290,7 @@ async function executeFromNode(
         const btnContent = JSON.stringify({ __type: 'buttons', body: bodyText, buttons, header: headerText, footer: footerText });
         await saveOutboundMessage(workspaceId, session.contact_id, btnContent, wamid, 'interactive');
         // Stay on this node — user ke button click ka wait karo
+        trackWaitWamid(vars, wamid, nodeId);
         await updateSessionNode(session.id, nodeId, vars);
         return;
       }
@@ -299,6 +311,7 @@ async function executeFromNode(
         await saveOutboundMessage(workspaceId, session.contact_id, msgContent, wamid, 'interactive');
         if (buttons.length > 0) {
           // Wait for user to click a button
+          trackWaitWamid(vars, wamid, nodeId);
           await updateSessionNode(session.id, nodeId, vars);
           return;
         }
@@ -325,6 +338,7 @@ async function executeFromNode(
         const listContent = JSON.stringify({ __type: 'list', body: bodyText, button: buttonText, sections, header: headerText, footer: footerText });
         await saveOutboundMessage(workspaceId, session.contact_id, listContent, wamid, 'interactive');
         // Stay on this node — user ke item select ka wait karo
+        trackWaitWamid(vars, wamid, nodeId);
         await updateSessionNode(session.id, nodeId, vars);
         return;
       }
@@ -411,6 +425,7 @@ async function executeFromNode(
         const listContent = JSON.stringify({ __type: 'list', body: bodyText, button: btnText, sections: [{ title: '', rows }], header: headerText, footer: footerText });
         await saveOutboundMessage(workspaceId, session.contact_id, listContent, wamid, 'interactive');
         // Stay on this node — user ke item select ka wait karo
+        trackWaitWamid(vars, wamid, nodeId);
         await updateSessionNode(session.id, nodeId, vars);
         return;
       }
@@ -755,6 +770,7 @@ export async function tryResumeFlow(
   accessToken:   string,
   phoneNumberId: string,
   buttonPayload?: string, // button id when user clicked an interactive button
+  contextWamid?: string,  // wamid of the message the reply is in response to (stale-reply guard)
 ): Promise<boolean> {
   const sessions = await query<RowDataPacket[]>(
     "SELECT * FROM flow_sessions WHERE workspace_id = ? AND contact_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1",
@@ -770,6 +786,22 @@ export async function tryResumeFlow(
     current_node_id: sess.current_node_id as string,
     variables:       typeof sess.variables === 'string' ? JSON.parse(sess.variables) : sess.variables || {},
   };
+
+  // Reply kaunse list/button ka hai — us message ko bhejne wale node par flow ko le jao.
+  // - Current list ka tap → wahi node → normal aage.
+  // - PURANI list ka tap → us step par WAPAS jaake nayi selection se aage (correction).
+  // - Unknown/stale message → ignore.
+  // (Backward-compat: purane sessions me __wamid_map nahi hota → guard skip, purana behaviour.)
+  if (buttonPayload && contextWamid && session.variables['__wamid_map']) {
+    let wamidMap: Record<string, string> = {};
+    try { wamidMap = JSON.parse(session.variables['__wamid_map']); } catch { /* ignore */ }
+    const targetNodeId = wamidMap[contextWamid];
+    if (targetNodeId) {
+      session.current_node_id = targetNodeId;   // rewind/stay on the node that sent this list
+    } else {
+      return false;                              // reply to an untracked message → ignore
+    }
+  }
 
   const flowRows = await query<RowDataPacket[]>('SELECT * FROM flows WHERE id = ? AND workspace_id = ? LIMIT 1', [session.flow_id, workspaceId]);
   if (flowRows.length === 0) { await endSession(session.id); return false; }

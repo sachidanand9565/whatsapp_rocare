@@ -192,8 +192,9 @@ export async function POST(req: NextRequest) {
     // Store message (try with replied_to_wamid, fallback without)
     const msgSentAt = unixToUtc(msg.timestamp);
     const msgNow    = utcNow();
+    let insertedId = 0;
     try {
-      await insert(
+      insertedId = await insert(
         `INSERT IGNORE INTO messages
            (workspace_id, contact_id, wamid, replied_to_wamid, direction, type, content, status, sent_at, created_at)
          VALUES (?, ?, ?, ?, 'inbound', ?, ?, 'delivered', ?, ?)`,
@@ -201,13 +202,20 @@ export async function POST(req: NextRequest) {
       );
     } catch {
       // fallback: insert without replied_to_wamid (column may not exist yet)
-      await insert(
+      insertedId = await insert(
         `INSERT IGNORE INTO messages
            (workspace_id, contact_id, wamid, direction, type, content, status, sent_at, created_at)
          VALUES (?, ?, ?, 'inbound', ?, ?, 'delivered', ?, ?)`,
         [workspaceId, contactId, msg.wamid, msg.type, content, msgSentAt, msgNow]
       );
     }
+
+    // ── De-duplication ──────────────────────────────────────────
+    // INSERT IGNORE returns 0 for a duplicate wamid. Meta RETRIES webhook delivery
+    // (esp. when a reply is slow), so the same button/list reply can arrive multiple
+    // times. Without this guard the flow advances repeatedly → duplicate lists / repeated
+    // steps. Process each message exactly once.
+    if (msg.wamid && !insertedId) continue;
 
     // Denormalized last-activity (powers fast Inbox/History list ordering & filtering)
     await execute(
@@ -301,14 +309,14 @@ export async function POST(req: NextRequest) {
       const pnId          = phoneNumberId || '';
       const buttonText    = msg.button.text    || '';
       const buttonPayload = msg.button.payload || buttonText;
-      await tryResumeFlow(workspaceId, contactId, phone, buttonText, token, pnId, buttonPayload).catch(() => {});
+      await tryResumeFlow(workspaceId, contactId, phone, buttonText, token, pnId, buttonPayload, msg.replied_to_wamid).catch(() => {});
     } else if (msg.type === 'interactive' && msg.interactiveReply) {
       // Interactive button_message / list_message reply — resume active flow
       const token      = workspaceAccessToken || '';
       const pnId       = phoneNumberId || '';
       const replyTitle = msg.interactiveReply.title || '';
       const replyId    = msg.interactiveReply.id    || replyTitle;
-      await tryResumeFlow(workspaceId, contactId, phone, replyTitle, token, pnId, replyId).catch(() => {});
+      await tryResumeFlow(workspaceId, contactId, phone, replyTitle, token, pnId, replyId, msg.replied_to_wamid).catch(() => {});
     }
   }
 
