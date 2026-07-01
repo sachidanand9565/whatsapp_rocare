@@ -77,11 +77,11 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Log raw payload
-  await insert(
+  // Log raw payload — fire-and-forget so it doesn't delay the flow reply
+  void insert(
     'INSERT INTO webhook_logs (workspace_id, event_type, payload) VALUES (?, ?, ?)',
     [workspaceId, 'webhook', JSON.stringify(body)]
-  );
+  ).catch(() => {});
 
   if (!workspaceId) return NextResponse.json({ received: true });
 
@@ -102,6 +102,12 @@ export async function POST(req: NextRequest) {
       [workspaceId, phone]
     );
     contactId = contactRow[0].id as number;
+
+    // Turant "typing…" dikhao — user ko lage bot reply kar raha hai (perceived speed)
+    if (workspaceAccessToken && phoneNumberId && msg.wamid) {
+      sendTypingIndicator(workspaceAccessToken, phoneNumberId, msg.wamid).catch(() => {});
+    }
+
     if (profileName && !contactRow[0].name) {
       await execute(
         "UPDATE contacts SET name = ? WHERE id = ? AND (name IS NULL OR name = '')",
@@ -295,9 +301,6 @@ export async function POST(req: NextRequest) {
       const pnId          = phoneNumberId || '';
       const buttonText    = msg.button.text    || '';
       const buttonPayload = msg.button.payload || buttonText;
-      if (token && pnId && msg.wamid) {
-        sendTypingIndicator(token, pnId, msg.wamid).catch(() => {});
-      }
       await tryResumeFlow(workspaceId, contactId, phone, buttonText, token, pnId, buttonPayload).catch(() => {});
     } else if (msg.type === 'interactive' && msg.interactiveReply) {
       // Interactive button_message / list_message reply — resume active flow
@@ -305,9 +308,6 @@ export async function POST(req: NextRequest) {
       const pnId       = phoneNumberId || '';
       const replyTitle = msg.interactiveReply.title || '';
       const replyId    = msg.interactiveReply.id    || replyTitle;
-      if (token && pnId && msg.wamid) {
-        sendTypingIndicator(token, pnId, msg.wamid).catch(() => {});
-      }
       await tryResumeFlow(workspaceId, contactId, phone, replyTitle, token, pnId, replyId).catch(() => {});
     }
   }
