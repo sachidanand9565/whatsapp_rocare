@@ -343,6 +343,18 @@ function getByPath(obj: unknown, path: string): unknown {
   return cur;
 }
 
+// Auto-detect first array anywhere in a JSON response (any key / nested)
+function findFirstArray(obj: unknown): unknown[] | null {
+  if (Array.isArray(obj)) return obj;
+  if (obj && typeof obj === 'object') {
+    for (const v of Object.values(obj as Record<string, unknown>)) {
+      const found = findFirstArray(v);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 // ── Trigger node helpers ───────────────────────────────────────
 // Real (non-trigger) nodes — used to decide if the canvas is "empty"
 function realNodes(allNodes: Node[]): Node[] {
@@ -432,6 +444,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
   const [dynHeaders,     setDynHeaders]    = useState(node.data.headers||'');
   const [dynReqBody,     setDynReqBody]    = useState(node.data.body||'');
   const [dynItemsPath,   setDynItemsPath]  = useState(node.data.items_path||'');
+  const [dynFields,      setDynFields]     = useState<string[]>([]);   // detected keys from Test API
   const [dynIdField,     setDynIdField]    = useState(node.data.id_field||'id');
   const [dynTitleField,  setDynTitleField] = useState(node.data.title_field||'name');
   const [dynDescField,   setDynDescField]  = useState(node.data.description_field||'');
@@ -733,20 +746,32 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-400"/>
             <p className="text-gray-400 mt-1 text-[10px]">API returns: <code className="bg-gray-100 px-1">{`{ "data": { "products": [...] } }`}</code> → path: <code className="bg-gray-100 px-1">data.products</code></p>
           </div>
+          {/* Keys detected from Test API — dropdown me aa jaate hain */}
+          <datalist id="dynDetectedFields">
+            {dynFields.map((k) => <option key={k} value={k} />)}
+          </datalist>
+          {dynFields.length > 0 && (
+            <p className="text-[10px] text-gray-500">
+              Detected fields:{' '}
+              {dynFields.map((k) => (
+                <code key={k} className="bg-violet-50 text-violet-700 px-1 rounded mr-1">{k}</code>
+              ))}
+            </p>
+          )}
           <div className="grid grid-cols-3 gap-2">
             <div>
               <label className="block font-semibold text-gray-600 mb-1">ID field *</label>
-              <input value={dynIdField} onChange={e=>setDynIdField(e.target.value)}
+              <input list="dynDetectedFields" value={dynIdField} onChange={e=>setDynIdField(e.target.value)}
                 placeholder="id" className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-400"/>
             </div>
             <div>
               <label className="block font-semibold text-gray-600 mb-1">Title field *</label>
-              <input value={dynTitleField} onChange={e=>setDynTitleField(e.target.value)}
+              <input list="dynDetectedFields" value={dynTitleField} onChange={e=>setDynTitleField(e.target.value)}
                 placeholder="name" className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-400"/>
             </div>
             <div>
               <label className="block font-semibold text-gray-600 mb-1">Desc field</label>
-              <input value={dynDescField} onChange={e=>setDynDescField(e.target.value)}
+              <input list="dynDetectedFields" value={dynDescField} onChange={e=>setDynDescField(e.target.value)}
                 placeholder="desc" className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-400"/>
             </div>
           </div>
@@ -791,8 +816,23 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
                       if (arr && typeof arr === 'object') arr = (arr as Record<string,unknown>)[key];
                     }
                   }
+                  // Fallback: path se array na mile (ya khaali ho) to response me se pehli array khud dhoondo
+                  if (!Array.isArray(arr)) arr = findFirstArray(data);
 
                   if (Array.isArray(arr)) {
+                    // Detect available keys from the first item → dropdown me dikhao + smart auto-fill
+                    const first = arr[0];
+                    if (first && typeof first === 'object') {
+                      const keys = Object.keys(first as Record<string, unknown>);
+                      setDynFields(keys);
+                      const guess = (cands: string[]) => keys.find(k => cands.includes(k.toLowerCase()));
+                      const idGuess    = guess(['id','_id','value','key','type_id','product_id','item_id']);
+                      const titleGuess = guess(['title','name','label','type','text','product_name']);
+                      const descGuess  = guess(['description','desc','subtitle','detail','details']);
+                      if ((!dynIdField    || dynIdField === 'id')   && idGuess)    setDynIdField(idGuess);
+                      if ((!dynTitleField || dynTitleField === 'name') && titleGuess) setDynTitleField(titleGuess);
+                      if (!dynDescField && descGuess) setDynDescField(descGuess);
+                    }
                     const items = (arr as Record<string,unknown>[]).slice(0, 5).map((item, idx) => ({
                       id:          String(item[dynIdField||'id']    ?? idx + 1),
                       title:       String(item[dynTitleField||'title'] ?? `Item ${idx+1}`),

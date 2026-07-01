@@ -135,6 +135,19 @@ function getByPath(obj: unknown, path: string): unknown {
   return cur;
 }
 
+// Auto-detect: response me se pehli array dhoondo (kisi bhi key ke andar / nested).
+// Object-arrays ko prefer karta hai (list items aksar objects hote hain).
+function findFirstArray(obj: unknown): unknown[] | null {
+  if (Array.isArray(obj)) return obj;
+  if (obj && typeof obj === 'object') {
+    for (const v of Object.values(obj as Record<string, unknown>)) {
+      const found = findFirstArray(v);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 function substituteVars(
   text: string,
   vars: Record<string, string>,
@@ -340,14 +353,18 @@ async function executeFromNode(
             : undefined;
 
           const res  = await fetch(url, { method, headers: headersObj, body: reqBody });
-          let data: unknown = await res.json();
+          const json: unknown = await res.json();
 
           // Navigate to nested path e.g. "data.products" → obj.data.products
+          let data: unknown = json;
           if (itemsPath) {
             for (const key of itemsPath.split('.')) {
               if (data && typeof data === 'object') data = (data as Record<string, unknown>)[key];
             }
           }
+          // Fallback: agar path se array nahi mili (ya path khaali hai) to
+          // response me se pehli array khud dhoondh lo — kisi bhi structure ke liye
+          if (!Array.isArray(data)) data = findFirstArray(json);
 
           if (Array.isArray(data)) {
             rows = data.slice(0, 10).map((item: unknown, idx: number) => {
