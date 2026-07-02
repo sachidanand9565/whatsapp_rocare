@@ -328,6 +328,9 @@ function extractFlowVars(allNodes: Node[]): string[] {
     if (d.save_id_as?.trim())      vars.add(d.save_id_as.trim());
     if (d.save_title_as?.trim())   vars.add(d.save_title_as.trim());
     if (d.save_response_as?.trim())vars.add(d.save_response_as.trim());
+    // API Call node — "Extract fields" me banaye gaye variables bhi include karo
+    const ef = (n.data as Record<string, unknown>).extract_fields as { path?: string; variable?: string }[] | undefined;
+    if (Array.isArray(ef)) ef.forEach((f) => { if (f?.variable?.trim()) vars.add(f.variable.trim()); });
   }
   return Array.from(vars);
 }
