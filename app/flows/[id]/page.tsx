@@ -248,13 +248,17 @@ function FlowNode({ data, selected }: NodeProps) {
             <div className="text-[10px] text-gray-500 font-mono bg-gray-50 rounded-lg px-2 py-1.5 leading-tight">
               <span className="text-blue-600 font-semibold">{`{{${data.condition_variable||'user_message'}}}`}</span>
               <span className="text-gray-400 mx-1">{
-                data.condition_operator==='equal'       ? '='   :
-                data.condition_operator==='not_equal'   ? '≠'   :
-                data.condition_operator==='contains'    ? 'contains' :
-                data.condition_operator==='starts_with' ? 'starts with' :
-                data.condition_operator==='any'         ? '(any)' : '='
+                data.condition_operator==='equal'        ? '='   :
+                data.condition_operator==='not_equal'    ? '≠'   :
+                data.condition_operator==='contains'     ? 'contains' :
+                data.condition_operator==='starts_with'  ? 'starts with' :
+                data.condition_operator==='is_empty'     ? 'is empty' :
+                data.condition_operator==='is_not_empty' ? 'is not empty' :
+                data.condition_operator==='any'          ? '(any)' : '='
               }</span>
-              <span className="text-gray-700">{data.condition_value||<span className="italic text-gray-300">value</span>}</span>
+              {data.condition_operator!=='is_empty' && data.condition_operator!=='is_not_empty' && data.condition_operator!=='any' && (
+                <span className="text-gray-700">{data.condition_value||<span className="italic text-gray-300">value</span>}</span>
+              )}
             </div>
             <div className="relative flex items-center justify-between bg-green-50 border border-green-200 rounded-lg px-2 py-1.5 pr-5">
               <span className="text-[10px] text-green-700 font-semibold">✓ True</span>
@@ -1079,6 +1083,8 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
               <option value="not_equal">Not Equal</option>
               <option value="contains">Contains</option>
               <option value="starts_with">Starts With</option>
+              <option value="is_empty">Is Empty / Not Set</option>
+              <option value="is_not_empty">Is Not Empty</option>
               <option value="any">Any value (always True)</option>
             </select>
           </div>
@@ -1102,7 +1108,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
             </select>
           </div>
           {/* Value */}
-          {condOp !== 'any' && (
+          {condOp !== 'any' && condOp !== 'is_empty' && condOp !== 'is_not_empty' && (
             <div>
               <label className="block text-[10px] font-semibold text-gray-500 mb-1">Value</label>
               <input value={condVal} onChange={e=>setCondVal(e.target.value)}

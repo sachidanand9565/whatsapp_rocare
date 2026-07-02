@@ -839,14 +839,19 @@ export async function tryResumeFlow(
       (session.variables[cVariable] || '')
     ).toLowerCase();
 
+    // Empty check: blank, literal "null"/"undefined", ya un-substituted {{var}} → empty maana jayega
+    const vTrim = varVal.trim();
+    const isEmpty = vTrim === '' || vTrim === 'null' || vTrim === 'undefined' || /^\{\{.*\}\}$/.test(vTrim);
     let conditionMet = false;
     switch (cOperator) {
-      case 'equal':       conditionMet = varVal === cValue; break;
-      case 'not_equal':   conditionMet = varVal !== cValue; break;
-      case 'contains':    conditionMet = varVal.includes(cValue); break;
-      case 'starts_with': conditionMet = varVal.startsWith(cValue); break;
-      case 'any':         conditionMet = true; break;
-      default:            conditionMet = varVal === cValue;
+      case 'equal':        conditionMet = varVal === cValue; break;
+      case 'not_equal':    conditionMet = varVal !== cValue; break;
+      case 'contains':     conditionMet = varVal.includes(cValue); break;
+      case 'starts_with':  conditionMet = varVal.startsWith(cValue); break;
+      case 'is_empty':     conditionMet = isEmpty; break;
+      case 'is_not_empty': conditionMet = !isEmpty; break;
+      case 'any':          conditionMet = true; break;
+      default:             conditionMet = varVal === cValue;
     }
     const handle = conditionMet ? 'true' : 'false';
     nextNode = getNextNode(edges, nodes, currentNode.id, handle);
