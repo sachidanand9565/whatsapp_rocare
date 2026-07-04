@@ -12,7 +12,10 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { query, insert, execute } from '@/lib/db';
-import { sendTextMessage, sendButtonMessage } from '@/lib/whatsapp';
+import {
+  sendTextMessage, sendButtonMessage, sendListMessage,
+  sendMediaMessage, sendMediaUrlMessage, sendTemplateMessage,
+} from '@/lib/whatsapp';
 import { normalizePhone, utcNow } from '@/lib/utils';
 import { optionsResponse } from '@/lib/cors';
 import { RowDataPacket } from 'mysql2';
@@ -45,9 +48,13 @@ export async function POST(req: NextRequest) {
 
   // ── Parse body ───────────────────────────────────────────────
   let body: {
-    phone?: string; contact_id?: number; message?: string;
+    phone?: string; contact_id?: number; type?: string;
+    message?: string; header?: string; footer?: string;
     buttons?: { id?: string; title?: string }[];
-    header?: string; footer?: string;
+    button_text?: string;
+    sections?: { title?: string; rows?: { id?: string; title?: string; description?: string }[] }[];
+    media?: { type?: string; url?: string; id?: string; caption?: string; filename?: string };
+    template?: { name?: string; language?: string; params?: string[]; header_type?: string; header_media?: string };
   };
   try {
     body = await req.json();
@@ -57,19 +64,53 @@ export async function POST(req: NextRequest) {
 
   const { phone, contact_id, message, header, footer } = body;
 
-  // Normalize buttons (max 3, must have title) — WhatsApp interactive button limit
-  const rawButtons = Array.isArray(body.buttons) ? body.buttons : [];
-  const buttons = rawButtons
+  // Buttons (max 3, title required) — WhatsApp interactive button limit
+  const buttons = (Array.isArray(body.buttons) ? body.buttons : [])
     .filter((b) => b && (b.title || '').trim())
     .slice(0, 3)
     .map((b, i) => ({ id: (b.id || `btn_${i + 1}`).toString(), title: (b.title || '').toString().slice(0, 20) }));
-  const hasButtons = buttons.length > 0;
 
-  if (!message || !message.trim()) {
-    return NextResponse.json({ error: 'message is required' }, { status: 400 });
-  }
+  // List sections (max 10 rows total) — WhatsApp list limit
+  let rowCount = 0;
+  const sections = (Array.isArray(body.sections) ? body.sections : [])
+    .map((s) => ({
+      title: (s.title || '').toString().slice(0, 24),
+      rows: (Array.isArray(s.rows) ? s.rows : [])
+        .filter((r) => r && (r.title || '').trim() && rowCount < 10 && ++rowCount)
+        .map((r, i) => ({
+          id:    (r.id || `row_${i + 1}`).toString(),
+          title: (r.title || '').toString().slice(0, 24),
+          ...(r.description ? { description: r.description.toString().slice(0, 72) } : {}),
+        })),
+    }))
+    .filter((s) => s.rows.length > 0);
+
+  const media    = body.media || {};
+  const template = body.template || {};
+
+  // Message type — explicit `type` warna auto-detect
+  const type = (body.type || '').toLowerCase()
+    || (template.name ? 'template'
+      : (media.url || media.id) ? 'media'
+      : sections.length ? 'list'
+      : buttons.length ? 'buttons'
+      : 'text');
+
   if (!phone && !contact_id) {
     return NextResponse.json({ error: 'phone or contact_id is required' }, { status: 400 });
+  }
+  // Per-type required fields
+  if (['text', 'buttons', 'list'].includes(type) && (!message || !message.trim())) {
+    return NextResponse.json({ error: 'message is required' }, { status: 400 });
+  }
+  if (type === 'list' && sections.length === 0) {
+    return NextResponse.json({ error: 'sections with rows are required for a list message' }, { status: 400 });
+  }
+  if (type === 'media' && !media.url && !media.id) {
+    return NextResponse.json({ error: 'media.url or media.id is required for a media message' }, { status: 400 });
+  }
+  if (type === 'template' && !template.name) {
+    return NextResponse.json({ error: 'template.name is required for a template message' }, { status: 400 });
   }
 
   // ── Resolve contact ──────────────────────────────────────────
@@ -101,17 +142,60 @@ export async function POST(req: NextRequest) {
     contactPhone = normalised;
   }
 
-  // ── Send via Meta WhatsApp API ────────────────────────────────
+  const at  = access_token as string;
+  const pn  = phone_number_id as string;
+  const bodyText = (message || '').trim();
+  const hdr = header?.trim() || undefined;
+  const ftr = footer?.trim() || undefined;
+
+  // ── Send via Meta WhatsApp API (by type) ─────────────────────
   let wamid: string | null = null;
+  let dbType = 'text';
+  let storedContent: string = bodyText;
   try {
-    const result = hasButtons
-      ? await sendButtonMessage(
-          access_token as string, phone_number_id as string, contactPhone,
-          message.trim(), buttons, header?.trim() || undefined, footer?.trim() || undefined,
-        )
-      : await sendTextMessage(
-          access_token as string, phone_number_id as string, contactPhone, message.trim(),
-        );
+    let result: { messages?: { id: string }[] } | undefined;
+
+    if (type === 'buttons') {
+      result = await sendButtonMessage(at, pn, contactPhone, bodyText, buttons, hdr, ftr);
+      dbType = 'interactive';
+      storedContent = JSON.stringify({ __type: 'buttons', body: bodyText, buttons, header: hdr || '', footer: ftr || '' });
+
+    } else if (type === 'list') {
+      const btnText = (body.button_text || 'Select').toString().slice(0, 20);
+      result = await sendListMessage(at, pn, contactPhone, bodyText, btnText, sections, hdr, ftr);
+      dbType = 'interactive';
+      storedContent = JSON.stringify({ __type: 'list', body: bodyText, button: btnText, sections, header: hdr || '', footer: ftr || '' });
+
+    } else if (type === 'media') {
+      const mt = (['image', 'video', 'document', 'audio'].includes((media.type || '').toLowerCase())
+        ? media.type!.toLowerCase() : 'image') as 'image' | 'video' | 'document' | 'audio';
+      result = media.id
+        ? await sendMediaMessage(at, pn, contactPhone, mt, media.id, media.caption, media.filename)
+        : await sendMediaUrlMessage(at, pn, contactPhone, mt, media.url!, media.caption, media.filename);
+      dbType = mt;
+      storedContent = JSON.stringify({ __type: 'media', media_id: media.id || undefined, media_url: media.url || undefined, mime_type: mt, caption: media.caption || '', filename: media.filename || '', workspace_id: workspaceId });
+
+    } else if (type === 'template') {
+      const components: object[] = [];
+      const ht = (template.header_type || '').toUpperCase();
+      if (template.header_media && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(ht)) {
+        const m = ht.toLowerCase();
+        const isUrl = template.header_media.startsWith('http');
+        components.push({ type: 'header', parameters: [{ type: m, [m]: isUrl ? { link: template.header_media } : { id: template.header_media } }] });
+      }
+      if (Array.isArray(template.params) && template.params.length > 0) {
+        components.push({ type: 'body', parameters: template.params.map((p) => ({ type: 'text', text: String(p) })) });
+      }
+      result = await sendTemplateMessage(at, pn, contactPhone, template.name!, template.language || 'en', components);
+      dbType = 'template';
+      storedContent = JSON.stringify({ __type: 'template', template_name: template.name, body: bodyText || `[Template: ${template.name}]` });
+
+    } else {
+      result = await sendTextMessage(at, pn, contactPhone, bodyText);
+      dbType = 'text';
+      storedContent = bodyText;
+    }
+
     wamid = result?.messages?.[0]?.id || null;
   } catch (err: unknown) {
     const detail = err instanceof Error ? err.message : 'WhatsApp API error';
@@ -120,14 +204,10 @@ export async function POST(req: NextRequest) {
 
   // ── Save to DB ───────────────────────────────────────────────
   const now = utcNow();
-  // Interactive button message ke liye content JSON store karo (inbox me render ho)
-  const storedContent = hasButtons
-    ? JSON.stringify({ __type: 'buttons', body: message.trim(), buttons, header: header?.trim() || '', footer: footer?.trim() || '' })
-    : message.trim();
   const msgId = await insert(
     `INSERT INTO messages (workspace_id, contact_id, wamid, direction, type, content, status, sent_at, created_at)
      VALUES (?, ?, ?, 'outbound', ?, ?, 'sent', ?, ?)`,
-    [workspaceId, contactId, wamid, hasButtons ? 'interactive' : 'text', storedContent, now, now]
+    [workspaceId, contactId, wamid, dbType, storedContent, now, now]
   );
 
   // Denormalized last-activity for fast inbox ordering

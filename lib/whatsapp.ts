@@ -177,6 +177,29 @@ export async function sendMediaMessage(
   return data;
 }
 
+// ---- Send any media by URL (image/document/video/audio) ----
+export async function sendMediaUrlMessage(
+  accessToken:   string,
+  phoneNumberId: string,
+  to:            string,
+  mediaType:     'image' | 'document' | 'video' | 'audio',
+  mediaUrl:      string,
+  caption?:      string,
+  filename?:     string
+) {
+  const client = createWAClient(accessToken);
+  const payload: Record<string, unknown> = { link: mediaUrl };
+  if (caption)  payload.caption  = caption;
+  if (filename) payload.filename = filename;
+  const { data } = await client.post(`/${phoneNumberId}/messages`, {
+    messaging_product: 'whatsapp',
+    to,
+    type:        mediaType,
+    [mediaType]: payload,
+  });
+  return data;
+}
+
 // ---- Upload media file to WhatsApp and return media_id ----
 export async function uploadMedia(
   accessToken:   string,
