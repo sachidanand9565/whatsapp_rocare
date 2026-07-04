@@ -12,7 +12,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { query, insert, execute } from '@/lib/db';
-import { sendTextMessage } from '@/lib/whatsapp';
+import { sendTextMessage, sendButtonMessage } from '@/lib/whatsapp';
 import { normalizePhone, utcNow } from '@/lib/utils';
 import { optionsResponse } from '@/lib/cors';
 import { RowDataPacket } from 'mysql2';
@@ -44,14 +44,26 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Parse body ───────────────────────────────────────────────
-  let body: { phone?: string; contact_id?: number; message?: string };
+  let body: {
+    phone?: string; contact_id?: number; message?: string;
+    buttons?: { id?: string; title?: string }[];
+    header?: string; footer?: string;
+  };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { phone, contact_id, message } = body;
+  const { phone, contact_id, message, header, footer } = body;
+
+  // Normalize buttons (max 3, must have title) — WhatsApp interactive button limit
+  const rawButtons = Array.isArray(body.buttons) ? body.buttons : [];
+  const buttons = rawButtons
+    .filter((b) => b && (b.title || '').trim())
+    .slice(0, 3)
+    .map((b, i) => ({ id: (b.id || `btn_${i + 1}`).toString(), title: (b.title || '').toString().slice(0, 20) }));
+  const hasButtons = buttons.length > 0;
 
   if (!message || !message.trim()) {
     return NextResponse.json({ error: 'message is required' }, { status: 400 });
@@ -92,12 +104,14 @@ export async function POST(req: NextRequest) {
   // ── Send via Meta WhatsApp API ────────────────────────────────
   let wamid: string | null = null;
   try {
-    const result = await sendTextMessage(
-      access_token as string,
-      phone_number_id as string,
-      contactPhone,
-      message.trim()
-    );
+    const result = hasButtons
+      ? await sendButtonMessage(
+          access_token as string, phone_number_id as string, contactPhone,
+          message.trim(), buttons, header?.trim() || undefined, footer?.trim() || undefined,
+        )
+      : await sendTextMessage(
+          access_token as string, phone_number_id as string, contactPhone, message.trim(),
+        );
     wamid = result?.messages?.[0]?.id || null;
   } catch (err: unknown) {
     const detail = err instanceof Error ? err.message : 'WhatsApp API error';
@@ -106,10 +120,14 @@ export async function POST(req: NextRequest) {
 
   // ── Save to DB ───────────────────────────────────────────────
   const now = utcNow();
+  // Interactive button message ke liye content JSON store karo (inbox me render ho)
+  const storedContent = hasButtons
+    ? JSON.stringify({ __type: 'buttons', body: message.trim(), buttons, header: header?.trim() || '', footer: footer?.trim() || '' })
+    : message.trim();
   const msgId = await insert(
     `INSERT INTO messages (workspace_id, contact_id, wamid, direction, type, content, status, sent_at, created_at)
-     VALUES (?, ?, ?, 'outbound', 'text', ?, 'sent', ?, ?)`,
-    [workspaceId, contactId, wamid, message.trim(), now, now]
+     VALUES (?, ?, ?, 'outbound', ?, ?, 'sent', ?, ?)`,
+    [workspaceId, contactId, wamid, hasButtons ? 'interactive' : 'text', storedContent, now, now]
   );
 
   // Denormalized last-activity for fast inbox ordering
