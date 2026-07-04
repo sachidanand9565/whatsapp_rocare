@@ -18,7 +18,7 @@ import {
   MessageSquare, Clock, GitBranch, ArrowRightLeft, XCircle,
   Save, ArrowLeft, Plus, Trash2, X, Loader2, HelpCircle,
   Zap, Globe, Database, UserCheck, Timer, LayoutTemplate, Settings, Image,
-  ChevronLeft, ChevronRight, ShoppingCart, Workflow, Paperclip,
+  ChevronLeft, ChevronRight, ShoppingCart, Workflow, Paperclip, Download, Upload,
 } from 'lucide-react';
 
 // ── Node type configs ─────────────────────────────────────────
@@ -1845,6 +1845,7 @@ export default function FlowBuilderPage() {
   const [loading, setLoading]            = useState(true);
   const [showHelp, setShowHelp]          = useState(false);
   const wrapper                          = useRef<HTMLDivElement>(null);
+  const importRef                        = useRef<HTMLInputElement>(null);
   const [viewport, setViewport]          = useState({ x: 0, y: 0, zoom: 1 });
 
   // Flow settings (trigger edit)
@@ -1966,6 +1967,55 @@ export default function FlowBuilderPage() {
     finally { setSaving(false); }
   }
 
+  // ── Export current flow to a JSON file ──────────────────────
+  function exportFlow() {
+    const realN = nodes
+      .filter(n => n.data?.type !== 'trigger')
+      .map(({ id, data, position }) => ({ id, type: data.type, data, position }));
+    const payload = {
+      _type:        'whatsapp-flow-export',
+      version:       1,
+      exported_at:   new Date().toISOString(),
+      name:          flowName,
+      trigger_type:  settingsTriggerType,
+      trigger_value: settingsKeywords.join(','),
+      nodes:         realN,
+      edges:         edges.map(({ id, source, target, sourceHandle }) => ({ id, source, target, sourceHandle })),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `${(flowName || 'flow').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.flow.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success('Flow exported');
+  }
+
+  // ── Import a flow JSON into the current canvas ──────────────
+  function importFlow(file: File) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result));
+        if (!Array.isArray(data.nodes)) throw new Error('Invalid flow file');
+        if (!confirm('Import karne se is canvas ke saare nodes replace ho jayenge. Continue?')) return;
+        const loadedNodes = (data.nodes as Node[]).map(n => ({ ...n, type: 'flowNode' }));
+        const tType = data.trigger_type || settingsTriggerType || 'keyword';
+        const tVal  = (data.trigger_value ?? settingsKeywords.join(',')) as string;
+        setNodes(ensureTriggerNode(loadedNodes, tType, tVal || null));
+        setEdges((data.edges || []).map((e: Edge) => ({ ...e, type: 'deleteEdge' })));
+        setSettingsTriggerType(tType);
+        setSettingsKeywords((tVal || '').split(',').map((k: string) => k.trim()).filter(Boolean));
+        setSelectedNode(null); setShowHelp(false);
+        toast.success('Flow imported — review karke "Save" dabayein');
+      } catch {
+        toast.error('Invalid flow file');
+      }
+    };
+    reader.readAsText(file);
+  }
+
   if (loading) return (
     <div className="h-[calc(100vh-5rem)] flex items-center justify-center">
       <Loader2 size={32} className="animate-spin text-whatsapp-teal"/>
@@ -1990,6 +2040,18 @@ export default function FlowBuilderPage() {
         <button onClick={loadExample}
           className="flex items-center gap-1.5 px-2.5 py-1.5 border border-purple-300 text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg text-xs font-medium flex-shrink-0">
           <Zap size={11}/> Example
+        </button>
+
+        {/* Import / Export */}
+        <input ref={importRef} type="file" accept=".json,application/json" className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) importFlow(f); e.target.value = ''; }} />
+        <button onClick={() => importRef.current?.click()} title="Import a flow from a .json file"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-xs font-medium flex-shrink-0">
+          <Upload size={11}/> Import
+        </button>
+        <button onClick={exportFlow} title="Export this flow to a .json file"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-xs font-medium flex-shrink-0">
+          <Download size={11}/> Export
         </button>
 
         <button onClick={()=>{setShowSettings(v=>!v);setSelectedNode(null);setShowHelp(false);}}
