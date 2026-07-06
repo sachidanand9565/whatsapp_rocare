@@ -15,6 +15,7 @@
  *   transfer       — transfer chat to human agent
  *   end            — end the flow
  */
+import { createHash } from 'crypto';
 import { query, insert, execute } from '@/lib/db';
 import { sendTextMessage, sendTemplateMessage, sendButtonMessage, sendListMessage, sendMediaButtonMessage, sendMultiProductMessage } from '@/lib/whatsapp';
 import { utcNow } from '@/lib/utils';
@@ -54,6 +55,7 @@ export interface FlowNode {
     id_field?:          string;   // field name for row id   e.g. "id"
     title_field?:       string;   // field name for row title e.g. "name"
     description_field?: string;   // field name for description (optional)
+    cache_enabled?:     boolean;  // cache API response (refresh after 24h) — flow ko fast banata hai
     // media_message
     media_type?:     'IMAGE' | 'VIDEO' | 'DOCUMENT' | 'AUDIO';
     media_url?:      string;
@@ -366,8 +368,36 @@ async function executeFromNode(
             ? substituteVars(node.data.body, vars, extras)
             : undefined;
 
-          const res  = await fetch(url, { method, headers: headersObj, body: reqBody });
-          const json: unknown = await res.json();
+          // ── Cache (optional) — API baar-baar call na ho, 24h me refresh ──
+          // Cache key resolved request pe based hai (URL/body), to alag vars → alag cache.
+          let json: unknown;
+          const cacheOn  = !!node.data.cache_enabled;
+          const cacheKey = createHash('md5').update(`${method}|${url}|${reqBody || ''}`).digest('hex');
+          if (cacheOn) {
+            const cached = await query<RowDataPacket[]>(
+              `SELECT data FROM flow_list_cache
+               WHERE node_id = ? AND cache_key = ? AND fetched_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+               LIMIT 1`,
+              [nodeId, cacheKey]
+            ).catch(() => [] as RowDataPacket[]);
+            if (cached.length > 0) {
+              try { json = JSON.parse(cached[0].data as string); } catch { json = undefined; }
+            }
+          }
+
+          // Cache miss / disabled → live API call
+          if (json === undefined) {
+            const res = await fetch(url, { method, headers: headersObj, body: reqBody });
+            json = await res.json();
+            if (cacheOn) {
+              await execute(
+                `INSERT INTO flow_list_cache (workspace_id, node_id, cache_key, data, fetched_at)
+                 VALUES (?, ?, ?, ?, NOW())
+                 ON DUPLICATE KEY UPDATE data = VALUES(data), fetched_at = NOW()`,
+                [workspaceId, nodeId, cacheKey, JSON.stringify(json)]
+              ).catch(() => {});
+            }
+          }
 
           // Navigate to nested path e.g. "data.products" → obj.data.products
           let data: unknown = json;

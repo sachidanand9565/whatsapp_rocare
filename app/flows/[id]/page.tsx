@@ -462,6 +462,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
   const [dynSaveAs,      setDynSaveAs]     = useState(node.data.save_response_as||'');
   const [dynSaveIdAs,    setDynSaveIdAs]   = useState(node.data.save_id_as||'');
   const [dynSaveTitleAs, setDynSaveTitleAs]= useState(node.data.save_title_as||'');
+  const [dynCache,       setDynCache]      = useState(!!node.data.cache_enabled);
   const [listBodyText,   setListBodyText]  = useState(node.data.body_text||'');
   const [listHeaderText, setListHeaderText]= useState(node.data.header_text||'');
   const [listFooterText, setListFooterText]= useState(node.data.footer_text||'');
@@ -600,7 +601,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
       updates.template_header_media=isTplMedia ? tplHeaderMedia : '';
     }
     if (type==='list_message')   { updates.body_text=listBodyText; updates.header_text=listHeaderText; updates.footer_text=listFooterText; updates.list_button_text=listButtonText; updates.list_sections=listSections; updates.save_id_as=listSaveIdAs; updates.save_title_as=listSaveTitleAs; }
-    if (type==='dynamic_list')   { updates.url=dynUrl; updates.method=dynMethod; updates.headers=dynHeaders; updates.body=dynReqBody; updates.items_path=dynItemsPath; updates.id_field=dynIdField; updates.title_field=dynTitleField; updates.description_field=dynDescField; updates.body_text=dynBodyText; updates.header_text=dynHeaderText; updates.footer_text=dynFooterText; updates.list_button_text=dynBtnText; updates.save_response_as=dynSaveAs; updates.save_id_as=dynSaveIdAs; updates.save_title_as=dynSaveTitleAs; }
+    if (type==='dynamic_list')   { updates.url=dynUrl; updates.method=dynMethod; updates.headers=dynHeaders; updates.body=dynReqBody; updates.items_path=dynItemsPath; updates.id_field=dynIdField; updates.title_field=dynTitleField; updates.description_field=dynDescField; updates.body_text=dynBodyText; updates.header_text=dynHeaderText; updates.footer_text=dynFooterText; updates.list_button_text=dynBtnText; updates.save_response_as=dynSaveAs; updates.save_id_as=dynSaveIdAs; updates.save_title_as=dynSaveTitleAs; updates.cache_enabled=dynCache; }
     if (type==='media_message') { updates.media_type=mediaType; updates.media_url=mediaUrl; updates.media_id=mediaId; updates.caption=mediaCaption; updates.buttons=mediaButtons; }
     if (type==='multi_product') { updates.header_text=prodHeaderText; updates.body_text=prodBodyText; updates.footer_text=prodFooterText; updates.catalog_id=catalogId; updates.multi_sections=multiSections; }
     if (type==='connect_flow')   { updates.target_flow_id=targetFlowId; updates.target_flow_name=allFlows.find(f=>String(f.id)===String(targetFlowId))?.name || node.data.target_flow_name || ''; }
@@ -788,6 +789,20 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
             <input value={dynSaveAs} onChange={e=>setDynSaveAs(e.target.value)}
               placeholder="e.g. products_data"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-400"/>
+          </div>
+
+          {/* Cache toggle */}
+          <div className={`rounded-lg border p-2.5 ${dynCache ? 'bg-violet-50 border-violet-200' : 'bg-gray-50 border-gray-200'}`}>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input type="checkbox" checked={dynCache} onChange={e=>setDynCache(e.target.checked)}
+                className="mt-0.5 accent-violet-600" />
+              <span>
+                <span className="font-semibold text-gray-700 text-xs">Cache list (faster)</span>
+                <span className="block text-[10px] text-gray-500 mt-0.5">
+                  Calls the API once and stores the data — it won't call on every message. Auto-refreshes every <strong>24 hours</strong> (new data is picked up too). Makes the flow faster.
+                </span>
+              </span>
+            </label>
           </div>
 
           {/* Test API */}
@@ -1999,7 +2014,7 @@ export default function FlowBuilderPage() {
       try {
         const data = JSON.parse(String(reader.result));
         if (!Array.isArray(data.nodes)) throw new Error('Invalid flow file');
-        if (!confirm('Import karne se is canvas ke saare nodes replace ho jayenge. Continue?')) return;
+        if (!confirm('Importing will replace all nodes on this canvas. Continue?')) return;
         const loadedNodes = (data.nodes as Node[]).map(n => ({ ...n, type: 'flowNode' }));
         const tType = data.trigger_type || settingsTriggerType || 'keyword';
         const tVal  = (data.trigger_value ?? settingsKeywords.join(',')) as string;
@@ -2008,7 +2023,7 @@ export default function FlowBuilderPage() {
         setSettingsTriggerType(tType);
         setSettingsKeywords((tVal || '').split(',').map((k: string) => k.trim()).filter(Boolean));
         setSelectedNode(null); setShowHelp(false);
-        toast.success('Flow imported — review karke "Save" dabayein');
+        toast.success('Flow imported — review and click "Save"');
       } catch {
         toast.error('Invalid flow file');
       }
