@@ -4,7 +4,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { query, insert, execute } from '@/lib/db';
-import { parseWebhookBody, sendTextMessage, markAsRead, sendTypingIndicator, TemplateStatusUpdate, IncomingCall } from '@/lib/whatsapp';
+import { parseWebhookBody, sendTextMessage, markAsRead, TemplateStatusUpdate, IncomingCall } from '@/lib/whatsapp';
 import { normalizePhone, utcNow, unixToUtc } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { emitSSE } from '@/lib/sse';
@@ -102,11 +102,6 @@ export async function POST(req: NextRequest) {
       [workspaceId, phone]
     );
     contactId = contactRow[0].id as number;
-
-    // Turant "typing…" dikhao — user ko lage bot reply kar raha hai (perceived speed)
-    if (workspaceAccessToken && phoneNumberId && msg.wamid) {
-      sendTypingIndicator(workspaceAccessToken, phoneNumberId, msg.wamid).catch(() => {});
-    }
 
     if (profileName && !contactRow[0].name) {
       await execute(
@@ -292,13 +287,10 @@ export async function POST(req: NextRequest) {
     if (msg.type === 'text' && msg.text) {
       const token   = workspaceAccessToken || '';
       const pnId    = phoneNumberId || '';
-      // Show typing indicator to user while chatbot/flow processes
-      if (token && pnId && msg.wamid) {
-        sendTypingIndicator(token, pnId, msg.wamid).catch(() => {});
-      }
-      const resumed = await tryResumeFlow(workspaceId, contactId, phone, msg.text, token, pnId).catch(() => false);
+      // Typing indicator flow ke andar chalta hai — sirf tab jab reply aane wala ho
+      const resumed = await tryResumeFlow(workspaceId, contactId, phone, msg.text, token, pnId, undefined, undefined, msg.wamid).catch(() => false);
       if (!resumed) {
-        const started = await tryStartFlow(workspaceId, contactId, phone, msg.text, token, pnId).catch(() => false);
+        const started = await tryStartFlow(workspaceId, contactId, phone, msg.text, token, pnId, msg.wamid).catch(() => false);
         if (!started) {
           await processChatbot(workspaceId, contactId, msg.text, pnId);
         }
@@ -309,14 +301,20 @@ export async function POST(req: NextRequest) {
       const pnId          = phoneNumberId || '';
       const buttonText    = msg.button.text    || '';
       const buttonPayload = msg.button.payload || buttonText;
-      await tryResumeFlow(workspaceId, contactId, phone, buttonText, token, pnId, buttonPayload, msg.replied_to_wamid).catch(() => {});
+      // Pehle active session resume karo; agar koi session nahi → button text ko
+      // keyword maan ke naya flow start karo (e.g. template "Continue" button → Continue flow)
+      const resumed = await tryResumeFlow(workspaceId, contactId, phone, buttonText, token, pnId, buttonPayload, msg.replied_to_wamid, msg.wamid).catch(() => false);
+      if (!resumed) {
+        const started = await tryStartFlow(workspaceId, contactId, phone, buttonText, token, pnId, msg.wamid).catch(() => false);
+        if (!started) await processChatbot(workspaceId, contactId, buttonText, pnId);
+      }
     } else if (msg.type === 'interactive' && msg.interactiveReply) {
       // Interactive button_message / list_message reply — resume active flow
       const token      = workspaceAccessToken || '';
       const pnId       = phoneNumberId || '';
       const replyTitle = msg.interactiveReply.title || '';
       const replyId    = msg.interactiveReply.id    || replyTitle;
-      await tryResumeFlow(workspaceId, contactId, phone, replyTitle, token, pnId, replyId, msg.replied_to_wamid).catch(() => {});
+      await tryResumeFlow(workspaceId, contactId, phone, replyTitle, token, pnId, replyId, msg.replied_to_wamid, msg.wamid).catch(() => {});
     }
   }
 

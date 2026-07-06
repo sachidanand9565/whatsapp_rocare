@@ -17,7 +17,7 @@
  */
 import { createHash } from 'crypto';
 import { query, insert, execute } from '@/lib/db';
-import { sendTextMessage, sendTemplateMessage, sendButtonMessage, sendListMessage, sendMediaButtonMessage, sendMultiProductMessage } from '@/lib/whatsapp';
+import { sendTextMessage, sendTemplateMessage, sendButtonMessage, sendListMessage, sendMediaButtonMessage, sendMultiProductMessage, sendTypingIndicator } from '@/lib/whatsapp';
 import { utcNow } from '@/lib/utils';
 import { emitSSE } from '@/lib/sse';
 import { RowDataPacket } from 'mysql2';
@@ -224,10 +224,11 @@ function getNode(nodes: FlowNode[], id: string): FlowNode | null {
 
 function getNextNode(edges: FlowEdge[], nodes: FlowNode[], sourceId: string, handle?: string): FlowNode | null {
   const edge = handle
+    // Handle-based routing (button id / condition true-false): STRICTLY match the handle.
+    // "Any edge" fallback jaan-bujhkar hata diya — warna unconnected button/branch galat
+    // node pe route ho jata tha (e.g. New Purchase → Book Service ka flow).
     ? (edges.find((e) => e.source === sourceId && e.sourceHandle === handle)
-      || edges.find((e) => e.source === sourceId && e.sourceHandle === 'default')
-      || edges.find((e) => e.source === sourceId && !e.sourceHandle)
-      || edges.find((e) => e.source === sourceId)) // fallback: any edge from this node
+      || edges.find((e) => e.source === sourceId && e.sourceHandle === 'default'))
     : edges.find((e) => e.source === sourceId);
   if (!edge) return null;
   return getNode(nodes, edge.target);
@@ -747,6 +748,7 @@ export async function tryStartFlow(
   userMessage:   string,
   accessToken:   string,
   phoneNumberId: string,
+  incomingWamid?: string,   // typing indicator ke liye (reply confirm hone par hi)
 ): Promise<boolean> {
   const msg = userMessage.trim().toLowerCase();
 
@@ -772,6 +774,9 @@ export async function tryStartFlow(
 
   const startNode  = findStartNode(nodes, edges);
   if (!startNode) return false;
+
+  // Reply confirm hai (flow match hua) → ab "typing…" dikhao
+  if (incomingWamid) sendTypingIndicator(accessToken, phoneNumberId, incomingWamid).catch(() => {});
 
   await abandonOldSessions(workspaceId, contactId);
 
@@ -801,6 +806,7 @@ export async function tryResumeFlow(
   phoneNumberId: string,
   buttonPayload?: string, // button id when user clicked an interactive button
   contextWamid?: string,  // wamid of the message the reply is in response to (stale-reply guard)
+  incomingWamid?: string, // typing indicator ke liye (active session confirm hone par)
 ): Promise<boolean> {
   // Session + flow + contact name — ek hi query me (kam DB round-trips = faster reply)
   const rows = await query<RowDataPacket[]>(
@@ -855,6 +861,10 @@ export async function tryResumeFlow(
   const currentNode = getNode(nodes, session.current_node_id);
   if (!currentNode) { await endSession(session.id); return false; }
 
+  // Active session mila + node valid → reply aane wala hai → "typing…" dikhao
+  // (flow ke slow processing/API call ke doraan user ko typing dikhega)
+  if (incomingWamid) sendTypingIndicator(accessToken, phoneNumberId, incomingWamid).catch(() => {});
+
   let nextNode: FlowNode | null = null;
   // Effective match value: button payload (id) takes priority over text
   const effectiveMsg = (buttonPayload || userMessage).trim().toLowerCase();
@@ -895,9 +905,11 @@ export async function tryResumeFlow(
     nextNode = getNextNode(edges, nodes, currentNode.id, handle);
   } else if (currentNode.type === 'button_message' || currentNode.type === 'list_message' || currentNode.type === 'multi_product' || currentNode.type === 'media_message') {
     if (buttonPayload) {
-      // User clicked a button/list item/product (interactive reply) — advance based on button ID
-      nextNode = getNextNode(edges, nodes, currentNode.id, effectiveMsg)
-        || getNextNode(edges, nodes, currentNode.id);
+      // User clicked a button/item — advance STRICTLY based on that button's connection.
+      // Agar us button ka koi connected node nahi hai to kuch mat karo (misroute mat karo);
+      // node par wait karte raho taaki user koi connected button chun sake.
+      nextNode = getNextNode(edges, nodes, currentNode.id, effectiveMsg);
+      if (!nextNode) return true;
     } else {
       // Plain text received while waiting for interactive click — end session so trigger keyword can restart flow
       await endSession(session.id);
