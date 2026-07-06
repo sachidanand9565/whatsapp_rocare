@@ -89,6 +89,12 @@ export async function POST(req: NextRequest) {
 
     const campaign = rows[0];
 
+    // Deactivated/finished campaign → stop sending (API bhi rukega, sirf cron nahi)
+    const campStatus = String(campaign.status || '');
+    if (['paused', 'completed', 'failed', 'stopped'].includes(campStatus)) {
+      return apiError(`Campaign "${campaignName}" is ${campStatus} — not sending`, 409);
+    }
+
     const accessToken   = (campaign.access_token   as string) || process.env.WHATSAPP_ACCESS_TOKEN || '';
     const phoneNumberId = (campaign.phone_number_id as string) || process.env.PHONE_NUMBER_ID      || '';
 
