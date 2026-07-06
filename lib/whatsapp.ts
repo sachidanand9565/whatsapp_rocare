@@ -327,7 +327,9 @@ export async function sendMediaButtonMessage(
   return data;
 }
 
-// ---- Send typing indicator — same status pattern as markAsRead ----
+// ---- Send typing indicator (WhatsApp Cloud API) ----
+// Correct payload: mark the incoming message as read + include a typing_indicator.
+// Typing shows for ~25s or until the next message is sent. `status: 'typing'` is NOT valid.
 export async function sendTypingIndicator(
   accessToken:   string,
   phoneNumberId: string,
@@ -337,8 +339,9 @@ export async function sendTypingIndicator(
   try {
     const { data } = await client.post(`/${phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
-      status:            'typing',
+      status:            'read',
       message_id:        messageId,
+      typing_indicator:  { type: 'text' },
     });
     return data;
   } catch (err: unknown) {

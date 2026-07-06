@@ -802,20 +802,39 @@ export async function tryResumeFlow(
   buttonPayload?: string, // button id when user clicked an interactive button
   contextWamid?: string,  // wamid of the message the reply is in response to (stale-reply guard)
 ): Promise<boolean> {
-  const sessions = await query<RowDataPacket[]>(
-    "SELECT * FROM flow_sessions WHERE workspace_id = ? AND contact_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1",
+  // Session + flow + contact name — ek hi query me (kam DB round-trips = faster reply)
+  const rows = await query<RowDataPacket[]>(
+    `SELECT s.id AS s_id, s.contact_id AS s_contact_id, s.flow_id AS s_flow_id,
+            s.current_node_id AS s_node, s.variables AS s_vars,
+            f.id AS f_id, f.workspace_id AS f_ws, f.name AS f_name,
+            f.trigger_type AS f_ttype, f.trigger_value AS f_tval,
+            f.nodes AS f_nodes, f.edges AS f_edges, f.is_active AS f_active,
+            c.name AS contact_name
+     FROM flow_sessions s
+     JOIN flows f          ON f.id = s.flow_id
+     LEFT JOIN contacts c  ON c.id = s.contact_id
+     WHERE s.workspace_id = ? AND s.contact_id = ? AND s.status = 'active'
+     ORDER BY s.id DESC LIMIT 1`,
     [workspaceId, contactId]
   );
-  if (sessions.length === 0) return false;
+  if (rows.length === 0) return false;
+  const r = rows[0];
 
-  const sess = sessions[0];
   const session: FlowSession = {
-    id:              sess.id as number,
-    contact_id:      sess.contact_id as number,
-    flow_id:         sess.flow_id as number,
-    current_node_id: sess.current_node_id as string,
-    variables:       typeof sess.variables === 'string' ? JSON.parse(sess.variables) : sess.variables || {},
+    id:              r.s_id as number,
+    contact_id:      r.s_contact_id as number,
+    flow_id:         r.s_flow_id as number,
+    current_node_id: r.s_node as string,
+    variables:       typeof r.s_vars === 'string' ? JSON.parse(r.s_vars) : (r.s_vars || {}),
   };
+  const contactName = (r.contact_name as string) || '';
+  const nodes: FlowNode[] = typeof r.f_nodes === 'string' ? JSON.parse(r.f_nodes) : r.f_nodes;
+  const edges: FlowEdge[] = typeof r.f_edges === 'string' ? JSON.parse(r.f_edges) : r.f_edges;
+  const flow = {
+    id: r.f_id, workspace_id: r.f_ws, name: r.f_name,
+    trigger_type: r.f_ttype, trigger_value: r.f_tval,
+    nodes, edges, is_active: r.f_active,
+  } as unknown as FlowDefinition;
 
   // Reply kaunse list/button ka hai — us message ko bhejne wale node par flow ko le jao.
   // - Current list ka tap → wahi node → normal aage.
@@ -833,23 +852,12 @@ export async function tryResumeFlow(
     }
   }
 
-  const flowRows = await query<RowDataPacket[]>('SELECT * FROM flows WHERE id = ? AND workspace_id = ? LIMIT 1', [session.flow_id, workspaceId]);
-  if (flowRows.length === 0) { await endSession(session.id); return false; }
-
-  const flowRow = flowRows[0];
-  const nodes: FlowNode[] = typeof flowRow.nodes === 'string' ? JSON.parse(flowRow.nodes) : flowRow.nodes;
-  const edges: FlowEdge[] = typeof flowRow.edges === 'string' ? JSON.parse(flowRow.edges) : flowRow.edges;
-  const flow = { ...flowRow, nodes, edges } as unknown as FlowDefinition;
-
   const currentNode = getNode(nodes, session.current_node_id);
   if (!currentNode) { await endSession(session.id); return false; }
 
   let nextNode: FlowNode | null = null;
   // Effective match value: button payload (id) takes priority over text
   const effectiveMsg = (buttonPayload || userMessage).trim().toLowerCase();
-
-  const contactRows0 = await query<RowDataPacket[]>('SELECT name FROM contacts WHERE id = ? LIMIT 1', [contactId]);
-  const contactName  = (contactRows0[0]?.name as string) || '';
 
   if (currentNode.type === 'wait' || currentNode.type === 'set_variable') {
     nextNode = getNextNode(edges, nodes, currentNode.id);
@@ -904,8 +912,7 @@ export async function tryResumeFlow(
         moreVars[offKey] = String(Number(session.variables[offKey] || 0) + 9);
         await updateSessionNode(session.id, currentNode.id, moreVars);
         session.variables = moreVars;
-        const cRows = await query<RowDataPacket[]>('SELECT name FROM contacts WHERE id = ? LIMIT 1', [contactId]);
-        await executeFromNode(flow, session, currentNode, accessToken, phoneNumberId, contactPhone, workspaceId, '', (cRows[0]?.name as string) || '');
+        await executeFromNode(flow, session, currentNode, accessToken, phoneNumberId, contactPhone, workspaceId, '', contactName);
         return true;
       }
       // Pehle check: kya dynamic_list ka koi connected output node hai?
@@ -915,8 +922,6 @@ export async function tryResumeFlow(
         nextNode = anyNext;
       } else {
         // Output nahi → user ne purani category list se re-select kiya → re-run
-        const contactRows2 = await query<RowDataPacket[]>('SELECT name FROM contacts WHERE id = ? LIMIT 1', [contactId]);
-        const contactName2 = (contactRows2[0]?.name as string) || '';
         const rerunVars: Record<string, string> = { ...session.variables };
         rerunVars['selected_id']    = effectiveMsg;
         rerunVars['selected_title'] = userMessage;
@@ -925,7 +930,7 @@ export async function tryResumeFlow(
         if (currentNode.data.save_title_as?.trim()) rerunVars[currentNode.data.save_title_as.trim()] = userMessage;
         await updateSessionNode(session.id, currentNode.id, rerunVars);
         session.variables = rerunVars;
-        await executeFromNode(flow, session, currentNode, accessToken, phoneNumberId, contactPhone, workspaceId, effectiveMsg, contactName2);
+        await executeFromNode(flow, session, currentNode, accessToken, phoneNumberId, contactPhone, workspaceId, effectiveMsg, contactName);
         return true;
       }
     }
