@@ -65,6 +65,10 @@ export interface FlowNode {
     conditions?:     { value: string; label: string; variable?: string; operator?: string; compare_value?: string }[];
     // set_variable
     variable_name?:  string;
+    // wait — input validation (reply ko validate karo, galat ho to error bhejo)
+    validation_type?:    'none' | 'number' | 'pincode' | 'phone' | 'email' | 'regex';
+    validation_error?:   string;   // error message on invalid input
+    validation_pattern?: string;   // custom regex (validation_type = 'regex')
     // api_call
     url?:            string;
     method?:         'GET' | 'POST' | 'PUT' | 'PATCH';
@@ -135,6 +139,20 @@ function getByPath(obj: unknown, path: string): unknown {
     cur = (cur as Record<string, unknown>)[part];
   }
   return cur;
+}
+
+// Validate a user's text reply against a Wait node's expected format.
+// Returns true if valid (or no validation set).
+function validateInput(value: string, type?: string, pattern?: string): boolean {
+  const v = (value || '').trim();
+  switch (type) {
+    case 'number':  return /^\d+$/.test(v);
+    case 'pincode': return /^\d{6}$/.test(v);                 // India 6-digit PIN
+    case 'phone':   return /^\d{10,15}$/.test(v.replace(/[\s\-+()]/g, ''));
+    case 'email':   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+    case 'regex':   try { return new RegExp(pattern || '.*').test(v); } catch { return true; }
+    default:        return true;                              // 'none' / unset → always valid
+  }
 }
 
 // Interactive wait-node ne jo message bheja uska wamid → nodeId map me track karo.
@@ -870,6 +888,19 @@ export async function tryResumeFlow(
   const effectiveMsg = (buttonPayload || userMessage).trim().toLowerCase();
 
   if (currentNode.type === 'wait' || currentNode.type === 'set_variable') {
+    // Input validation (Wait node) — reply expected format me na ho to error bhejo aur wait karte raho
+    const vType = currentNode.data.validation_type;
+    if (currentNode.type === 'wait' && vType && vType !== 'none' && !buttonPayload
+        && !validateInput(userMessage, vType, currentNode.data.validation_pattern)) {
+      const errMsg = substituteVars(
+        currentNode.data.validation_error || 'Sorry, that does not look right. Please try again.',
+        session.variables, { contact_phone: contactPhone, contact_name: contactName, user_message: userMessage }
+      );
+      let wamid: string | null = null;
+      try { const res = await sendTextMessage(accessToken, phoneNumberId, contactPhone, errMsg); wamid = res?.messages?.[0]?.id || null; } catch { /**/ }
+      await saveOutboundMessage(workspaceId, session.contact_id, errMsg, wamid);
+      return true;   // node par wait karte raho, aage nahi badho
+    }
     nextNode = getNextNode(edges, nodes, currentNode.id);
   } else if (currentNode.type === 'condition') {
     const cVariable = (currentNode.data.condition_variable as string) || 'user_message';

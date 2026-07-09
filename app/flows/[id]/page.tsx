@@ -431,6 +431,9 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
   const [mediaCaption, setMediaCaption] = useState(node.data.caption||'');
   const [mediaButtons, setMediaButtons] = useState<{id:string;title:string}[]>(node.data.buttons&&node.data.media_type?node.data.buttons:[]);
   const [varName,        setVarName]       = useState(node.data.variable_name||'');
+  const [waitValType,    setWaitValType]   = useState((node.data.validation_type as string)||'none');
+  const [waitValError,   setWaitValError]  = useState(node.data.validation_error||'');
+  const [waitValPattern, setWaitValPattern]= useState(node.data.validation_pattern||'');
   const [apiUrl,         setApiUrl]        = useState(node.data.url||'');
   const [apiMethod,      setApiMethod]     = useState(node.data.method||'POST');
   const [apiHeaders,     setApiHeaders]    = useState(node.data.headers||'');
@@ -590,6 +593,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
     if (type==='transfer')       { updates.transferNote = transferNote; updates.transfer_agent_id = transferAgentId; updates.transfer_agent_name = agentsList.find(a=>String(a.id)===String(transferAgentId))?.name || node.data.transfer_agent_name || ''; }
     if (type==='condition')      { updates.condition_variable = condVar; updates.condition_operator = condOp; updates.condition_value = condVal; }
     if (type==='set_variable')   { updates.variable_name = varName; }
+    if (type==='wait')           { updates.validation_type = waitValType; updates.validation_error = waitValError; updates.validation_pattern = waitValPattern; }
     if (type==='api_call')       { updates.url=apiUrl; updates.method=apiMethod; updates.headers=apiHeaders; updates.body=apiBody; updates.save_response_as=apiSaveAs; updates.extract_fields=apiExtractFields.filter(f=>f.path&&f.variable); }
     if (type==='update_contact') { updates.contact_field=contactField; updates.field_value=fieldValue; }
     if (type==='delay')          { updates.seconds=Number(delaySecs); }
@@ -609,7 +613,7 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
     onClose();
   }
 
-  const readOnly = type==='wait' || type==='end';
+  const readOnly = type==='end';
 
   return (
     <div className="w-80 bg-white border-l border-gray-200 flex flex-col h-full shadow-xl">
@@ -1079,10 +1083,43 @@ function ConfigPanel({ node, allNodes, onUpdate, onDelete, onClose, onAddConnect
         </>}
 
         {/* WAIT */}
-        {type==='wait' && <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-          <p className="font-semibold text-yellow-800 mb-1">⏳ Wait Node</p>
-          <p className="text-yellow-700">Flow pauses here and waits for the user to reply. Connect to the next node to continue.</p>
-        </div>}
+        {type==='wait' && <>
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+            <p className="font-semibold text-yellow-800 mb-1">⏳ Wait Node</p>
+            <p className="text-yellow-700">Flow pauses here and waits for the user to reply. Connect to the next node to continue.</p>
+          </div>
+          <div>
+            <label className="block font-semibold text-gray-600 mb-1">Validate reply (optional)</label>
+            <select value={waitValType} onChange={e=>setWaitValType(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
+              <option value="none">No validation (accept anything)</option>
+              <option value="number">Number only (digits)</option>
+              <option value="pincode">Pincode (6 digits)</option>
+              <option value="phone">Phone (10–15 digits)</option>
+              <option value="email">Email</option>
+              <option value="regex">Custom pattern (regex)</option>
+            </select>
+            <p className="text-[10px] text-gray-400 mt-1">Reply is format se match na ho to error message jaayega aur flow yahi wait karega (user dobara bhejega).</p>
+          </div>
+          {waitValType==='regex' && (
+            <div>
+              <label className="block font-semibold text-gray-600 mb-1">Regex pattern</label>
+              <input value={waitValPattern} onChange={e=>setWaitValPattern(e.target.value)}
+                placeholder="e.g. ^[A-Z]{2}\\d{4}$"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-yellow-400"/>
+            </div>
+          )}
+          {waitValType!=='none' && (
+            <div>
+              <label className="block font-semibold text-gray-600 mb-1">Error message (on invalid input)</label>
+              <textarea value={waitValError} onChange={e=>setWaitValError(e.target.value)}
+                placeholder="e.g. Please enter a valid 6-digit pincode (numbers only)."
+                rows={2}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-yellow-400"/>
+              <p className="text-[10px] text-gray-400 mt-1">Khaali chhoda to default message jaayega. {'{{vars}}'} bhi use kar sakte ho.</p>
+            </div>
+          )}
+        </>}
 
         {/* CONDITION */}
         {type==='condition' && <>
