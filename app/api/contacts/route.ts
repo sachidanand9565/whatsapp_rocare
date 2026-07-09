@@ -123,6 +123,17 @@ export async function GET(req: NextRequest) {
       params.push(`${dateTo} 23:59:59`);
     }
 
+    // "Sent" filter — contacts jinhe is UTC range me OUTBOUND message gaya (actual messages se,
+    // last_message_at pe depend nahi). Frontend today ki IST boundaries UTC me bhejta hai.
+    const sentFrom = sp.get('sentFrom') || '';
+    const sentTo   = sp.get('sentTo')   || '';
+    if (sentFrom && sentTo) {
+      const sub = `EXISTS (SELECT 1 FROM messages sm WHERE sm.contact_id = %C% AND sm.direction = 'outbound' AND sm.created_at >= ? AND sm.created_at < ?)`;
+      sql      += ' AND ' + sub.replace('%C%', 'c.id');
+      countSql += ' AND ' + sub.replace('%C%', 'id');
+      params.push(sentFrom, sentTo);
+    }
+
     const campaignId = sp.get('campaignId') || '';
     if (campaignId) {
       const cid = Number(campaignId);

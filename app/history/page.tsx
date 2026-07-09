@@ -251,6 +251,7 @@ export default function HistoryPage() {
 
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo,   setDateTo]   = useState('');
+  const [sentToday, setSentToday] = useState(false);
 
   const loadContacts = useCallback((q = '') => {
     setSearching(true);
@@ -258,10 +259,19 @@ export default function HistoryPage() {
     if (q.trim()) params.set('search', q.trim());
     if (dateFrom) params.set('dateFrom', dateFrom);
     if (dateTo)   params.set('dateTo', dateTo);
+    if (sentToday) {
+      // Aaj (local) ki boundaries UTC me — contacts jinhe aaj koi outbound message gaya
+      const now   = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const end   = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      const toUtc = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
+      params.set('sentFrom', toUtc(start));
+      params.set('sentTo',   toUtc(end));
+    }
     apiFetch(`/api/contacts?${params.toString()}`)
       .then((r) => setContacts(r.data?.data || []))
       .finally(() => setSearching(false));
-  }, [dateFrom, dateTo]);
+  }, [dateFrom, dateTo, sentToday]);
 
   // Reload on mount, search change, or date filter change (debounced)
   useEffect(() => {
@@ -368,6 +378,11 @@ export default function HistoryPage() {
               </button>
             )}
           </div>
+          {/* Sent Today — contacts jinhe aaj koi message bheja gaya */}
+          <button onClick={() => setSentToday(v => !v)}
+            className={`mt-2 w-full text-xs font-medium py-1.5 rounded-lg border transition-colors ${sentToday ? 'bg-whatsapp-teal text-white border-whatsapp-teal' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+            {sentToday ? '✓ Showing today’s sent' : 'Sent today'}
+          </button>
         </div>
         <div className="px-4 py-2 border-b border-gray-100 flex items-center gap-2">
           <CheckCircle size={14} className="text-gray-400" />
