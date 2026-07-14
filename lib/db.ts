@@ -37,9 +37,24 @@ function createPool(): mysql.Pool {
   });
 }
 
-// Singleton pool to avoid exhausting connections in dev (HMR)
-const pool: mysql.Pool = global._mysqlPool ?? createPool();
-if (process.env.NODE_ENV !== 'production') global._mysqlPool = pool;
+// Lazy singleton: pool banta hai sirf pehle actual DB call par, module import par nahi.
+// Next.js build ke "Collecting page data" step me har route module import hota hai
+// (sirf metadata ke liye) — agar pool yahin ban jaaye to build-time par hi DB env vars
+// chahiye ho jaate hain, jabki build container me wo set nahi hote.
+function getPool(): mysql.Pool {
+  if (!global._mysqlPool) global._mysqlPool = createPool();
+  return global._mysqlPool;
+}
+
+// Backward-compatible default export: property/method access par hi pool resolve hota hai.
+const pool = new Proxy({} as mysql.Pool, {
+  get(_target, prop, _receiver) {
+    const actual = getPool();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const value = (actual as any)[prop];
+    return typeof value === 'function' ? value.bind(actual) : value;
+  },
+});
 
 export default pool;
 
@@ -49,20 +64,20 @@ export async function query<T = mysql.RowDataPacket[]>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params?: any[]
 ): Promise<T> {
-  const [rows] = await pool.execute(sql, params);
+  const [rows] = await getPool().execute(sql, params);
   return rows as T;
 }
 
 // ---- helper: run INSERT and return insertId ----
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function insert(sql: string, params?: any[]): Promise<number> {
-  const [result] = await pool.execute(sql, params);
+  const [result] = await getPool().execute(sql, params);
   return (result as mysql.ResultSetHeader).insertId;
 }
 
 // ---- helper: run UPDATE/DELETE and return affectedRows ----
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function execute(sql: string, params?: any[]): Promise<number> {
-  const [result] = await pool.execute(sql, params);
+  const [result] = await getPool().execute(sql, params);
   return (result as mysql.ResultSetHeader).affectedRows;
 }
