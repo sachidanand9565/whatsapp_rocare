@@ -3,7 +3,7 @@ os: linux
 
 files:
   - source: /
-    destination: /home/ec2-user/Sk_whatsapp
+    destination: /home/ec2-user/whatsapp
 
 hooks:
   ApplicationStop:
