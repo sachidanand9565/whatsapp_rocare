@@ -1,7 +1,7 @@
 # Fix ownership of the app directory
-sudo chown -R ec2-user:ec2-user /home/ec2-user/Sk_whatsapp
+sudo chown -R ec2-user:ec2-user /home/ec2-user/whatsapp
 
-cd /home/ec2-user/Sk_whatsapp
+cd /home/ec2-user/whatsapp
 
 npm install
 
