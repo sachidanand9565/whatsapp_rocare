@@ -862,6 +862,41 @@ export default function InboxPage() {
     });
   }, []);
 
+  // Upsert a single contact pushed over SSE into the right list(s) — avoids
+  // re-fetching the full 500-row list on every incoming message/status change.
+  // Falls back to a full refetch when a campaign filter is active, since the
+  // per-contact push doesn't evaluate campaign-filter scoping.
+  const applyContactUpdate = useCallback((
+    contact: Contact,
+    inInbox: boolean,
+    inIntervened: boolean,
+  ) => {
+    if (campaignFilterRef.current) {
+      loadContacts(campaignFilterRef.current, true);
+      loadIntervenedContacts();
+      return;
+    }
+    const upsertSorted = (list: Contact[]) => {
+      const without = list.filter((c) => c.id !== contact.id);
+      return [contact, ...without].sort((a, b) =>
+        (b.last_message_at || '').localeCompare(a.last_message_at || '')
+      );
+    };
+    setContacts(prev => inInbox ? upsertSorted(prev) : prev.filter((c) => c.id !== contact.id));
+    setIntervenedContacts(prev => inIntervened ? upsertSorted(prev) : prev.filter((c) => c.id !== contact.id));
+
+    if (selectedRef.current?.id !== contact.id) {
+      setUnreadCounts(prev => {
+        const dbCount = Number(contact.unread_count) || 0;
+        const local   = prev[contact.id] ?? 0;
+        if (dbCount <= local) return prev;
+        const next = { ...prev, [contact.id]: dbCount };
+        saveUnread(next);
+        return next;
+      });
+    }
+  }, [loadContacts, loadIntervenedContacts]);
+
   useEffect(() => {
     apiFetch('/api/campaigns').then((r) => {
       setCampaigns((r.data || []).map((c: { id: number; name: string }) => ({ id: c.id, name: c.name })));
@@ -953,12 +988,15 @@ export default function InboxPage() {
             wamid?: string;
             status?: string;
             chatStatus?: string;
+            contact?: Contact | null;
+            inInbox?: boolean;
+            inIntervened?: boolean;
           };
 
           if (data.type === 'new_message') {
-            // Silent refresh — no skeleton flicker
-            loadContacts(campaignFilterRef.current, true);
-            loadIntervenedContacts();
+            if (data.contact) {
+              applyContactUpdate(data.contact, !!data.inInbox, !!data.inIntervened);
+            }
 
             if (selectedRef.current?.id === data.contactId) {
               // Incremental fetch: only load messages newer than last known id
@@ -980,13 +1018,9 @@ export default function InboxPage() {
               } else {
                 loadMessages(data.contactId!);
               }
-            } else if (data.contactId && data.direction === 'inbound') {
-              setUnreadCounts(prev => {
-                const next = { ...prev, [data.contactId!]: (prev[data.contactId!] || 0) + 1 };
-                saveUnread(next);
-                return next;
-              });
             }
+            // Unread count is derived from data.contact.unread_count in applyContactUpdate above —
+            // no separate local increment needed.
           } else if (data.type === 'status_update' && data.contactId && data.wamid && data.status) {
             if (selectedRef.current?.id === data.contactId) {
               setMessages(prev => prev.map(m =>
@@ -994,8 +1028,9 @@ export default function InboxPage() {
               ));
             }
           } else if (data.type === 'chat_status_update' && data.contactId && data.chatStatus) {
-            loadContacts(campaignFilterRef.current, true);
-            loadIntervenedContacts();
+            if (data.contact) {
+              applyContactUpdate(data.contact, !!data.inInbox, !!data.inIntervened);
+            }
             if (selectedRef.current?.id === data.contactId) {
               setSelected(prev => prev ? { ...prev, chat_status: data.chatStatus as Contact['chat_status'] } : prev);
               loadMessages(data.contactId);
@@ -1019,7 +1054,7 @@ export default function InboxPage() {
       if (retryTimer) clearTimeout(retryTimer);
       es?.close();
     };
-  }, [loadContacts, loadMessages, loadIntervenedContacts]);
+  }, [loadContacts, loadMessages, loadIntervenedContacts, applyContactUpdate]);
 
   const loadTemplates = useCallback(() => {
     if (templates.length > 0) return;

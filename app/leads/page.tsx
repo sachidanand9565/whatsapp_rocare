@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/hooks/useApi';
 import {
@@ -108,7 +108,14 @@ export default function LeadsPage() {
       .finally(() => setLoading(false));
   }, [search, stageFilter, sourceFilter, dateFrom, dateTo, campaignFilter]);
 
-  useEffect(() => { load(); }, [load]);
+  // Debounced so typing in the search box doesn't fire a full leads+aggregates
+  // request (500-row list + stage/source/trend counts) per keystroke.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => load(), 350);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [load]);
 
   useEffect(() => {
     apiFetch('/api/campaigns')

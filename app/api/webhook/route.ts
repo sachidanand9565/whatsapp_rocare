@@ -4,11 +4,11 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { query, insert, execute } from '@/lib/db';
-import { parseWebhookBody, sendTextMessage, markAsRead, TemplateStatusUpdate, IncomingCall } from '@/lib/whatsapp';
+import { parseWebhookBody, markAsRead, TemplateStatusUpdate, IncomingCall } from '@/lib/whatsapp';
 import { normalizePhone, utcNow, unixToUtc } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { emitSSE } from '@/lib/sse';
-import { tryResumeFlow, tryStartFlow } from '@/lib/flow-engine';
+import { enqueueFlowJob } from '@/lib/queue';
 
 // ---- GET: Verify webhook with Meta ----
 export async function GET(req: NextRequest) {
@@ -87,6 +87,16 @@ export async function POST(req: NextRequest) {
 
   // ---- Process inbound messages ----
   for (const msg of messages) {
+    // Cheap dedup check first (indexed point lookup on the unique wamid column).
+    // Meta retries webhook delivery on slow/timeout responses, so the same message
+    // can arrive multiple times; without this, every retry redid the full contact
+    // upsert + lead-creation + opt-in pipeline below only to have the eventual
+    // message INSERT IGNORE be a no-op anyway.
+    if (msg.wamid) {
+      const dup = await query<RowDataPacket[]>('SELECT 1 FROM messages WHERE wamid = ? LIMIT 1', [msg.wamid]);
+      if (dup.length > 0) continue;
+    }
+
     const phone       = normalizePhone(msg.from);
     const profileName = profileNames[msg.from] || profileNames[phone] || null;
 
@@ -282,39 +292,47 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ---- Flow Engine: resume active session OR start new flow ----
-    // Handles both text messages and interactive button clicks
+    // ---- Flow Engine / Chatbot: handed off to the Flow Worker (workers/flow-worker.ts) ----
+    // These previously ran inline here and called Meta's Send API synchronously,
+    // which risked delaying the webhook response past Meta's retry timeout.
+    // Handles both text messages and interactive button clicks.
     if (msg.type === 'text' && msg.text) {
-      const token   = workspaceAccessToken || '';
-      const pnId    = phoneNumberId || '';
-      // Typing indicator flow ke andar chalta hai — sirf tab jab reply aane wala ho
-      const resumed = await tryResumeFlow(workspaceId, contactId, phone, msg.text, token, pnId, undefined, undefined, msg.wamid).catch(() => false);
-      if (!resumed) {
-        const started = await tryStartFlow(workspaceId, contactId, phone, msg.text, token, pnId, msg.wamid).catch(() => false);
-        if (!started) {
-          await processChatbot(workspaceId, contactId, msg.text, pnId);
-        }
-      }
+      await enqueueFlowJob({
+        workspaceId, contactId, phone,
+        userMessage:   msg.text,
+        accessToken:   workspaceAccessToken || '',
+        phoneNumberId: phoneNumberId || '',
+        incomingWamid: msg.wamid,
+        msgType:       'text',
+      }).catch(() => {});
     } else if (msg.type === 'button' && msg.button) {
       // Template quick reply button clicked
-      const token         = workspaceAccessToken || '';
-      const pnId          = phoneNumberId || '';
       const buttonText    = msg.button.text    || '';
       const buttonPayload = msg.button.payload || buttonText;
-      // Pehle active session resume karo; agar koi session nahi → button text ko
-      // keyword maan ke naya flow start karo (e.g. template "Continue" button → Continue flow)
-      const resumed = await tryResumeFlow(workspaceId, contactId, phone, buttonText, token, pnId, buttonPayload, msg.replied_to_wamid, msg.wamid).catch(() => false);
-      if (!resumed) {
-        const started = await tryStartFlow(workspaceId, contactId, phone, buttonText, token, pnId, msg.wamid).catch(() => false);
-        if (!started) await processChatbot(workspaceId, contactId, buttonText, pnId);
-      }
+      await enqueueFlowJob({
+        workspaceId, contactId, phone,
+        userMessage:   buttonText,
+        accessToken:   workspaceAccessToken || '',
+        phoneNumberId: phoneNumberId || '',
+        buttonPayload,
+        contextWamid:  msg.replied_to_wamid,
+        incomingWamid: msg.wamid,
+        msgType:       'button',
+      }).catch(() => {});
     } else if (msg.type === 'interactive' && msg.interactiveReply) {
       // Interactive button_message / list_message reply — resume active flow
-      const token      = workspaceAccessToken || '';
-      const pnId       = phoneNumberId || '';
       const replyTitle = msg.interactiveReply.title || '';
       const replyId    = msg.interactiveReply.id    || replyTitle;
-      await tryResumeFlow(workspaceId, contactId, phone, replyTitle, token, pnId, replyId, msg.replied_to_wamid, msg.wamid).catch(() => {});
+      await enqueueFlowJob({
+        workspaceId, contactId, phone,
+        userMessage:   replyTitle,
+        accessToken:   workspaceAccessToken || '',
+        phoneNumberId: phoneNumberId || '',
+        buttonPayload: replyId,
+        contextWamid:  msg.replied_to_wamid,
+        incomingWamid: msg.wamid,
+        msgType:       'interactive',
+      }).catch(() => {});
     }
   }
 
@@ -612,58 +630,5 @@ async function fireCrmIntegration(
   }
 }
 
-// ---- Chatbot rule matching ----
-async function processChatbot(
-  workspaceId: number,
-  contactId: number,
-  text: string,
-  phoneNumberId: string
-) {
-  const rules = await query<RowDataPacket[]>(
-    `SELECT cr.*, w.access_token FROM chatbot_rules cr
-     JOIN workspaces w ON w.id = cr.workspace_id
-     WHERE cr.workspace_id = ? AND cr.is_active = 1
-     ORDER BY cr.priority DESC`,
-    [workspaceId]
-  );
-
-  // Get contact phone for sending reply
-  const contacts = await query<RowDataPacket[]>(
-    'SELECT phone FROM contacts WHERE id = ?', [contactId]
-  );
-  if (contacts.length === 0) return;
-
-  const phone       = contacts[0].phone as string;
-  const lowerText   = text.toLowerCase().trim();
-
-  for (const rule of rules) {
-    const trigger = (rule.trigger_value as string || '').toLowerCase();
-    let matched    = false;
-
-    switch (rule.trigger_type) {
-      case 'exact':      matched = lowerText === trigger; break;
-      case 'keyword':    matched = lowerText.includes(trigger); break;
-      case 'contains':   matched = lowerText.includes(trigger); break;
-      case 'starts_with': matched = lowerText.startsWith(trigger); break;
-      case 'any':        matched = true; break;
-    }
-
-    if (matched && rule.response_type === 'text' && rule.response_text) {
-      const result = await sendTextMessage(
-        rule.access_token as string, phoneNumberId, phone, rule.response_text as string
-      );
-      const wamid = result?.messages?.[0]?.id;
-      if (wamid) {
-        const t = utcNow();
-        await insert(
-          `INSERT INTO messages (workspace_id, contact_id, wamid, direction, type, content, status, sent_at, created_at)
-           VALUES (?, ?, ?, 'outbound', 'text', ?, 'sent', ?, ?)`,
-          [workspaceId, contactId, wamid, rule.response_text, t, t]
-        );
-        // Notify inbox clients so chatbot reply shows live (outbound — don't increment badge)
-        emitSSE({ type: 'new_message', workspaceId, contactId, direction: 'outbound' });
-      }
-      break;
-    }
-  }
-}
+// Chatbot rule matching moved to lib/chatbot.ts — now runs in workers/chatbot-worker.ts,
+// reached only when the Flow Worker finds no active/matching flow for the message.

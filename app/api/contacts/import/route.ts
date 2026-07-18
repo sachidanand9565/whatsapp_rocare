@@ -5,10 +5,15 @@
  */
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
-import { insert, query } from '@/lib/db';
+import { execute } from '@/lib/db';
 import { apiSuccess, apiError, normalizePhone } from '@/lib/utils';
 import { parse } from 'csv-parse/sync';
-import { RowDataPacket } from 'mysql2';
+
+// Batched to avoid a SELECT+INSERT round trip per row (was up to 20,000
+// sequential DB calls for a 10k-row CSV, pinning a pool connection for
+// minutes). Dedup relies on the existing uq_workspace_phone unique key via
+// INSERT IGNORE instead of a per-row existence check.
+const CHUNK_SIZE = 500;
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,32 +33,38 @@ export async function POST(req: NextRequest) {
     if (records.length === 0) return apiError('CSV is empty');
     if (records.length > 10000) return apiError('Max 10,000 contacts per import');
 
-    let imported = 0;
-    let skipped  = 0;
+    let skipped = 0;
+    const seenPhones = new Set<string>();
+    const rows: { name: string | null; phone: string; email: string | null; city: string | null; source: string }[] = [];
 
     for (const row of records) {
       const phone = normalizePhone(row.phone || '');
-      if (!phone) { skipped++; continue; }
-
-      // Check duplicate
-      const existing = await query<RowDataPacket[]>(
-        'SELECT id FROM contacts WHERE workspace_id = ? AND phone = ?',
-        [payload.workspaceId, phone]
-      );
-      if (existing.length > 0) { skipped++; continue; }
-
-      await insert(
-        `INSERT INTO contacts (workspace_id, name, phone, email, city, source, status)
-         VALUES (?, ?, ?, ?, ?, ?, 'new')`,
-        [
-          payload.workspaceId,
-          row.name || null, phone,
-          row.email || null, row.city || null,
-          row.source || 'csv_import',
-        ]
-      );
-      imported++;
+      if (!phone || seenPhones.has(phone)) { skipped++; continue; }
+      seenPhones.add(phone);
+      rows.push({
+        name:   row.name   || null,
+        phone,
+        email:  row.email  || null,
+        city:   row.city   || null,
+        source: row.source || 'csv_import',
+      });
     }
+
+    let imported = 0;
+    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+      const chunk = rows.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => `(?, ?, ?, ?, ?, ?, 'new')`).join(', ');
+      const params: unknown[] = [];
+      for (const r of chunk) params.push(payload.workspaceId, r.name, r.phone, r.email, r.city, r.source);
+      const affected = await execute(
+        `INSERT IGNORE INTO contacts (workspace_id, name, phone, email, city, source, status) VALUES ${placeholders}`,
+        params
+      );
+      imported += affected;
+    }
+    // Rows that parsed fine but hit uq_workspace_phone (already existed) — INSERT IGNORE
+    // silently skips them, so the gap between attempted and inserted counts them.
+    skipped += rows.length - imported;
 
     return apiSuccess({ imported, skipped, total: records.length });
   } catch (err: unknown) {

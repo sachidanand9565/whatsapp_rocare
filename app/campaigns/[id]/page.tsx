@@ -238,6 +238,7 @@ export default function CampaignDetailPage() {
 
     let es: EventSource | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     let destroyed = false;
 
     function connect() {
@@ -247,8 +248,12 @@ export default function CampaignDetailPage() {
         try {
           const data = JSON.parse(e.data) as { type?: string; campaignId?: number };
           if (data.type === 'campaign_update' && String(data.campaignId) === String(id)) {
-            // Silently refresh stats without full skeleton reload
-            load(activeTab, pagination.page, dateFrom, dateTo);
+            // Coalesce bursts of delivery/read receipts (common on active broadcasts)
+            // into a single trailing refresh instead of one refetch per receipt.
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+              load(activeTab, pagination.page, dateFrom, dateTo);
+            }, 1500);
           }
         } catch { /**/ }
       };
@@ -262,6 +267,7 @@ export default function CampaignDetailPage() {
     return () => {
       destroyed = true;
       if (retryTimer) clearTimeout(retryTimer);
+      if (debounceTimer) clearTimeout(debounceTimer);
       es?.close();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1222,11 +1228,61 @@ function ChatDrawer({ phone, name, onClose }: { phone: string; name: string; onC
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Auto-refresh messages every 8s so inbound replies appear without manual reload
+  // Tracks the highest message id loaded, for incremental SSE-driven fetches
+  const lastMsgIdRef = useRef(0);
   useEffect(() => {
-    if (!contact) return;
-    const interval = setInterval(() => loadMsgs(contact.id), 8000);
-    return () => clearInterval(interval);
+    if (messages.length > 0) lastMsgIdRef.current = messages[messages.length - 1].id;
+  }, [messages]);
+
+  // Real-time updates via SSE — replaces the old 8s poll so no repeated
+  // /api/messages calls hit the network while this drawer is idle.
+  useEffect(() => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    if (!token || !contact) return;
+    const contactId = contact.id;
+
+    let es: EventSource | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let destroyed = false;
+
+    function connect() {
+      if (destroyed) return;
+      es = new EventSource(`/api/events?token=${encodeURIComponent(token!)}`);
+      es.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data) as { type?: string; contactId?: number };
+          if (data.type === 'new_message' && data.contactId === contactId) {
+            const lastId = lastMsgIdRef.current;
+            if (lastId > 0) {
+              apiFetch(`/api/messages?contactId=${contactId}&afterId=${lastId}&limit=20`)
+                .then((r) => {
+                  const newMsgs: DrawerMsg[] = r.data || [];
+                  if (newMsgs.length > 0) {
+                    setMessages(prev => {
+                      const existingIds = new Set(prev.map((m) => m.id));
+                      const toAdd = newMsgs.filter((m) => !existingIds.has(m.id));
+                      return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+                    });
+                  }
+                }).catch(() => {});
+            } else {
+              loadMsgs(contactId);
+            }
+          }
+        } catch { /* ignore malformed frames */ }
+      };
+      es.onerror = () => {
+        es?.close(); es = null;
+        if (!destroyed) retryTimer = setTimeout(connect, 3000);
+      };
+    }
+
+    connect();
+    return () => {
+      destroyed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      es?.close();
+    };
   }, [contact, loadMsgs]);
 
   // 24-hour window: open only when customer sends an inbound message within 24h

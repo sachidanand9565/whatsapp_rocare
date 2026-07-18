@@ -4,14 +4,24 @@
  * Docs: https://developers.facebook.com/docs/whatsapp/cloud-api
  */
 import axios, { AxiosInstance } from 'axios';
+import https from 'https';
 
 const API_VERSION = 'v23.0';
 const BASE_URL    = `https://graph.facebook.com/${API_VERSION}`;
+
+// Shared keep-alive agent: reuses TCP/TLS connections to graph.facebook.com
+// across calls instead of a fresh handshake per message (was costing
+// ~100-300ms/message during bulk sends). Module-scope so it survives across
+// requests on a warm serverless instance.
+const keepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
+const REQUEST_TIMEOUT_MS = 15_000; // avoid a hung request pinning a DB/pool slot indefinitely
 
 // ---- Create axios instance for a specific workspace ----
 export function createWAClient(accessToken: string): AxiosInstance {
   return axios.create({
     baseURL: BASE_URL,
+    httpsAgent: keepAliveAgent,
+    timeout: REQUEST_TIMEOUT_MS,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
@@ -130,9 +140,7 @@ export async function sendTemplateMessage(
       components,
     },
   };
-  console.log('[sendTemplate] payload=', JSON.stringify(payload));
   const { data } = await client.post(`/${phoneNumberId}/messages`, payload);
-  console.log('[sendTemplate] response=', JSON.stringify(data));
   return data;
 }
 

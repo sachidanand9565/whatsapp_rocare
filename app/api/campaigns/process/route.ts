@@ -4,9 +4,9 @@
  * Picks the oldest running campaign and sends the next batch of messages.
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { query, execute, insert } from '@/lib/db';
+import pool, { query, execute, insert } from '@/lib/db';
 import { sendTemplateMessage } from '@/lib/whatsapp';
-import { sleep, WA_RATE_LIMIT_MS, utcNow } from '@/lib/utils';
+import { sleep, utcNow } from '@/lib/utils';
 import { requireAuth } from '@/lib/auth';
 import { RowDataPacket } from 'mysql2';
 
@@ -14,6 +14,14 @@ export const maxDuration = 55; // stay under Vercel's 60s limit
 
 const BATCH_SIZE  = 100; // messages per cron invocation
 const CONCURRENCY = 10;  // messages sent in parallel (well under Meta's 80/sec limit)
+// Meta's Cloud API cap is ~80 msg/sec. We fire CONCURRENCY messages ~simultaneously
+// per chunk, so the delay between chunks must be sized for the whole chunk, not a
+// single message — CONCURRENCY / TARGET_MSG_PER_SEC seconds, converted to ms — with
+// margin below Meta's cap. (Previously slept a fixed 15ms between chunks of 10,
+// which works out to ~666 msg/sec — 8x over the limit, causing Meta 429s that were
+// then recorded as permanent per-contact failures.)
+const TARGET_MSG_PER_SEC = 50;
+const CHUNK_DELAY_MS = Math.ceil((CONCURRENCY / TARGET_MSG_PER_SEC) * 1000);
 
 export async function GET(req: NextRequest) {
   // Accept either: Vercel cron secret OR a valid user JWT (manual trigger from UI)
@@ -51,6 +59,36 @@ export async function GET(req: NextRequest) {
     const campaignId  = camp.id as number;
     const workspaceId = camp.workspace_id as number;
 
+    // Guard against two overlapping invocations processing the same campaign at
+    // once (cron tick still running when the next tick fires, or a manual
+    // "process now" from the UI overlapping cron) — without this, both runs can
+    // select and send to the same pending contacts, double-sending real messages.
+    // A session-scoped named lock on a dedicated connection serializes per-campaign
+    // work; non-blocking (timeout 0) so an overlapping run just skips this tick
+    // instead of queuing behind it.
+    const lockName = `campaign_process_${campaignId}`;
+    const lockConn = await pool.getConnection();
+    let lockAcquired = false;
+    try {
+      const [lockRows] = await lockConn.query('SELECT GET_LOCK(?, 0) AS locked', [lockName]);
+      lockAcquired = Number((lockRows as RowDataPacket[])[0]?.locked) === 1;
+      if (!lockAcquired) {
+        return NextResponse.json({ ok: true, message: `Campaign ${campaignId} already being processed` });
+      }
+      return await processBatch(camp, campaignId, workspaceId);
+    } finally {
+      if (lockAcquired) {
+        try { await lockConn.query('SELECT RELEASE_LOCK(?)', [lockName]); } catch { /* connection is being released anyway */ }
+      }
+      lockConn.release();
+    }
+  } catch (err) {
+    console.error('[campaigns/process]', err);
+    return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });
+  }
+}
+
+async function processBatch(camp: RowDataPacket, campaignId: number, workspaceId: number) {
     // Get next batch of pending contacts (include per-row variables from CSV if set)
     const contacts = await query<RowDataPacket[]>(
       `SELECT cc.contact_id, c.phone, c.name as contact_name, cc.id as cc_id,
@@ -168,7 +206,7 @@ export async function GET(req: NextRequest) {
       const chunk = contacts.slice(i, i + CONCURRENCY);
       const results = await Promise.all(chunk.map((c) => sendOne(c)));
       for (const ok of results) ok ? sentCount++ : failedCount++;
-      if (i + CONCURRENCY < contacts.length) await sleep(WA_RATE_LIMIT_MS);
+      if (i + CONCURRENCY < contacts.length) await sleep(CHUNK_DELAY_MS);
     }
 
     // Update running counts on campaign
@@ -187,10 +225,6 @@ export async function GET(req: NextRequest) {
       batchFailed: failedCount,
       remaining: 'check next cron',
     });
-  } catch (err) {
-    console.error('[campaigns/process]', err);
-    return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });
-  }
 }
 
 function buildComponents(camp: RowDataPacket, contactPhone: string, contactName: string | null, rowVars: Record<string, string> = {}): object[] {

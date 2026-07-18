@@ -6,9 +6,11 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { requireAuth } from '@/lib/auth';
 import { RowDataPacket } from 'mysql2';
 
 export const maxDuration = 30;
+const MAX_MEDIA_BYTES = 100 * 1024 * 1024; // WhatsApp's own max media size (video/document)
 
 export async function GET(req: NextRequest) {
   const url         = req.nextUrl.searchParams.get('url');
@@ -16,6 +18,14 @@ export async function GET(req: NextRequest) {
 
   if (!url || !workspaceId || !/^https?:\/\//i.test(url)) {
     return new NextResponse('Bad Request', { status: 400 });
+  }
+
+  // Require the caller to be authenticated for the exact workspace whose access
+  // token we're about to use — otherwise workspaceId is a free IDOR lever.
+  let payload;
+  try { payload = await requireAuth(req); } catch { return new NextResponse('Unauthorized', { status: 401 }); }
+  if (payload.workspaceId !== Number(workspaceId)) {
+    return new NextResponse('Forbidden', { status: 403 });
   }
 
   const rows = await query<RowDataPacket[]>(
@@ -32,6 +42,10 @@ export async function GET(req: NextRequest) {
     if (!fileRes.ok) {
       console.error('[template-header] fetch failed:', fileRes.status, url);
       return new NextResponse('Failed to fetch media', { status: 502 });
+    }
+    const declaredLength = Number(fileRes.headers.get('content-length') || 0);
+    if (declaredLength > MAX_MEDIA_BYTES) {
+      return new NextResponse('Media too large', { status: 413 });
     }
     const contentType = fileRes.headers.get('content-type') || 'application/octet-stream';
     const buffer = await fileRes.arrayBuffer();

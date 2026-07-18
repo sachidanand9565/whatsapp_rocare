@@ -4,9 +4,12 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { requireAuth } from '@/lib/auth';
 import { RowDataPacket } from 'mysql2';
 
 export const maxDuration = 30; // Vercel: allow up to 30s for two-hop Meta fetch
+
+const MAX_MEDIA_BYTES = 100 * 1024 * 1024; // WhatsApp's own max media size (video/document)
 
 export async function GET(
   req: NextRequest,
@@ -17,6 +20,15 @@ export async function GET(
 
   if (!mediaId || !workspaceId) {
     return new NextResponse('Bad Request', { status: 400 });
+  }
+
+  // Media belongs to a specific tenant's WhatsApp account — require the caller
+  // to be authenticated for that exact workspace, otherwise workspaceId+mediaId
+  // could be enumerated to pull another tenant's media via their access token.
+  let payload;
+  try { payload = await requireAuth(req); } catch { return new NextResponse('Unauthorized', { status: 401 }); }
+  if (payload.workspaceId !== Number(workspaceId)) {
+    return new NextResponse('Forbidden', { status: 403 });
   }
 
   // Get workspace access token
@@ -64,6 +76,10 @@ export async function GET(
     if (!fileRes.ok) {
       console.error('[media] CDN download failed:', fileRes.status);
       return new NextResponse('Failed to download media', { status: 502 });
+    }
+    const declaredLength = Number(fileRes.headers.get('content-length') || 0);
+    if (declaredLength > MAX_MEDIA_BYTES) {
+      return new NextResponse('Media too large', { status: 413 });
     }
     contentType = metaData.mime_type || fileRes.headers.get('content-type') || 'application/octet-stream';
     buffer = await fileRes.arrayBuffer();

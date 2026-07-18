@@ -4,6 +4,7 @@
  * Works as long as the app runs in a single Node.js process (dev + typical prod).
  */
 import { EventEmitter } from 'events';
+import { Contact } from '@/types';
 
 const emitter = new EventEmitter();
 emitter.setMaxListeners(500);
@@ -17,6 +18,11 @@ export interface SSEPayload {
   status?:     string;   // for status_update
   chatStatus?: string;   // for chat_status_update
   campaignId?: number;   // for campaign_update
+  // Filled in per-subscriber by app/api/events/route.ts (not by emitSSE callers) so
+  // the inbox can upsert its contact list from the push instead of re-fetching it.
+  contact?:      Contact | null;
+  inInbox?:      boolean;
+  inIntervened?: boolean;
 }
 
 /** Called from the webhook handler after a message is persisted. */

@@ -22,6 +22,7 @@ export default function ContactsPage() {
   const [showModal, setShowModal] = useState(false);
   const [editContact, setEditContact] = useState<Contact | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function load(p = 1) {
     setLoading(true);
@@ -34,7 +35,13 @@ export default function ContactsPage() {
     }).finally(() => setLoading(false));
   }
 
-  useEffect(() => { load(); }, [search, status]);
+  // Debounced so typing in the search box doesn't fire a request per keystroke
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => load(), 350);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, status]);
 
   async function deleteContact(id: number) {
     if (!confirm('Delete this contact?')) return;
