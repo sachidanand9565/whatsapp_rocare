@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query, insert, execute } from '@/lib/db';
 import {
   sendTextMessage, sendButtonMessage, sendListMessage,
-  sendMediaMessage, sendMediaUrlMessage, sendTemplateMessage,
+  sendMediaMessage, sendMediaUrlMessage, sendTemplateMessage, sendCtaUrlMessage,
 } from '@/lib/whatsapp';
 import { normalizePhone, utcNow } from '@/lib/utils';
 import { optionsResponse } from '@/lib/cors';
@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
     message?: string; header?: string; footer?: string;
     buttons?: { id?: string; title?: string }[];
     button_text?: string;
+    button?: { text?: string; url?: string };
     sections?: { title?: string; rows?: { id?: string; title?: string; description?: string }[] }[];
     media?: { type?: string; url?: string; id?: string; caption?: string; filename?: string };
     template?: { name?: string; language?: string; params?: string[]; header_type?: string; header_media?: string };
@@ -69,6 +70,11 @@ export async function POST(req: NextRequest) {
     .filter((b) => b && (b.title || '').trim())
     .slice(0, 3)
     .map((b, i) => ({ id: (b.id || `btn_${i + 1}`).toString(), title: (b.title || '').toString().slice(0, 20) }));
+
+  // Single CTA URL button — WhatsApp allows only one, distinct from reply buttons
+  const ctaButton = (body.button && body.button.url && body.button.url.trim())
+    ? { text: (body.button.text || 'Open').toString().slice(0, 20), url: body.button.url.toString().trim() }
+    : null;
 
   // List sections (max 10 rows total) — WhatsApp list limit
   let rowCount = 0;
@@ -93,6 +99,7 @@ export async function POST(req: NextRequest) {
     || (template.name ? 'template'
       : (media.url || media.id) ? 'media'
       : sections.length ? 'list'
+      : ctaButton ? 'cta_url'
       : buttons.length ? 'buttons'
       : 'text');
 
@@ -100,11 +107,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'phone or contact_id is required' }, { status: 400 });
   }
   // Per-type required fields
-  if (['text', 'buttons', 'list'].includes(type) && (!message || !message.trim())) {
+  if (['text', 'buttons', 'list', 'cta_url'].includes(type) && (!message || !message.trim())) {
     return NextResponse.json({ error: 'message is required' }, { status: 400 });
   }
   if (type === 'list' && sections.length === 0) {
     return NextResponse.json({ error: 'sections with rows are required for a list message' }, { status: 400 });
+  }
+  if (type === 'cta_url' && !ctaButton) {
+    return NextResponse.json({ error: 'button.url is required for a cta_url message' }, { status: 400 });
   }
   if (type === 'media' && !media.url && !media.id) {
     return NextResponse.json({ error: 'media.url or media.id is required for a media message' }, { status: 400 });
@@ -159,6 +169,11 @@ export async function POST(req: NextRequest) {
       result = await sendButtonMessage(at, pn, contactPhone, bodyText, buttons, hdr, ftr);
       dbType = 'interactive';
       storedContent = JSON.stringify({ __type: 'buttons', body: bodyText, buttons, header: hdr || '', footer: ftr || '' });
+
+    } else if (type === 'cta_url') {
+      result = await sendCtaUrlMessage(at, pn, contactPhone, bodyText, ctaButton!.text, ctaButton!.url, hdr, ftr);
+      dbType = 'interactive';
+      storedContent = JSON.stringify({ __type: 'cta_url', body: bodyText, button: ctaButton, header: hdr || '', footer: ftr || '' });
 
     } else if (type === 'list') {
       const btnText = (body.button_text || 'Select').toString().slice(0, 20);

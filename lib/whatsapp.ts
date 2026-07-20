@@ -81,6 +81,42 @@ export async function sendButtonMessage(
   return data;
 }
 
+// ---- Send interactive CTA URL button message (single "visit website" button) ----
+export async function sendCtaUrlMessage(
+  accessToken:   string,
+  phoneNumberId: string,
+  to:            string,
+  bodyText:      string,
+  buttonText:    string,
+  url:           string,
+  headerText?:   string,
+  footerText?:   string,
+) {
+  const client = createWAClient(accessToken);
+  const interactive: Record<string, unknown> = {
+    type: 'cta_url',
+    body: { text: bodyText },
+    action: {
+      name: 'cta_url',
+      parameters: {
+        display_text: buttonText.slice(0, 20),
+        url,
+      },
+    },
+  };
+  if (headerText) interactive.header = { type: 'text', text: headerText };
+  if (footerText) interactive.footer = { text: footerText };
+
+  const { data } = await client.post(`/${phoneNumberId}/messages`, {
+    messaging_product: 'whatsapp',
+    recipient_type:    'individual',
+    to,
+    type:              'interactive',
+    interactive,
+  });
+  return data;
+}
+
 // ---- Send interactive list message (max 10 rows per section) ----
 export async function sendListMessage(
   accessToken:   string,
