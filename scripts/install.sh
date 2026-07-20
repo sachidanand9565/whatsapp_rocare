@@ -1,25 +1,19 @@
-# Fix ownership of the app directory
-sudo chown -R ec2-user:ec2-user /home/ec2-user/whatsapp
+#!/bin/bash
+set -e
 
-cd /home/ec2-user/whatsapp
+rm -rf /home/ec2-user/whatsapp-old
 
-npm install
+cd /home/ec2-user/whatsapp-staging
+sudo chown -R ec2-user:ec2-user /home/ec2-user/whatsapp-staging
 
-npx next build || npm run build
+# .env not in git — copy before build (web app AND workers need it)
+cp /home/ec2-user/whatsapp/.env /home/ec2-user/whatsapp-staging/.env
 
-# ---- Redis (for the BullMQ flow/chatbot queues) ----
-# Installed locally on this same instance — single-EC2 deployment, no need for
-# a separate managed Redis. Best-effort across Amazon Linux 2 / 2023; does not
-# fail the deploy if the package name differs on your AMI (verify manually then).
-if ! command -v redis-server &> /dev/null; then
-  sudo dnf install -y redis6 2>/dev/null \
-    || sudo dnf install -y redis 2>/dev/null \
-    || sudo amazon-linux-extras install -y redis6 2>/dev/null \
-    || sudo yum install -y redis 2>/dev/null \
-    || echo "WARNING: could not auto-install redis-server — install it manually before workers will connect"
+# Redis already installed & running; install only if missing, never fail the deploy
+if ! command -v redis-server &>/dev/null && ! command -v redis6-server &>/dev/null; then
+  sudo dnf install -y redis6 2>/dev/null || sudo dnf install -y redis 2>/dev/null || echo "WARN: install redis manually"
 fi
-sudo systemctl enable --now redis6 2>/dev/null \
-  || sudo systemctl enable --now redis 2>/dev/null \
-  || echo "WARNING: could not start redis service — check manually (systemctl status redis / redis6)"
+sudo systemctl enable --now redis6 2>/dev/null || sudo systemctl enable --now redis 2>/dev/null || true
 
-exit 0
+npm ci || npm install
+npm run build

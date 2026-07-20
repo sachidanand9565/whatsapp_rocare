@@ -7,6 +7,7 @@
  * Run as its own long-lived process via PM2 (see scripts/start.sh):
  *   npx tsx workers/chatbot-worker.ts
  */
+import 'dotenv/config';
 import { Worker, Job } from 'bullmq';
 import { redisConnection, ChatbotJobData } from '@/lib/queue';
 import { processChatbot } from '@/lib/chatbot';

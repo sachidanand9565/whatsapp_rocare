@@ -12,6 +12,7 @@
  * actually stricter than today's synchronous webhook handler (two overlapping
  * webhook HTTP requests for the same contact could already interleave there).
  */
+import 'dotenv/config';
 import { Worker, Job } from 'bullmq';
 import { redisConnection, FlowJobData, enqueueChatbotJob } from '@/lib/queue';
 import { tryResumeFlow, tryStartFlow } from '@/lib/flow-engine';
