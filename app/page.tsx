@@ -5,7 +5,7 @@ export default function Home() {
     <main className="min-h-screen bg-gradient-to-br from-whatsapp-dark via-whatsapp-teal to-whatsapp-green flex items-center justify-center p-4">
       <div className="text-center text-white max-w-2xl">
         <div className="text-6xl mb-6">💬</div>
-        <h1 className="text-5xl font-bold mb-4">WA SaaS</h1>
+        <h1 className="text-5xl font-bold mb-4">Whatsapp Automation With Limbu Ai</h1>
         <p className="text-xl mb-2 opacity-90">WhatsApp Business Platform</p>
         <p className="text-md mb-10 opacity-75">
           Send campaigns · Manage leads · Automate replies · View analytics
