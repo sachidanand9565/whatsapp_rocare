@@ -8,6 +8,7 @@ import { requireAuth } from '@/lib/auth';
 import { query, insert, execute } from '@/lib/db';
 import { apiSuccess, apiError } from '@/lib/utils';
 import { uploadMedia } from '@/lib/whatsapp';
+import { validateMediaFile } from '@/lib/mediaLimits';
 import { RowDataPacket } from 'mysql2';
 
 const ENSURE = `CREATE TABLE IF NOT EXISTS media_library (
@@ -84,9 +85,13 @@ export async function POST(req: NextRequest) {
     const file = form.get('file') as File | null;
     if (!file) return apiError('No file uploaded', 400);
 
-    const buffer   = Buffer.from(await file.arrayBuffer());
     const mimeType = file.type || 'application/octet-stream';
     const filename = file.name || 'upload';
+
+    const check = validateMediaFile(mimeType, file.size);
+    if (!check.ok) return apiError(check.error, 400);
+
+    const buffer = Buffer.from(await file.arrayBuffer());
 
     const mediaId = await uploadMedia(
       access_token as string,

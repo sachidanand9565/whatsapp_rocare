@@ -209,9 +209,12 @@ export async function sendMediaMessage(
   filename?:     string
 ) {
   const client = createWAClient(accessToken);
+  // WhatsApp only accepts `filename` on document objects and `caption` on
+  // image/video/document — sending either on the wrong type gets the whole
+  // request rejected by Graph API (#100 invalid parameter).
   const payload: Record<string, unknown> = { id: mediaId };
-  if (caption)  payload.caption  = caption;
-  if (filename) payload.filename = filename;
+  if (caption && mediaType !== 'audio')  payload.caption  = caption;
+  if (filename && mediaType === 'document') payload.filename = filename;
   const { data } = await client.post(`/${phoneNumberId}/messages`, {
     messaging_product: 'whatsapp',
     to,
@@ -233,8 +236,8 @@ export async function sendMediaUrlMessage(
 ) {
   const client = createWAClient(accessToken);
   const payload: Record<string, unknown> = { link: mediaUrl };
-  if (caption)  payload.caption  = caption;
-  if (filename) payload.filename = filename;
+  if (caption && mediaType !== 'audio')  payload.caption  = caption;
+  if (filename && mediaType === 'document') payload.filename = filename;
   const { data } = await client.post(`/${phoneNumberId}/messages`, {
     messaging_product: 'whatsapp',
     to,

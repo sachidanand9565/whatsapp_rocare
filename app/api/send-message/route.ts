@@ -8,6 +8,7 @@ import { query, insert, execute } from '@/lib/db';
 import { sendTextMessage, sendTemplateMessage, sendMediaMessage } from '@/lib/whatsapp';
 import { apiSuccess, apiError, normalizePhone, utcNow } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
+import axios from 'axios';
 
 export async function POST(req: NextRequest) {
   try {
@@ -124,7 +125,10 @@ export async function POST(req: NextRequest) {
     return apiSuccess({ messageId: msgId, wamid });
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
-    console.error('[send-message]', err);
-    return apiError('Failed to send message', 500);
+    const detail = axios.isAxiosError(err)
+      ? (err.response?.data as { error?: { message?: string } } | undefined)?.error?.message || err.message
+      : err instanceof Error ? err.message : 'Unknown error';
+    console.error('[send-message]', detail);
+    return apiError(`Failed to send message: ${detail}`, 502);
   }
 }

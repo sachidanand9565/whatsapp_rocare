@@ -2,6 +2,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { apiFetch } from '@/hooks/useApi';
 import MediaLibrary, { type MediaItem as MLItem } from '@/app/components/MediaLibrary';
+import { validateMediaFile } from '@/lib/mediaLimits';
 import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter, BellOff, Bell, ArrowLeft, Info, PhoneCall, PhoneMissed } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Contact, Message } from '@/types';
@@ -739,6 +740,8 @@ export default function InboxPage() {
 
   async function sendMediaFile(file: File) {
     if (!selected) return;
+    const check = validateMediaFile(file.type, file.size);
+    if (!check.ok) { toast.error(check.error); return; }
     setUploadingMedia(true);
     const toastId = toast.loading(`Uploading ${file.name}…`);
     try {
@@ -2221,7 +2224,8 @@ export default function InboxPage() {
                       </button>
                       <label title="Upload & send file" className={`p-1.5 rounded hover:bg-gray-100 cursor-pointer transition-colors ${uploadingMedia ? 'text-gray-300 pointer-events-none' : 'text-gray-500'}`}>
                         <Paperclip size={15} />
-                        <input type="file" className="hidden" accept="image/*,video/*,audio/*,.pdf,.doc,.docx"
+                        <input type="file" className="hidden"
+                          accept="image/jpeg,image/png,video/mp4,video/3gpp,audio/aac,audio/mp4,audio/mpeg,audio/amr,audio/ogg,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt"
                           onChange={(e) => { const f = e.target.files?.[0]; if (f) sendMediaFile(f); e.target.value = ''; }} />
                       </label>
                       <div className="w-px h-4 bg-gray-200 mx-1" />
