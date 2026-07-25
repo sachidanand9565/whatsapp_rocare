@@ -12,7 +12,7 @@ import { RowDataPacket } from 'mysql2';
 
 export const maxDuration = 55; // stay under Vercel's 60s limit
 
-const BATCH_SIZE  = 100; // messages per cron invocation
+const BATCH_SIZE  = 500; // messages per cron invocation
 const CONCURRENCY = 10;  // messages sent in parallel (well under Meta's 80/sec limit)
 // Meta's Cloud API cap is ~80 msg/sec. We fire CONCURRENCY messages ~simultaneously
 // per chunk, so the delay between chunks must be sized for the whole chunk, not a
@@ -45,7 +45,10 @@ export async function GET(req: NextRequest) {
        FROM campaigns c
        JOIN templates t ON t.id = c.template_id
        JOIN workspaces w ON w.id = c.workspace_id
-       WHERE c.status = 'running' AND c.campaign_type != 'api'
+       WHERE c.status = 'running'
+         AND (c.campaign_type != 'api' OR EXISTS (
+               SELECT 1 FROM campaign_contacts cc
+               WHERE cc.campaign_id = c.id AND cc.status = 'pending'))
        ORDER BY c.started_at ASC
        LIMIT 1`,
       []
@@ -111,6 +114,11 @@ async function processBatch(camp: RowDataPacket, campaignId: number, workspaceId
     );
 
     if (contacts.length === 0) {
+      // API campaigns are persistent endpoints — never auto-complete them,
+      // they just wait for the next send-bulk/send call.
+      if (camp.campaign_type === 'api') {
+        return NextResponse.json({ ok: true, message: `API campaign ${campaignId} queue drained` });
+      }
       // No more pending — complete the campaign
       const failedRows = await query<RowDataPacket[]>(
         `SELECT COUNT(*) as cnt FROM campaign_contacts WHERE campaign_id = ? AND status = 'failed'`,

@@ -625,25 +625,25 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   // ── After API campaign created: show endpoint info ──────────
   if (createdId) {
     return (
-      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg">
-          <div className="p-6 border-b border-gray-200 flex items-center gap-3">
-            <span className="text-2xl">✅</span>
-            <h2 className="font-bold text-lg">API Campaign Created!</h2>
+      <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div className="bg-white rounded-t-2xl sm:rounded-xl shadow-2xl w-full sm:max-w-lg flex flex-col max-h-[92dvh] sm:max-h-[90vh]">
+          <div className="px-4 py-3 sm:p-5 border-b border-gray-200 flex items-center gap-3 shrink-0">
+            <span className="text-xl sm:text-2xl">✅</span>
+            <h2 className="font-bold text-base sm:text-lg">API Campaign Created!</h2>
           </div>
-          <div className="p-6 space-y-4">
+          <div className="px-4 py-4 sm:p-6 space-y-4 overflow-y-auto flex-1">
             <p className="text-sm text-gray-600">
               Use this endpoint to send messages from your backend/system:
             </p>
 
-            <div className="bg-gray-900 rounded-lg p-4 text-xs font-mono text-green-400 space-y-1 overflow-x-auto">
-              <p className="text-gray-400">POST {apiEndpoint}</p>
+            <div className="bg-gray-900 rounded-lg p-3 sm:p-4 text-[11px] sm:text-xs font-mono text-green-400 space-y-1 overflow-x-auto">
+              <p className="text-gray-400 break-all whitespace-pre-wrap">POST {apiEndpoint}</p>
               <p className="text-gray-400">Authorization: Bearer YOUR_JWT_TOKEN</p>
               <p className="text-gray-400">Content-Type: application/json</p>
               <br />
               <p>{'{'}</p>
               <p>&nbsp;&nbsp;&quot;phone&quot;: &quot;919876543210&quot;,</p>
-              <p>&nbsp;&nbsp;&quot;variables&quot;: {'{'}&quot;1&quot;: &quot;John&quot;, &quot;2&quot;: &quot;Order#123&quot;{'}'}</p>
+              <p className="break-all whitespace-pre-wrap">&nbsp;&nbsp;&quot;variables&quot;: {'{'}&quot;1&quot;: &quot;John&quot;, &quot;2&quot;: &quot;Order#123&quot;{'}'}</p>
               <p>{'}'}</p>
             </div>
 
@@ -652,11 +652,31 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
               <p><strong>variables</strong> — template variables like {`{{1}}`}, {`{{2}}`}</p>
             </div>
 
-            <div className="flex gap-3">
-              <button onClick={() => { navigator.clipboard.writeText(`POST ${apiEndpoint}`); toast.success('Copied!'); }}
-                className="btn-secondary flex-1 text-sm">Copy URL</button>
-              <button onClick={onSaved} className="btn-primary flex-1 text-sm">Done</button>
+            <p className="text-sm text-gray-600">
+              Sending to many numbers? Use the <strong>bulk endpoint</strong> — queue up to 5000
+              messages in one request; they are sent in the background at high speed:
+            </p>
+
+            <div className="bg-gray-900 rounded-lg p-3 sm:p-4 text-[11px] sm:text-xs font-mono text-green-400 space-y-1 overflow-x-auto">
+              <p className="text-gray-400 break-all whitespace-pre-wrap">POST {apiEndpoint}-bulk</p>
+              <p className="text-gray-400">Content-Type: application/json</p>
+              <br />
+              <p>{'{'}</p>
+              <p>&nbsp;&nbsp;&quot;apiKey&quot;: &quot;ws_...&quot;,</p>
+              <p>&nbsp;&nbsp;&quot;messages&quot;: [</p>
+              <p className="break-all whitespace-pre-wrap">&nbsp;&nbsp;&nbsp;&nbsp;{'{'}&quot;destination&quot;: &quot;919876543210&quot;, &quot;templateParams&quot;: [&quot;John&quot;]{'}'},</p>
+              <p className="break-all whitespace-pre-wrap">&nbsp;&nbsp;&nbsp;&nbsp;{'{'}&quot;destination&quot;: &quot;919876543211&quot;, &quot;templateParams&quot;: [&quot;Priya&quot;]{'}'}</p>
+              <p>&nbsp;&nbsp;]</p>
+              <p>{'}'}</p>
             </div>
+          </div>
+
+          <div className="flex gap-2 sm:gap-3 px-4 py-3 sm:p-5 border-t border-gray-200 shrink-0 bg-white rounded-b-none sm:rounded-b-xl">
+            <button onClick={() => { navigator.clipboard.writeText(apiEndpoint); toast.success('Copied!'); }}
+              className="btn-secondary flex-1 text-xs sm:text-sm">Copy URL</button>
+            <button onClick={() => { navigator.clipboard.writeText(`${apiEndpoint}-bulk`); toast.success('Bulk URL copied!'); }}
+              className="btn-secondary flex-1 text-xs sm:text-sm">Copy Bulk URL</button>
+            <button onClick={onSaved} className="btn-primary flex-1 text-xs sm:text-sm">Done</button>
           </div>
         </div>
       </div>

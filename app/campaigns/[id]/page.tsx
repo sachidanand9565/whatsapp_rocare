@@ -1697,6 +1697,22 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
   -H "Content-Type: application/json" \\
   -d '${JSON.stringify(bodyObj, null, 2)}'`;
 
+  const bulkEndpoint = typeof window !== 'undefined'
+    ? `${window.location.origin}/api/campaigns/${campaign.id}/send-bulk`
+    : `/api/campaigns/${campaign.id}/send-bulk`;
+
+  const bulkBodyObj = {
+    apiKey:   wsApiKey || 'YOUR_WORKSPACE_API_KEY',
+    messages: [
+      { destination: phone || '919876543210', templateParams: parsedParams },
+      { destination: '919876543211',          templateParams: parsedParams },
+    ],
+  };
+
+  const bulkCurlCmd = `curl -X POST "${bulkEndpoint}" \\
+  -H "Content-Type: application/json" \\
+  -d '${JSON.stringify(bulkBodyObj, null, 2)}'`;
+
   async function sendTest() {
     if (!phone) { toast.error('Enter WhatsApp number'); return; }
     let templateParams: string[] = [];
@@ -1806,6 +1822,21 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
             </div>
             <pre className="bg-gray-900 text-green-400 text-[11px] p-3 rounded-lg overflow-x-auto whitespace-pre-wrap break-all leading-relaxed">
               {curlCmd}
+            </pre>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs font-medium text-gray-500">
+                Bulk cURL <span className="font-normal text-gray-400">(up to 5000 messages in one request)</span>
+              </p>
+              <button onClick={() => { navigator.clipboard.writeText(bulkCurlCmd); toast.success('Bulk cURL copied!'); }}
+                className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 py-1 px-2 rounded">
+                <Copy size={12} /> Copy cURL
+              </button>
+            </div>
+            <pre className="bg-gray-900 text-green-400 text-[11px] p-3 rounded-lg overflow-x-auto whitespace-pre-wrap break-all leading-relaxed">
+              {bulkCurlCmd}
             </pre>
           </div>
         </div>
