@@ -57,15 +57,17 @@ export async function POST(req: NextRequest) {
 
   let workspaceId: number | null = null;
   let workspaceAccessToken = '';
+  let workspaceApiKey = '';
   let activeWebhooks: { url: string; secret: string | null }[] = [];
   if (phoneNumberId) {
     const ws = await query<RowDataPacket[]>(
-      'SELECT id, access_token FROM workspaces WHERE phone_number_id = ? AND is_active = 1 LIMIT 1',
+      'SELECT id, access_token, api_key FROM workspaces WHERE phone_number_id = ? AND is_active = 1 LIMIT 1',
       [phoneNumberId]
     );
     if (ws.length > 0) {
       workspaceId = ws[0].id as number;
       workspaceAccessToken = ws[0].access_token as string || '';
+      workspaceApiKey = (ws[0].api_key as string) || '';
       // Fetch all active custom webhooks for this workspace
       try {
         const hooks = await query<RowDataPacket[]>(
@@ -76,6 +78,11 @@ export async function POST(req: NextRequest) {
       } catch { /* table may not exist yet */ }
     }
   }
+
+  // Base URL of this deployment (for building media_url links in webhook payloads)
+  const fwdProto = req.headers.get('x-forwarded-proto') || 'https';
+  const fwdHost  = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
+  const baseUrl  = fwdHost ? `${fwdProto}://${fwdHost}` : '';
 
   // Log raw payload — fire-and-forget so it doesn't delay the flow reply
   void insert(
@@ -160,22 +167,31 @@ export async function POST(req: NextRequest) {
 
     // Extract readable content based on message type
     let content = '';
+    let mediaId = '';           // set for media types — used to build media_url for webhooks
+    let mediaMime = '';
+    let mediaCaption = '';
+    let mediaFilename = '';
     if (msg.type === 'text')     content = msg.text || '';
     else if (msg.type === 'button') content = msg.button?.text || msg.button?.payload || 'Button reply';
     else if (msg.type === 'image') {
       const d = msg.image as Record<string, unknown> | undefined;
+      mediaId = String(d?.id || ''); mediaMime = String(d?.mime_type || ''); mediaCaption = String(d?.caption || '');
       content = JSON.stringify({ __type: 'media', media_id: d?.id, mime_type: d?.mime_type, caption: d?.caption, workspace_id: workspaceId });
     } else if (msg.type === 'audio') {
       const d = msg.audio as Record<string, unknown> | undefined;
+      mediaId = String(d?.id || ''); mediaMime = String(d?.mime_type || '');
       content = JSON.stringify({ __type: 'media', media_id: d?.id, mime_type: d?.mime_type, workspace_id: workspaceId });
     } else if (msg.type === 'video') {
       const d = msg.video as Record<string, unknown> | undefined;
+      mediaId = String(d?.id || ''); mediaMime = String(d?.mime_type || ''); mediaCaption = String(d?.caption || '');
       content = JSON.stringify({ __type: 'media', media_id: d?.id, mime_type: d?.mime_type, caption: d?.caption, workspace_id: workspaceId });
     } else if (msg.type === 'document') {
       const d = msg.document as Record<string, unknown> | undefined;
+      mediaId = String(d?.id || ''); mediaMime = String(d?.mime_type || ''); mediaCaption = String(d?.caption || ''); mediaFilename = String(d?.filename || '');
       content = JSON.stringify({ __type: 'media', media_id: d?.id, mime_type: d?.mime_type, filename: d?.filename, caption: d?.caption, workspace_id: workspaceId });
     } else if (msg.type === 'sticker') {
       const d = msg.sticker as Record<string, unknown> | undefined;
+      mediaId = String(d?.id || ''); mediaMime = String(d?.mime_type || 'image/webp');
       content = JSON.stringify({ __type: 'media', media_id: d?.id, mime_type: d?.mime_type || 'image/webp', workspace_id: workspaceId });
     } else if (msg.type === 'location') {
       const d = msg.location as Record<string, unknown> | undefined;
@@ -276,6 +292,17 @@ export async function POST(req: NextRequest) {
           wamid:            msg.wamid,
           type:             msg.type,
           content,
+          ...(mediaId
+            ? {
+                media_id:  mediaId,
+                mime_type: mediaMime || null,
+                ...(mediaCaption  ? { caption: mediaCaption }   : {}),
+                ...(mediaFilename ? { filename: mediaFilename } : {}),
+                ...(baseUrl && workspaceApiKey
+                  ? { media_url: `${baseUrl}/api/media/${mediaId}?workspaceId=${workspaceId}&key=${workspaceApiKey}` }
+                  : {}),
+              }
+            : {}),
           ...(msg.type === 'button' && msg.button
             ? {
                 button_text:    msg.button.text,

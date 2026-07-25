@@ -25,10 +25,23 @@ export async function GET(
   // Media belongs to a specific tenant's WhatsApp account — require the caller
   // to be authenticated for that exact workspace, otherwise workspaceId+mediaId
   // could be enumerated to pull another tenant's media via their access token.
-  let payload;
-  try { payload = await requireAuth(req); } catch { return new NextResponse('Unauthorized', { status: 401 }); }
-  if (payload.workspaceId !== Number(workspaceId)) {
-    return new NextResponse('Forbidden', { status: 403 });
+  // Two auth modes: logged-in JWT (browser/inbox) or workspace API key via ?key=
+  // (media_url links forwarded to customer webhooks — no browser session there).
+  const wsKey = req.nextUrl.searchParams.get('key');
+  if (wsKey?.startsWith('ws_')) {
+    const keyRows = await query<RowDataPacket[]>(
+      'SELECT id FROM workspaces WHERE api_key = ? AND is_active = 1 LIMIT 1',
+      [wsKey]
+    );
+    if (keyRows.length === 0 || Number(keyRows[0].id) !== Number(workspaceId)) {
+      return new NextResponse('Forbidden', { status: 403 });
+    }
+  } else {
+    let payload;
+    try { payload = await requireAuth(req); } catch { return new NextResponse('Unauthorized', { status: 401 }); }
+    if (payload.workspaceId !== Number(workspaceId)) {
+      return new NextResponse('Forbidden', { status: 403 });
+    }
   }
 
   // Get workspace access token
