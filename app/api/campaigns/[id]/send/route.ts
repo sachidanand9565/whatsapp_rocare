@@ -32,6 +32,7 @@ import { requireAuth } from '@/lib/auth';
 import { query, execute, insert } from '@/lib/db';
 import { apiSuccess, apiError, normalizePhone, utcNow } from '@/lib/utils';
 import { sendTemplateMessage } from '@/lib/whatsapp';
+import { decryptId } from '@/lib/idCrypt';
 import { RowDataPacket } from 'mysql2';
 
 const MAX_BULK_MESSAGES = 5000;
@@ -85,7 +86,10 @@ export async function POST(
       payload = await requireAuth(req);
     }
 
-    const campaignId = Number(params.id);
+    // Accept either a raw numeric ID (legacy) or an encrypted token from encryptId()
+    const campaignId = /^\d+$/.test(params.id)
+      ? Number(params.id)
+      : Number(decryptId(params.id) || 0);
 
     if (!campaignId) return apiError('Invalid campaign ID', 400);
 

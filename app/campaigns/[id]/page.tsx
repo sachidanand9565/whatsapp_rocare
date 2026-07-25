@@ -10,7 +10,7 @@ import {
 import toast from 'react-hot-toast';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import MediaLibrary, { type MediaItem as MLItem } from '@/app/components/MediaLibrary';
-import { decryptId } from '@/lib/idCrypt';
+import { decryptId, encryptId } from '@/lib/idCrypt';
 
 // Stored datetimes are UTC ("YYYY-MM-DD HH:mm:ss"). Parse as UTC, display in IST.
 function toUtcDate(s: string): Date {
@@ -1698,7 +1698,7 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
   -d '${JSON.stringify(bodyObj, null, 2)}'`;
 
   const bulkEndpoint = typeof window !== 'undefined'
-    ? `${window.location.origin}/api/campaigns/${campaign.id}/send`
+    ? `${window.location.origin}/api/campaigns/${encryptId(campaign.id)}/send`
     : `/api/campaigns/${campaign.id}/send`;
 
   const bulkBodyObj = {

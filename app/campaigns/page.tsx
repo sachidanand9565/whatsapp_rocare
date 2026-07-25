@@ -618,8 +618,8 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
     }
   }
 
-  const apiEndpoint = typeof window !== 'undefined'
-    ? `${window.location.origin}/api/campaigns/${createdId}/send`
+  const apiEndpoint = typeof window !== 'undefined' && createdId
+    ? `${window.location.origin}/api/campaigns/${encryptId(createdId)}/send`
     : `/api/campaigns/${createdId}/send`;
 
   // ── After API campaign created: show endpoint info ──────────
