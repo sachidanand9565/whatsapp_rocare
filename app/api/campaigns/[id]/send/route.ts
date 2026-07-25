@@ -15,6 +15,17 @@
  *
  * Legacy body (still supported):
  * { phone: "919876543210", variables?: { "1": "John" } }
+ *
+ * BULK mode — same URL, pass a "messages" array instead of a single destination:
+ * {
+ *   "apiKey": "ws_...",
+ *   "messages": [
+ *     { "destination": "919876543210", "templateParams": ["John"] },
+ *     { "destination": "919876543211", "templateParams": ["Priya"] }
+ *   ]
+ * }
+ * Rows are queued as pending campaign_contacts and sent by the campaign-process
+ * cron in parallel batches — one request queues up to 5000 messages.
  */
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
@@ -22,6 +33,17 @@ import { query, execute, insert } from '@/lib/db';
 import { apiSuccess, apiError, normalizePhone, utcNow } from '@/lib/utils';
 import { sendTemplateMessage } from '@/lib/whatsapp';
 import { RowDataPacket } from 'mysql2';
+
+const MAX_BULK_MESSAGES = 5000;
+const INSERT_CHUNK      = 500;
+
+interface BulkRow {
+  destination?:    string;
+  phone?:          string;
+  templateParams?: string[];
+  variables?:      Record<string, string>;
+  contactName?:    string;
+}
 
 export async function POST(
   req: NextRequest,
@@ -91,6 +113,11 @@ export async function POST(
     const phoneNumberId = (campaign.phone_number_id as string) || process.env.PHONE_NUMBER_ID      || '';
 
     if (!accessToken || !phoneNumberId) return apiError('WhatsApp credentials not configured', 400);
+
+    // ── BULK mode: "messages" array → queue for cron, no per-message HTTP ──
+    if (Array.isArray(rawBody.messages)) {
+      return queueBulk(campaignId, payload.workspaceId, rawBody.messages as BulkRow[]);
+    }
 
     // ── Parse request body (AiSensy format + legacy format) ──
     const body = rawBody as {
@@ -232,4 +259,103 @@ export async function POST(
     console.error('[campaign/send]', err);
     return apiError('Failed to send message', 500);
   }
+}
+
+/**
+ * Bulk path: validate + dedupe rows, bulk-upsert contacts, queue pending
+ * campaign_contacts with per-row variables, mark the campaign running.
+ * The campaign-process cron then sends everything in parallel batches.
+ */
+async function queueBulk(campaignId: number, workspaceId: number, messages: BulkRow[]) {
+  if (messages.length === 0) return apiError('messages array is empty', 400);
+  if (messages.length > MAX_BULK_MESSAGES) {
+    return apiError(`Too many messages — max ${MAX_BULK_MESSAGES} per request`, 400);
+  }
+
+  // ── Validate + dedupe rows (last occurrence of a phone wins) ─
+  const rowsByPhone = new Map<string, { phone: string; name: string | null; vars: Record<string, string> }>();
+  const invalid: string[] = [];
+  for (const m of messages) {
+    const rawPhone = m.destination || m.phone;
+    const phone = rawPhone ? normalizePhone(rawPhone) : null;
+    if (!phone) { invalid.push(String(rawPhone || '')); continue; }
+
+    let vars: Record<string, string> = m.variables || {};
+    if (m.templateParams && m.templateParams.length > 0) {
+      vars = {};
+      m.templateParams.forEach((v, i) => { vars[String(i + 1)] = v; });
+    }
+    const firstParam = m.templateParams?.[0];
+    const autoName   = (firstParam && !firstParam.startsWith('$')) ? firstParam : null;
+    rowsByPhone.set(phone, { phone, name: m.contactName || autoName || null, vars });
+  }
+
+  const rows = Array.from(rowsByPhone.values());
+  if (rows.length === 0) return apiError('No valid phone numbers in messages', 400);
+
+  // ── Bulk upsert contacts, then map phone → id ────────────
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+    const chunk = rows.slice(i, i + INSERT_CHUNK);
+    await execute(
+      `INSERT INTO contacts (workspace_id, phone, name, source, opted_in)
+       VALUES ${chunk.map(() => '(?, ?, ?, ?, 1)').join(',')}
+       ON DUPLICATE KEY UPDATE
+         name = IF(name IS NULL OR name = '', VALUES(name), name)`,
+      chunk.flatMap((r) => [workspaceId, r.phone, r.name, 'api_campaign'])
+    );
+  }
+
+  const phones = rows.map((r) => r.phone);
+  const contactIdByPhone = new Map<string, number>();
+  for (let i = 0; i < phones.length; i += INSERT_CHUNK) {
+    const chunk = phones.slice(i, i + INSERT_CHUNK);
+    const found = await query<RowDataPacket[]>(
+      `SELECT id, phone FROM contacts
+       WHERE workspace_id = ? AND phone IN (${chunk.map(() => '?').join(',')})`,
+      [workspaceId, ...chunk]
+    );
+    for (const c of found) contactIdByPhone.set(c.phone as string, c.id as number);
+  }
+
+  // ── Bulk queue campaign_contacts with per-row variables ──
+  // Re-queue rows that previously failed; already-sent rows keep their status
+  // but get refreshed variables so a re-submit uses the latest values.
+  let queued = 0;
+  const now = utcNow();
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+    const chunk = rows.slice(i, i + INSERT_CHUNK).filter((r) => contactIdByPhone.has(r.phone));
+    if (chunk.length === 0) continue;
+    await execute(
+      `INSERT INTO campaign_contacts (campaign_id, contact_id, status, variables)
+       VALUES ${chunk.map(() => "(?, ?, 'pending', ?)").join(',')}
+       ON DUPLICATE KEY UPDATE
+         variables = VALUES(variables),
+         status    = IF(status = 'failed', 'pending', status)`,
+      chunk.flatMap((r) => [campaignId, contactIdByPhone.get(r.phone), JSON.stringify(r.vars)])
+    );
+    queued += chunk.length;
+  }
+
+  // ── Mark campaign running so the cron picks it up ────────
+  const pendingRows = await query<RowDataPacket[]>(
+    `SELECT COUNT(*) as cnt FROM campaign_contacts WHERE campaign_id = ? AND status = 'pending'`,
+    [campaignId]
+  );
+  const pending = Number(pendingRows[0]?.cnt || 0);
+
+  await execute(
+    `UPDATE campaigns
+     SET status = 'running',
+         started_at = COALESCE(started_at, ?),
+         total_contacts = (SELECT COUNT(*) FROM campaign_contacts WHERE campaign_id = ?)
+     WHERE id = ?`,
+    [now, campaignId, campaignId]
+  );
+
+  return apiSuccess({
+    queued,
+    pending,
+    invalid: invalid.length,
+    message: `${pending} messages queued — sending starts within a minute`,
+  });
 }

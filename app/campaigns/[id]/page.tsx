@@ -1698,8 +1698,8 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
   -d '${JSON.stringify(bodyObj, null, 2)}'`;
 
   const bulkEndpoint = typeof window !== 'undefined'
-    ? `${window.location.origin}/api/campaigns/${campaign.id}/send-bulk`
-    : `/api/campaigns/${campaign.id}/send-bulk`;
+    ? `${window.location.origin}/api/campaigns/${campaign.id}/send`
+    : `/api/campaigns/${campaign.id}/send`;
 
   const bulkBodyObj = {
     apiKey:   wsApiKey || 'YOUR_WORKSPACE_API_KEY',
@@ -1828,7 +1828,7 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
           <div>
             <div className="flex items-center justify-between mb-1">
               <p className="text-xs font-medium text-gray-500">
-                Bulk cURL <span className="font-normal text-gray-400">(up to 5000 messages in one request)</span>
+                Bulk cURL <span className="font-normal text-gray-400">(same URL — messages array, up to 5000 per request)</span>
               </p>
               <button onClick={() => { navigator.clipboard.writeText(bulkCurlCmd); toast.success('Bulk cURL copied!'); }}
                 className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 py-1 px-2 rounded">

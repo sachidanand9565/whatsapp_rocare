@@ -653,12 +653,12 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
             </div>
 
             <p className="text-sm text-gray-600">
-              Sending to many numbers? Use the <strong>bulk endpoint</strong> — queue up to 5000
-              messages in one request; they are sent in the background at high speed:
+              Sending to many numbers? <strong>Same URL</strong> — just pass a <strong>messages</strong> array
+              (up to 5000 per request, e.g. batches of 100); they are sent in the background at high speed:
             </p>
 
             <div className="bg-gray-900 rounded-lg p-3 sm:p-4 text-[11px] sm:text-xs font-mono text-green-400 space-y-1 overflow-x-auto">
-              <p className="text-gray-400 break-all whitespace-pre-wrap">POST {apiEndpoint}-bulk</p>
+              <p className="text-gray-400 break-all whitespace-pre-wrap">POST {apiEndpoint}</p>
               <p className="text-gray-400">Content-Type: application/json</p>
               <br />
               <p>{'{'}</p>
@@ -674,8 +674,6 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           <div className="flex gap-2 sm:gap-3 px-4 py-3 sm:p-5 border-t border-gray-200 shrink-0 bg-white rounded-b-none sm:rounded-b-xl">
             <button onClick={() => { navigator.clipboard.writeText(apiEndpoint); toast.success('Copied!'); }}
               className="btn-secondary flex-1 text-xs sm:text-sm">Copy URL</button>
-            <button onClick={() => { navigator.clipboard.writeText(`${apiEndpoint}-bulk`); toast.success('Bulk URL copied!'); }}
-              className="btn-secondary flex-1 text-xs sm:text-sm">Copy Bulk URL</button>
             <button onClick={onSaved} className="btn-primary flex-1 text-xs sm:text-sm">Done</button>
           </div>
         </div>

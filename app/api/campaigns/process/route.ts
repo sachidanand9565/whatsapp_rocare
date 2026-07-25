@@ -115,7 +115,7 @@ async function processBatch(camp: RowDataPacket, campaignId: number, workspaceId
 
     if (contacts.length === 0) {
       // API campaigns are persistent endpoints — never auto-complete them,
-      // they just wait for the next send-bulk/send call.
+      // they just wait for the next /send call (single or bulk).
       if (camp.campaign_type === 'api') {
         return NextResponse.json({ ok: true, message: `API campaign ${campaignId} queue drained` });
       }
