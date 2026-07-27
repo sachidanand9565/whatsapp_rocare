@@ -6,7 +6,7 @@ import {
   Webhook, RefreshCw, Plus, Trash2, ToggleLeft, ToggleRight,
   Facebook, ChevronRight, X, Phone, Loader2, Key, RotateCcw, Zap,
   MessageSquare, Image, FileText, Music, MapPin, MousePointerClick, PauseCircle,
-  Database, Globe, User, Lock,
+  Database, Globe, User, Lock, Pencil,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -311,6 +311,7 @@ export default function SettingsPage() {
   const [crmTemplates, setCrmTemplates] = useState<string[]>([]);
   const [crmForm, setCrmForm]         = useState({ name: '', template_name: '', api_url: '', api_method: 'POST', api_headers: '' });
   const [crmAdding, setCrmAdding]     = useState(false);
+  const [crmEditId, setCrmEditId]     = useState<number | null>(null);
   const [showCrmHeaders, setShowCrmHeaders] = useState(false);
 
   // Failed message webhooks
@@ -441,28 +442,49 @@ export default function SettingsPage() {
     if (!crmForm.name || !crmForm.template_name || !crmForm.api_url) return;
     setCrmAdding(true);
     try {
-      await apiFetch('/api/crm', {
-        method: 'POST',
-        body: JSON.stringify({
-          name:          crmForm.name,
-          template_name: crmForm.template_name,
-          api_url:       crmForm.api_url,
-          api_method:    crmForm.api_method,
-          api_headers:   crmForm.api_headers || null,
-        }),
+      const body = JSON.stringify({
+        name:          crmForm.name,
+        template_name: crmForm.template_name,
+        api_url:       crmForm.api_url,
+        api_method:    crmForm.api_method,
+        api_headers:   crmForm.api_headers || null,
       });
-      setCrmForm({ name: '', template_name: '', api_url: '', api_method: 'POST', api_headers: '' });
+      if (crmEditId) {
+        await apiFetch(`/api/crm/${crmEditId}`, { method: 'PATCH', body });
+      } else {
+        await apiFetch('/api/crm', { method: 'POST', body });
+      }
+      toast.success(crmEditId ? 'CRM integration updated!' : 'CRM integration added successfully!');
+      cancelCrmEdit();
       loadCrm();
-      toast.success('CRM integration added successfully!');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed');
     } finally { setCrmAdding(false); }
+  }
+
+  function startCrmEdit(item: CRMIntegration) {
+    setCrmEditId(item.id);
+    setCrmForm({
+      name:          item.name,
+      template_name: item.template_name,
+      api_url:       item.api_url,
+      api_method:    item.api_method,
+      api_headers:   item.api_headers || '',
+    });
+    setShowCrmHeaders(!!item.api_headers);
+  }
+
+  function cancelCrmEdit() {
+    setCrmEditId(null);
+    setCrmForm({ name: '', template_name: '', api_url: '', api_method: 'POST', api_headers: '' });
+    setShowCrmHeaders(false);
   }
 
   async function deleteCrm(id: number) {
     if (!confirm('Delete this CRM integration?')) return;
     await apiFetch(`/api/crm/${id}`, { method: 'DELETE' });
     setCrmList((l) => l.filter((x) => x.id !== id));
+    if (id === crmEditId) cancelCrmEdit();
     toast.success('Deleted');
   }
 
@@ -1274,7 +1296,7 @@ Response:
               <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
                 <Database size={18} className="text-whatsapp-teal" />
                 <div>
-                  <h3 className="font-semibold text-gray-900">Add New CRM Integration</h3>
+                  <h3 className="font-semibold text-gray-900">{crmEditId ? 'Edit CRM Integration' : 'Add New CRM Integration'}</h3>
                   <p className="text-xs text-gray-400 mt-0.5">Automatically calls your CRM API when a template button is replied to</p>
                 </div>
               </div>
@@ -1346,10 +1368,18 @@ Response:
 }`}</pre>
                 </div>
 
-                <button type="submit" disabled={crmAdding}
-                  className="btn-primary flex items-center gap-2 w-full justify-center">
-                  <Plus size={16} />{crmAdding ? 'Adding...' : 'Add Integration'}
-                </button>
+                <div className="flex gap-2">
+                  {crmEditId && (
+                    <button type="button" onClick={cancelCrmEdit}
+                      className="btn-secondary flex-1 text-sm">Cancel</button>
+                  )}
+                  <button type="submit" disabled={crmAdding}
+                    className="btn-primary flex items-center gap-2 flex-1 justify-center">
+                    {crmEditId
+                      ? <><Save size={16} />{crmAdding ? 'Saving...' : 'Update Integration'}</>
+                      : <><Plus size={16} />{crmAdding ? 'Adding...' : 'Add Integration'}</>}
+                  </button>
+                </div>
               </form>
             </div>
 
@@ -1386,6 +1416,14 @@ Response:
                       {item.is_active
                         ? <ToggleRight size={20} className="text-whatsapp-green" />
                         : <ToggleLeft size={20} />}
+                    </button>
+                    <button onClick={() => startCrmEdit(item)} title="Edit"
+                      className={`p-1.5 rounded-lg transition-colors ${
+                        crmEditId === item.id
+                          ? 'text-blue-600 bg-blue-50'
+                          : 'text-gray-400 hover:text-blue-500 hover:bg-blue-50'
+                      }`}>
+                      <Pencil size={15} />
                     </button>
                     <button onClick={() => deleteCrm(item.id)} title="Delete"
                       className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
