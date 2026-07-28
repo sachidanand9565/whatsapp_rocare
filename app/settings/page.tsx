@@ -332,11 +332,17 @@ export default function SettingsPage() {
       if (e.origin !== 'https://www.facebook.com') return;
       try {
         const msg = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
-        if (msg?.type === 'WA_EMBEDDED_SIGNUP' && msg?.event === 'FINISH' && msg?.data) {
-          embeddedDataRef.current = {
-            waba_id:         String(msg.data.waba_id),
-            phone_number_id: String(msg.data.phone_number_id),
-          };
+        if (msg?.type === 'WA_EMBEDDED_SIGNUP') {
+          // Event name varies by flow: 'FINISH' (new number), 'FINISH_ONLY_WABA'
+          // (no phone picked), 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING' (coexistence).
+          if (String(msg?.event || '').startsWith('FINISH') && msg?.data?.waba_id) {
+            embeddedDataRef.current = {
+              waba_id:         String(msg.data.waba_id),
+              phone_number_id: msg.data.phone_number_id ? String(msg.data.phone_number_id) : '',
+            };
+          } else if (msg?.event === 'CANCEL') {
+            console.warn('[embedded-signup] abandoned at step:', msg?.data?.current_step || '(unknown)');
+          }
         }
       } catch { /* ignore */ }
     }
@@ -509,7 +515,7 @@ export default function SettingsPage() {
         if (!code) { toast.error('Facebook login cancelled or failed'); return; }
 
         const embedded = embeddedDataRef.current;
-        if (!embedded?.waba_id || !embedded?.phone_number_id) {
+        if (!embedded?.waba_id) {
           toast.error('WhatsApp setup not completed inside the popup. Please try again and complete all steps.');
           return;
         }
@@ -520,7 +526,24 @@ export default function SettingsPage() {
             const token = r.data?.access_token;
             if (!token) { toast.error('Token exchange failed'); return; }
             setFbToken(token);
-            return handleConnect(embedded.waba_id, embedded.phone_number_id, '', undefined, token);
+            if (embedded.phone_number_id) {
+              return handleConnect(embedded.waba_id, embedded.phone_number_id, '', undefined, token);
+            }
+            // Coexistence / only-WABA finish: popup didn't return a phone id —
+            // fetch the WABA's numbers ourselves and connect (or let the user pick).
+            return fetch(
+              `https://graph.facebook.com/v20.0/${embedded.waba_id}/phone_numbers?fields=id,display_phone_number,verified_name&access_token=${token}`
+            )
+              .then((res) => res.json())
+              .then((data: { data?: WABAOption['phone_numbers']; error?: { message: string } }) => {
+                const phones = data.data || [];
+                if (data.error) { toast.error(`Meta: ${data.error.message}`); return; }
+                if (phones.length === 0) { toast.error('No phone numbers found on the connected WhatsApp account yet. Wait a minute and try again.'); return; }
+                if (phones.length === 1) {
+                  return handleConnect(embedded.waba_id, phones[0].id, '', phones[0].display_phone_number, token);
+                }
+                setWabas([{ id: embedded.waba_id, name: embedded.waba_id, business_name: '', phone_numbers: phones }]);
+              });
           })
           .catch((e) => toast.error(e?.message || 'Connect failed'))
           .finally(() => setConnecting(false));
