@@ -91,7 +91,9 @@ export async function POST(req: NextRequest) {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            subscribed_fields: ['messages'],
+            // smb_message_echoes: coexistence — messages sent from the phone's
+            // WhatsApp Business App arrive as echoes so the panel shows them too
+            subscribed_fields: ['messages', 'message_template_status_update', 'smb_message_echoes'],
           }),
         }
       );

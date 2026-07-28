@@ -550,6 +550,22 @@ export interface IncomingCall {
   status:    string; // 'missed_call' | 'answered'
 }
 
+// Coexistence: a message the business sends from the WhatsApp Business App on
+// their phone arrives as an "echo" (field = smb_message_echoes) so the panel
+// can mirror the full conversation.
+export interface EchoMessage {
+  wamid:     string;
+  to:        string;      // customer phone number
+  timestamp: string;
+  type:      string;
+  text?:     string;
+  image?:    object;
+  audio?:    object;
+  document?: object;
+  video?:    object;
+  sticker?:  object;
+}
+
 export function parseWebhookBody(body: Record<string, unknown>): {
   messages: IncomingMessage[];
   statuses: StatusUpdate[];
@@ -558,6 +574,7 @@ export function parseWebhookBody(body: Record<string, unknown>): {
   profileNames: Record<string, string>;
   templateStatusUpdates: TemplateStatusUpdate[];
   calls: IncomingCall[];
+  echoes: EchoMessage[];
 } {
   const result = {
     messages: [] as IncomingMessage[],
@@ -567,6 +584,7 @@ export function parseWebhookBody(body: Record<string, unknown>): {
     profileNames: {} as Record<string, string>,
     templateStatusUpdates: [] as TemplateStatusUpdate[],
     calls: [] as IncomingCall[],
+    echoes: [] as EchoMessage[],
   };
   try {
     const entry  = (body.entry as Record<string, unknown>[])?.[0];
@@ -608,10 +626,34 @@ export function parseWebhookBody(body: Record<string, unknown>): {
       }
     }
 
+    // Coexistence echoes (field = "smb_message_echoes") — sent from the phone app
+    for (const change of changes) {
+      if (change.field === 'smb_message_echoes') {
+        const v    = change.value as Record<string, unknown>;
+        const pnId = (v?.metadata as Record<string, unknown>)?.phone_number_id as string;
+        if (pnId && !result.phoneNumberId) result.phoneNumberId = pnId;
+        const echoList = (v?.message_echoes as Record<string, unknown>[]) ?? [];
+        for (const m of echoList) {
+          result.echoes.push({
+            wamid:     m.id as string,
+            to:        m.to as string,
+            timestamp: m.timestamp as string,
+            type:      m.type as string,
+            text:      (m.text as Record<string, unknown>)?.body as string,
+            image:     m.image as object,
+            audio:     m.audio as object,
+            document:  m.document as object,
+            video:     m.video as object,
+            sticker:   m.sticker as object,
+          });
+        }
+      }
+    }
+
     const change    = changes[0];
     const value     = change?.value as Record<string, unknown>;
 
-    result.phoneNumberId = (value?.metadata as Record<string, unknown>)?.phone_number_id as string ?? '';
+    result.phoneNumberId = ((value?.metadata as Record<string, unknown>)?.phone_number_id as string) || result.phoneNumberId;
 
     // Extract profile names from contacts array
     const ctcs = (value?.contacts as Record<string, unknown>[]) ?? [];

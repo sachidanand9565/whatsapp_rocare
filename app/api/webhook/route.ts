@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Identify workspace by phoneNumberId
-  const { messages, statuses, phoneNumberId, wabaId, profileNames, templateStatusUpdates, calls } = parseWebhookBody(body);
+  const { messages, statuses, phoneNumberId, wabaId, profileNames, templateStatusUpdates, calls, echoes } = parseWebhookBody(body);
 
   let workspaceId: number | null = null;
   let workspaceAccessToken = '';
@@ -361,6 +361,53 @@ export async function POST(req: NextRequest) {
         msgType:       'interactive',
       }).catch(() => {});
     }
+  }
+
+  // ---- Coexistence echoes: messages the business sent from the phone's ----
+  // ---- WhatsApp Business App — mirror them into the panel as outbound  ----
+  for (const echo of echoes) {
+    if (!echo.wamid) continue;
+    const dup = await query<RowDataPacket[]>('SELECT 1 FROM messages WHERE wamid = ? LIMIT 1', [echo.wamid]);
+    if (dup.length > 0) continue;
+
+    const phone = normalizePhone(echo.to);
+    if (!phone) continue;
+
+    await execute(
+      'INSERT IGNORE INTO contacts (workspace_id, phone, source, opted_in) VALUES (?, ?, ?, 1)',
+      [workspaceId, phone, 'inbound']
+    );
+    const contactRow = await query<RowDataPacket[]>(
+      'SELECT id FROM contacts WHERE workspace_id = ? AND phone = ? LIMIT 1',
+      [workspaceId, phone]
+    );
+    if (contactRow.length === 0) continue;
+    const contactId = contactRow[0].id as number;
+
+    let content = '';
+    if (echo.type === 'text') content = echo.text || '';
+    else {
+      const media = (echo.image || echo.video || echo.document || echo.audio || echo.sticker) as Record<string, unknown> | undefined;
+      if (media) {
+        content = JSON.stringify({
+          __type: 'media', media_id: media.id, mime_type: media.mime_type,
+          caption: media.caption, filename: media.filename, workspace_id: workspaceId,
+        });
+      } else {
+        content = echo.text || `[${echo.type}]`;
+      }
+    }
+
+    const echoSentAt = unixToUtc(echo.timestamp);
+    const echoNow    = utcNow();
+    await insert(
+      `INSERT IGNORE INTO messages
+         (workspace_id, contact_id, wamid, direction, type, content, status, sent_at, created_at)
+       VALUES (?, ?, ?, 'outbound', ?, ?, 'sent', ?, ?)`,
+      [workspaceId, contactId, echo.wamid, echo.type, content, echoSentAt, echoNow]
+    );
+    await execute('UPDATE contacts SET last_message_at = ? WHERE id = ?', [echoNow, contactId]).catch(() => {});
+    emitSSE({ type: 'new_message', workspaceId, contactId, direction: 'outbound' });
   }
 
   // ---- Process incoming WhatsApp calls ----
