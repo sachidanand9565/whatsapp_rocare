@@ -175,6 +175,15 @@ export async function POST(
       [payload.workspaceId, normalizedPhone, contactName, 'api_campaign']
     );
 
+    // ── Respect opt-out: never send templates to opted-out contacts ──
+    const optRows = await query<RowDataPacket[]>(
+      'SELECT opted_in FROM contacts WHERE id = ? LIMIT 1',
+      [contactId]
+    );
+    if (optRows.length > 0 && Number(optRows[0].opted_in) === 0) {
+      return apiError('Contact has opted out — message not sent', 403);
+    }
+
     // ── Build template components ────────────────────────────
     const components: object[] = [];
     if (variables && Object.keys(variables).length > 0) {
