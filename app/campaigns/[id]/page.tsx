@@ -318,24 +318,29 @@ export default function CampaignDetailPage() {
     if (!campaign) return;
     setProcessing(true);
     try {
-      // One server invocation can only run ~45s (Vercel limit), which covers
-      // ~150-200 messages. Keep calling until the campaign's queue is drained
-      // so one click processes EVERYTHING, with live stat refreshes between
-      // batches. campaignId param gives this campaign the full batch budget.
-      let totalSent = 0, totalFailed = 0;
-      for (let round = 0; round < 30; round++) {
-        const r = await apiFetch(`/api/campaigns/process?campaignId=${campaign.id}`, { method: 'GET' });
-        const list = (r as { campaigns?: { sent: number; failed: number }[] }).campaigns
-          || (r.data as { campaigns?: { sent: number; failed: number }[] } | undefined)?.campaigns
-          || [];
-        const sent   = list.reduce((s, c) => s + (c.sent   || 0), 0);
-        const failed = list.reduce((s, c) => s + (c.failed || 0), 0);
-        totalSent   += sent;
-        totalFailed += failed;
+      // The server processes in the background and responds immediately (so the
+      // proxy never 504s). We poll the stats until the queue drains, retriggering
+      // a tick each round in case one tick's budget wasn't enough.
+      let lastPending = -1;
+      for (let round = 0; round < 120; round++) {
+        await apiFetch(`/api/campaigns/process?campaignId=${campaign.id}`, { method: 'GET' });
+        await new Promise((res) => setTimeout(res, 5000));
+        const r = await apiFetch(`/api/campaigns/${campaign.id}?status=all&page=1&limit=1`);
+        const pending   = Number(r.data?.counts?.pending ?? 0);
+        const campStatus = r.data?.campaign?.status as string | undefined;
         load(activeTab, 1, dateFrom, dateTo);
-        if (sent + failed === 0) break; // queue drained (or campaign stopped)
+        if (pending === 0 || campStatus !== 'running') {
+          toast.success('Processing finished');
+          return;
+        }
+        // Queue stuck (e.g., every remaining contact opted-out/locked) — stop looping
+        if (pending === lastPending && round > 2) {
+          toast.success(`Processing running in background — ${pending} still pending`);
+          return;
+        }
+        lastPending = pending;
       }
-      toast.success(`Processing finished — ${totalSent} sent, ${totalFailed} failed`);
+      toast.success('Processing continues in background');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Process failed');
     } finally {

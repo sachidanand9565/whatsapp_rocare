@@ -58,6 +58,26 @@ const pool = new Proxy({} as mysql.Pool, {
 
 export default pool;
 
+// ---- In-app campaign scheduler boot ------------------------------------
+// db.ts is imported by every API route, so the first request after server
+// start boots the every-minute campaign processor (lib/campaignProcessor).
+// Production only — dev servers point at the prod DB and must never
+// auto-send campaigns. Deferred dynamic import avoids a circular init
+// (campaignProcessor itself imports this module); unref'd timers never keep
+// the process alive (so `next build` can exit cleanly).
+if (
+  process.env.NODE_ENV === 'production' &&
+  process.env.NEXT_PHASE !== 'phase-production-build' &&
+  process.env.DISABLE_INTERNAL_CRON !== '1'
+) {
+  const bootTimer = setTimeout(() => {
+    import('./campaignProcessor')
+      .then((m) => m.startInternalCron())
+      .catch((err) => console.error('[campaign-cron] boot failed:', err));
+  }, 5000);
+  bootTimer.unref?.();
+}
+
 // ---- helper: run a query and return rows typed as T ----
 export async function query<T = mysql.RowDataPacket[]>(
   sql: string,
