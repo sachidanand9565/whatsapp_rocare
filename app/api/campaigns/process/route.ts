@@ -22,6 +22,9 @@ const CONCURRENCY = 10;  // messages sent in parallel (well under Meta's 80/sec 
 // then recorded as permanent per-contact failures.)
 const TARGET_MSG_PER_SEC = 50;
 const CHUNK_DELAY_MS = Math.ceil((CONCURRENCY / TARGET_MSG_PER_SEC) * 1000);
+// Stop starting new work this many ms into the tick — leaves margin under the
+// 55s maxDuration so in-flight sends and DB writes finish instead of being killed.
+const TICK_DEADLINE_MS = 45_000;
 
 export async function GET(req: NextRequest) {
   // Accept either: Vercel cron secret OR a valid user JWT (manual trigger from UI)
@@ -36,8 +39,13 @@ export async function GET(req: NextRequest) {
     return new NextResponse('Unauthorized', { status: 401 });
   }
 
+  const tickStart  = Date.now();
+  const deadlineAt = tickStart + TICK_DEADLINE_MS;
+
   try {
-    // Find oldest running campaign
+    // All running campaigns, oldest first — every campaign gets a turn each tick
+    // (a single LIMIT 1 pick let an old API campaign with a big queue starve
+    // newer broadcasts indefinitely).
     const camps = await query<RowDataPacket[]>(
       `SELECT c.*, t.name as tname, t.language, t.body_text,
               t.header_type, t.header_content, t.footer_text, t.buttons,
@@ -49,8 +57,7 @@ export async function GET(req: NextRequest) {
          AND (c.campaign_type != 'api' OR EXISTS (
                SELECT 1 FROM campaign_contacts cc
                WHERE cc.campaign_id = c.id AND cc.status = 'pending'))
-       ORDER BY c.started_at ASC
-       LIMIT 1`,
+       ORDER BY c.started_at ASC`,
       []
     );
 
@@ -58,40 +65,58 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, message: 'No running campaigns' });
     }
 
-    const camp = camps[0];
-    const campaignId  = camp.id as number;
-    const workspaceId = camp.workspace_id as number;
+    // Shared per-tick budget: split fairly across campaigns (each gets at least
+    // a meaningful slice; unused slices roll over to later campaigns in the loop).
+    let remaining = BATCH_SIZE;
+    const summary: { campaignId: number; sent: number; failed: number; note?: string }[] = [];
 
-    // Guard against two overlapping invocations processing the same campaign at
-    // once (cron tick still running when the next tick fires, or a manual
-    // "process now" from the UI overlapping cron) — without this, both runs can
-    // select and send to the same pending contacts, double-sending real messages.
-    // A session-scoped named lock on a dedicated connection serializes per-campaign
-    // work; non-blocking (timeout 0) so an overlapping run just skips this tick
-    // instead of queuing behind it.
-    const lockName = `campaign_process_${campaignId}`;
-    const lockConn = await pool.getConnection();
-    let lockAcquired = false;
-    try {
-      const [lockRows] = await lockConn.query('SELECT GET_LOCK(?, 0) AS locked', [lockName]);
-      lockAcquired = Number((lockRows as RowDataPacket[])[0]?.locked) === 1;
-      if (!lockAcquired) {
-        return NextResponse.json({ ok: true, message: `Campaign ${campaignId} already being processed` });
+    for (const camp of camps) {
+      if (remaining <= 0 || Date.now() >= deadlineAt) break;
+
+      const campaignId  = camp.id as number;
+      const workspaceId = camp.workspace_id as number;
+
+      // Guard against two overlapping invocations processing the same campaign at
+      // once (cron tick still running when the next tick fires, or a manual
+      // "process now" from the UI overlapping cron) — without this, both runs can
+      // select and send to the same pending contacts, double-sending real messages.
+      // A session-scoped named lock on a dedicated connection serializes per-campaign
+      // work; non-blocking (timeout 0) so an overlapping run just skips this campaign
+      // instead of queuing behind it.
+      const lockName = `campaign_process_${campaignId}`;
+      const lockConn = await pool.getConnection();
+      let lockAcquired = false;
+      try {
+        const [lockRows] = await lockConn.query('SELECT GET_LOCK(?, 0) AS locked', [lockName]);
+        lockAcquired = Number((lockRows as RowDataPacket[])[0]?.locked) === 1;
+        if (!lockAcquired) {
+          summary.push({ campaignId, sent: 0, failed: 0, note: 'already being processed' });
+          continue;
+        }
+        // Fair slice so the first (oldest) campaign can't eat the whole tick budget
+        const slice = Math.min(remaining, Math.max(50, Math.ceil(BATCH_SIZE / camps.length)));
+        const res = await processBatch(camp, campaignId, workspaceId, slice, deadlineAt);
+        remaining -= res.sent + res.failed;
+        summary.push({ campaignId, ...res });
+      } finally {
+        if (lockAcquired) {
+          try { await lockConn.query('SELECT RELEASE_LOCK(?)', [lockName]); } catch { /* connection is being released anyway */ }
+        }
+        lockConn.release();
       }
-      return await processBatch(camp, campaignId, workspaceId);
-    } finally {
-      if (lockAcquired) {
-        try { await lockConn.query('SELECT RELEASE_LOCK(?)', [lockName]); } catch { /* connection is being released anyway */ }
-      }
-      lockConn.release();
     }
+
+    return NextResponse.json({ ok: true, campaigns: summary });
   } catch (err) {
     console.error('[campaigns/process]', err);
     return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });
   }
 }
 
-async function processBatch(camp: RowDataPacket, campaignId: number, workspaceId: number) {
+async function processBatch(
+  camp: RowDataPacket, campaignId: number, workspaceId: number,
+  budget: number, deadlineAt: number
+): Promise<{ sent: number; failed: number; note?: string }> {
     // Get next batch of pending contacts (include per-row variables from CSV if set)
     const contacts = await query<RowDataPacket[]>(
       `SELECT cc.contact_id, c.phone, c.name as contact_name, cc.id as cc_id,
@@ -101,7 +126,7 @@ async function processBatch(camp: RowDataPacket, campaignId: number, workspaceId
        WHERE cc.campaign_id = ? AND cc.status = 'pending'
          AND (c.opted_in IS NULL OR c.opted_in = 1)
        LIMIT ?`,
-      [campaignId, BATCH_SIZE]
+      [campaignId, budget]
     );
 
     // Skip opted-out contacts (mark failed so they don't block the queue)
@@ -117,7 +142,7 @@ async function processBatch(camp: RowDataPacket, campaignId: number, workspaceId
       // API campaigns are persistent endpoints — never auto-complete them,
       // they just wait for the next /send call (single or bulk).
       if (camp.campaign_type === 'api') {
-        return NextResponse.json({ ok: true, message: `API campaign ${campaignId} queue drained` });
+        return { sent: 0, failed: 0, note: 'api queue drained' };
       }
       // No more pending — complete the campaign
       const failedRows = await query<RowDataPacket[]>(
@@ -135,7 +160,7 @@ async function processBatch(camp: RowDataPacket, campaignId: number, workspaceId
         `UPDATE campaigns SET status = ?, completed_at = ?, sent_count = ?, failed_count = ? WHERE id = ?`,
         [finalStatus, utcNow(), sentCnt, failedCnt, campaignId]
       );
-      return NextResponse.json({ ok: true, message: `Campaign ${campaignId} completed` });
+      return { sent: 0, failed: 0, note: `completed (${finalStatus})` };
     }
 
     // Process batch — send in parallel chunks (CONCURRENCY at a time) instead of one-by-one
@@ -211,6 +236,9 @@ async function processBatch(camp: RowDataPacket, campaignId: number, workspaceId
     }
 
     for (let i = 0; i < contacts.length; i += CONCURRENCY) {
+      // Stop starting new chunks near the deadline — leftover rows stay pending
+      // and the next cron tick picks them up.
+      if (Date.now() >= deadlineAt) break;
       const chunk = contacts.slice(i, i + CONCURRENCY);
       const results = await Promise.all(chunk.map((c) => sendOne(c)));
       for (const ok of results) ok ? sentCount++ : failedCount++;
@@ -226,13 +254,7 @@ async function processBatch(camp: RowDataPacket, campaignId: number, workspaceId
       [sentCount, failedCount, campaignId]
     );
 
-    return NextResponse.json({
-      ok: true,
-      campaignId,
-      batchSent: sentCount,
-      batchFailed: failedCount,
-      remaining: 'check next cron',
-    });
+    return { sent: sentCount, failed: failedCount };
 }
 
 function buildComponents(camp: RowDataPacket, contactPhone: string, contactName: string | null, rowVars: Record<string, string> = {}): object[] {
