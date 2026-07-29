@@ -318,16 +318,24 @@ export default function CampaignDetailPage() {
     if (!campaign) return;
     setProcessing(true);
     try {
-      // campaignId param: process THIS campaign with the full batch budget,
-      // instead of splitting the tick across every running campaign.
-      const r = await apiFetch(`/api/campaigns/process?campaignId=${campaign.id}`, { method: 'GET' });
-      const list = (r as { campaigns?: { sent: number; failed: number }[] }).campaigns
-        || (r.data as { campaigns?: { sent: number; failed: number }[] } | undefined)?.campaigns
-        || [];
-      const sent   = list.reduce((s, c) => s + (c.sent   || 0), 0);
-      const failed = list.reduce((s, c) => s + (c.failed || 0), 0);
-      toast.success(`Batch processed — ${sent} sent, ${failed} failed`);
-      load(activeTab, 1, dateFrom, dateTo);
+      // One server invocation can only run ~45s (Vercel limit), which covers
+      // ~150-200 messages. Keep calling until the campaign's queue is drained
+      // so one click processes EVERYTHING, with live stat refreshes between
+      // batches. campaignId param gives this campaign the full batch budget.
+      let totalSent = 0, totalFailed = 0;
+      for (let round = 0; round < 30; round++) {
+        const r = await apiFetch(`/api/campaigns/process?campaignId=${campaign.id}`, { method: 'GET' });
+        const list = (r as { campaigns?: { sent: number; failed: number }[] }).campaigns
+          || (r.data as { campaigns?: { sent: number; failed: number }[] } | undefined)?.campaigns
+          || [];
+        const sent   = list.reduce((s, c) => s + (c.sent   || 0), 0);
+        const failed = list.reduce((s, c) => s + (c.failed || 0), 0);
+        totalSent   += sent;
+        totalFailed += failed;
+        load(activeTab, 1, dateFrom, dateTo);
+        if (sent + failed === 0) break; // queue drained (or campaign stopped)
+      }
+      toast.success(`Processing finished — ${totalSent} sent, ${totalFailed} failed`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Process failed');
     } finally {
