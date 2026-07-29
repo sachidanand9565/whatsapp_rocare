@@ -226,15 +226,20 @@ async function processBatch(
         );
         return true;
       } catch (err) {
-        const axiosErr = err as { response?: { data?: unknown; status?: number } };
+        const axiosErr = err as { response?: { data?: { error?: { message?: string; error_data?: { details?: string } } }; status?: number } };
         if (axiosErr?.response) {
           console.error(`[process] Meta API error for ${contact.phone as string}: status=${axiosErr.response.status} body=`, JSON.stringify(axiosErr.response.data));
         } else {
           console.error(`[process] failed for ${contact.phone as string}:`, err);
         }
+        // Store Meta's actual reason, not just "Request failed with status code 400"
+        const metaErr    = axiosErr?.response?.data?.error;
+        const errMessage = metaErr?.message
+          ? `Meta: ${metaErr.message}${metaErr.error_data?.details ? ` — ${metaErr.error_data.details}` : ''}`
+          : String(err);
         await execute(
           'UPDATE campaign_contacts SET status = ?, error = ? WHERE id = ?',
-          ['failed', String(err), contact.cc_id]
+          ['failed', errMessage.slice(0, 1000), contact.cc_id]
         );
         return false;
       }
@@ -295,7 +300,12 @@ function buildComponents(camp: RowDataPacket, contactPhone: string, contactName:
         .replace(/\{\{contact_phone\}\}/gi, contactPhone),
     ])
   );
-  const sortedKeys = Object.keys(resolvedVars).sort((a, b) => Number(a) - Number(b));
+  // Only positional {{1}}, {{2}}… keys become body parameters — internal keys
+  // like _header_media must NOT leak in (Meta 400s the whole send on a
+  // parameter-count mismatch, failing every contact in the batch).
+  const sortedKeys = Object.keys(resolvedVars)
+    .filter((k) => /^\d+$/.test(k))
+    .sort((a, b) => Number(a) - Number(b));
   const params = sortedKeys.map((k) => ({ type: 'text', text: resolvedVars[k] }));
   if (params.length > 0) {
     components.push({ type: 'body', parameters: params });

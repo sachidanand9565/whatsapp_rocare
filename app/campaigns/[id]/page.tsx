@@ -162,6 +162,7 @@ export default function CampaignDetailPage() {
   const [daily, setDaily]           = useState<DailyRow[]>([]);
   const [contacts, setContacts]     = useState<ContactRow[]>([]);
   const [pagination, setPagination] = useState({ page: 1, total: 0, pages: 1 });
+  const [failureReason, setFailureReason] = useState<string | null>(null);
   const [activeTab, setActiveTab]   = useState<TabKey>('all');
   const [loading, setLoading]       = useState(true);
   const [showTest, setShowTest]     = useState(false);
@@ -213,6 +214,7 @@ export default function CampaignDetailPage() {
       if (r.data) {
         setCampaign(r.data.campaign);
         setCounts(r.data.counts);
+        setFailureReason(r.data.failure_reason || null);
         setDaily(r.data.daily);
         setContacts(r.data.contacts);
         setPagination(r.data.pagination);
@@ -611,6 +613,19 @@ export default function CampaignDetailPage() {
           })}
         </div>
       </div>
+
+      {/* ── Failure reason banner ───────────────────────────── */}
+      {failureReason && counts.failed > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-start gap-2">
+          <AlertCircle size={16} className="text-red-500 mt-0.5 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-red-700">
+              {fmt(counts.failed)} message{counts.failed !== 1 ? 's' : ''} failed — most common reason:
+            </p>
+            <p className="text-xs text-red-600 font-mono mt-1 break-all">{failureReason}</p>
+          </div>
+        </div>
+      )}
 
       {/* ── Template Preview + Campaign Info + Chart ────────── */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

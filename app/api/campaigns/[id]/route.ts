@@ -62,14 +62,37 @@ export async function GET(req: NextRequest, { params }: Params) {
       [campaignId, payload.workspaceId, campaignId]
     );
 
+    // Rows that failed BEFORE a message row was created (Meta rejected the send,
+    // opted-out skip, etc.) only exist in campaign_contacts — include them so a
+    // fully-failed campaign doesn't show all zeros. Same for still-pending rows.
+    const ccCountRows = await query<RowDataPacket[]>(
+      `SELECT
+        COALESCE(SUM(status = 'failed' AND message_id IS NULL), 0) AS failed_no_msg,
+        COALESCE(SUM(status = 'pending'),                       0) AS pending
+       FROM campaign_contacts WHERE campaign_id = ?`,
+      [campaignId]
+    );
+
     const counts = {
       sent:      Number(countRows[0]?.sent      || 0),
       delivered: Number(countRows[0]?.delivered || 0),
       read:      Number(countRows[0]?.read      || 0),
-      failed:    Number(countRows[0]?.failed    || 0),
-      pending:   Number(countRows[0]?.pending   || 0),
+      failed:    Number(countRows[0]?.failed    || 0) + Number(ccCountRows[0]?.failed_no_msg || 0),
+      pending:   Number(countRows[0]?.pending   || 0) + Number(ccCountRows[0]?.pending       || 0),
       replied:   Number(replyRows[0]?.replied   || 0),
     };
+
+    // ── Most common failure reason (shown as a banner on the detail page) ──
+    let failure_reason: string | null = null;
+    if (counts.failed > 0) {
+      const topErr = await query<RowDataPacket[]>(
+        `SELECT error, COUNT(*) AS cnt FROM campaign_contacts
+         WHERE campaign_id = ? AND status = 'failed' AND error IS NOT NULL AND error <> ''
+         GROUP BY error ORDER BY cnt DESC LIMIT 1`,
+        [campaignId]
+      );
+      if (topErr.length > 0) failure_reason = topErr[0].error as string;
+    }
 
     // ── Daily chart — per-status counts per day ─────────────
     const chartFrom = dateFrom || (() => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().split('T')[0]; })();
@@ -158,6 +181,7 @@ export async function GET(req: NextRequest, { params }: Params) {
     return apiSuccess({
       campaign,
       counts,
+      failure_reason,
       daily: dailyNorm,
       contacts,
       pagination: { page, limit, total, pages: Math.ceil(total / limit) },
