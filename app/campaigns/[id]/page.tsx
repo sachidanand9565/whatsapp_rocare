@@ -313,10 +313,18 @@ export default function CampaignDetailPage() {
   }
 
   async function processNow() {
+    if (!campaign) return;
     setProcessing(true);
     try {
-      const r = await apiFetch('/api/campaigns/process', { method: 'GET' });
-      toast.success(`Batch processed — ${r.data?.batchSent ?? 0} sent, ${r.data?.batchFailed ?? 0} failed`);
+      // campaignId param: process THIS campaign with the full batch budget,
+      // instead of splitting the tick across every running campaign.
+      const r = await apiFetch(`/api/campaigns/process?campaignId=${campaign.id}`, { method: 'GET' });
+      const list = (r as { campaigns?: { sent: number; failed: number }[] }).campaigns
+        || (r.data as { campaigns?: { sent: number; failed: number }[] } | undefined)?.campaigns
+        || [];
+      const sent   = list.reduce((s, c) => s + (c.sent   || 0), 0);
+      const failed = list.reduce((s, c) => s + (c.failed || 0), 0);
+      toast.success(`Batch processed — ${sent} sent, ${failed} failed`);
       load(activeTab, 1, dateFrom, dateTo);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Process failed');

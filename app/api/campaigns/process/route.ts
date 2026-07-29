@@ -42,6 +42,9 @@ export async function GET(req: NextRequest) {
   const tickStart  = Date.now();
   const deadlineAt = tickStart + TICK_DEADLINE_MS;
 
+  // Optional: process a single campaign only (detail page "Process now" button)
+  const onlyId = Number(req.nextUrl.searchParams.get('campaignId') || 0) || null;
+
   try {
     // All running campaigns, oldest first — every campaign gets a turn each tick
     // (a single LIMIT 1 pick let an old API campaign with a big queue starve
@@ -57,12 +60,13 @@ export async function GET(req: NextRequest) {
          AND (c.campaign_type != 'api' OR EXISTS (
                SELECT 1 FROM campaign_contacts cc
                WHERE cc.campaign_id = c.id AND cc.status = 'pending'))
+         ${onlyId ? 'AND c.id = ?' : ''}
        ORDER BY c.started_at ASC`,
-      []
+      onlyId ? [onlyId] : []
     );
 
     if (camps.length === 0) {
-      return NextResponse.json({ ok: true, message: 'No running campaigns' });
+      return NextResponse.json({ ok: true, message: onlyId ? 'Campaign not running or nothing pending' : 'No running campaigns' });
     }
 
     // Shared per-tick budget: split fairly across campaigns (each gets at least
@@ -93,8 +97,9 @@ export async function GET(req: NextRequest) {
           summary.push({ campaignId, sent: 0, failed: 0, note: 'already being processed' });
           continue;
         }
-        // Fair slice so the first (oldest) campaign can't eat the whole tick budget
-        const slice = Math.min(remaining, Math.max(50, Math.ceil(BATCH_SIZE / camps.length)));
+        // Fair slice so the first (oldest) campaign can't eat the whole tick budget.
+        // Single-campaign mode gets the full budget.
+        const slice = onlyId ? remaining : Math.min(remaining, Math.max(50, Math.ceil(BATCH_SIZE / camps.length)));
         const res = await processBatch(camp, campaignId, workspaceId, slice, deadlineAt);
         remaining -= res.sent + res.failed;
         summary.push({ campaignId, ...res });
