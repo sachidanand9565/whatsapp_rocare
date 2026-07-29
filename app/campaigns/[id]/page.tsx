@@ -531,24 +531,31 @@ export default function CampaignDetailPage() {
             </button>
           )}
           {/* Draft / Scheduled — show Test + Launch */}
+          {/* Send Test — available whenever the campaign can still send
+              (campaigns start as 'running', so it must show there too) */}
+          {campaign.campaign_type !== 'api' && ['draft', 'scheduled', 'running', 'paused'].includes(campaign.status) && (
+            <button
+              onClick={() => {
+                try {
+                  const defaultVars = JSON.parse(campaign.template_vars || '{}') as Record<string, string>;
+                  // Only positional {{1}}, {{2}}… vars are editable in the test
+                  // modal — internal keys like _header_media stay out of it
+                  setTestVars(Object.fromEntries(
+                    Object.entries(defaultVars).filter(([k]) => /^\d+$/.test(k))
+                  ));
+                } catch { setTestVars({}); }
+                setShowTest(true);
+              }}
+              className="btn-secondary flex items-center gap-1.5 text-sm px-3 py-1.5">
+              <Send size={14} /> Send Test
+            </button>
+          )}
+
           {campaign.campaign_type !== 'api' && ['draft', 'scheduled'].includes(campaign.status) && (
-            <>
-              <button
-                onClick={() => {
-                  try {
-                    const defaultVars = JSON.parse(campaign.template_vars || '{}') as Record<string, string>;
-                    setTestVars(defaultVars);
-                  } catch { setTestVars({}); }
-                  setShowTest(true);
-                }}
-                className="btn-secondary flex items-center gap-1.5 text-sm px-3 py-1.5">
-                <Send size={14} /> Send Test
-              </button>
-              <button onClick={launch} disabled={launching}
-                className="btn-primary flex items-center gap-1.5 text-sm px-3 py-1.5 disabled:opacity-50">
-                <Play size={14} /> {launching ? 'Launching...' : 'Launch'}
-              </button>
-            </>
+            <button onClick={launch} disabled={launching}
+              className="btn-primary flex items-center gap-1.5 text-sm px-3 py-1.5 disabled:opacity-50">
+              <Play size={14} /> {launching ? 'Launching...' : 'Launch'}
+            </button>
           )}
 
           {/* Running — show Process Now + Stop buttons */}
