@@ -355,8 +355,10 @@ async function queueBulk(campaignId: number, workspaceId: number, messages: Bulk
   }
 
   // ── Bulk queue campaign_contacts with per-row variables ──
-  // Re-queue rows that previously failed; already-sent rows keep their status
-  // but get refreshed variables so a re-submit uses the latest values.
+  // API campaigns are reusable pipes — re-submitting a phone ALWAYS re-queues
+  // it, even if it was sent before (recurring reminders to the same list is
+  // the whole point). Previous per-row status/error is overwritten; historical
+  // send counters on the campaign row survive.
   let queued = 0;
   const now = utcNow();
   for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
@@ -367,7 +369,9 @@ async function queueBulk(campaignId: number, workspaceId: number, messages: Bulk
        VALUES ${chunk.map(() => "(?, ?, 'pending', ?)").join(',')}
        ON DUPLICATE KEY UPDATE
          variables = VALUES(variables),
-         status    = IF(status = 'failed', 'pending', status)`,
+         status    = 'pending',
+         error     = NULL,
+         sent_at   = NULL`,
       chunk.flatMap((r) => [campaignId, contactIdByPhone.get(r.phone), JSON.stringify(r.vars)])
     );
     queued += chunk.length;
