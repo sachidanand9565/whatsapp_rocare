@@ -19,11 +19,14 @@
  * BULK mode — same URL, pass a "messages" array instead of a single destination:
  * {
  *   "apiKey": "ws_...",
+ *   "media": { "url": "https://example.com/offer.jpg" },   // optional — default header media for the whole batch
  *   "messages": [
  *     { "destination": "919876543210", "templateParams": ["John"] },
- *     { "destination": "919876543211", "templateParams": ["Priya"] }
+ *     { "destination": "919876543211", "templateParams": ["Priya"],
+ *       "media": { "id": "123456789" } }                    // optional — per-message override (uploaded media id)
  *   ]
  * }
+ * Media omitted → campaign's saved header media (or template default) is used.
  * Rows are queued as pending campaign_contacts and sent by the campaign-process
  * cron in parallel batches — one request queues up to 5000 messages.
  */
@@ -38,12 +41,22 @@ import { RowDataPacket } from 'mysql2';
 const MAX_BULK_MESSAGES = 5000;
 const INSERT_CHUNK      = 500;
 
+interface BulkMedia { id?: string; url?: string; link?: string }
+
 interface BulkRow {
   destination?:    string;
   phone?:          string;
   templateParams?: string[];
   variables?:      Record<string, string>;
   contactName?:    string;
+  media?:          BulkMedia;   // per-message header media override
+}
+
+/** "media_id:<id>" or a direct URL — the format buildComponents understands */
+function mediaToHeaderContent(media?: BulkMedia): string {
+  if (!media) return '';
+  if (media.id) return `media_id:${media.id}`;
+  return media.url || media.link || '';
 }
 
 export async function POST(
@@ -120,7 +133,13 @@ export async function POST(
 
     // ── BULK mode: "messages" array → queue for cron, no per-message HTTP ──
     if (Array.isArray(rawBody.messages)) {
-      return queueBulk(campaignId, payload.workspaceId, rawBody.messages as BulkRow[]);
+      // Top-level "media" acts as the default header media for every message
+      // that doesn't carry its own override.
+      return queueBulk(
+        campaignId, payload.workspaceId,
+        rawBody.messages as BulkRow[],
+        rawBody.media as BulkMedia | undefined
+      );
     }
 
     // ── Parse request body (AiSensy format + legacy format) ──
@@ -279,7 +298,7 @@ export async function POST(
  * campaign_contacts with per-row variables, mark the campaign running.
  * The campaign-process cron then sends everything in parallel batches.
  */
-async function queueBulk(campaignId: number, workspaceId: number, messages: BulkRow[]) {
+async function queueBulk(campaignId: number, workspaceId: number, messages: BulkRow[], defaultMedia?: BulkMedia) {
   if (messages.length === 0) return apiError('messages array is empty', 400);
   if (messages.length > MAX_BULK_MESSAGES) {
     return apiError(`Too many messages — max ${MAX_BULK_MESSAGES} per request`, 400);
@@ -298,6 +317,11 @@ async function queueBulk(campaignId: number, workspaceId: number, messages: Bulk
       vars = {};
       m.templateParams.forEach((v, i) => { vars[String(i + 1)] = v; });
     }
+    // Header media override travels with the row as _header_media (send-time
+    // priority: this → campaign's saved media → template default). Internal
+    // key — never leaks into body params (buildComponents filters non-numeric).
+    const headerMedia = mediaToHeaderContent(m.media) || mediaToHeaderContent(defaultMedia);
+    if (headerMedia) vars._header_media = headerMedia;
     const firstParam = m.templateParams?.[0];
     const autoName   = (firstParam && !firstParam.startsWith('$')) ? firstParam : null;
     rowsByPhone.set(phone, { phone, name: m.contactName || autoName || null, vars });

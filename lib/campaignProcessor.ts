@@ -203,10 +203,10 @@ async function processBatch(
         let buttons: unknown[] = [];
         try { buttons = JSON.parse((camp.buttons as string) || '[]'); } catch { buttons = []; }
 
-        // Header media actually used in this send — campaign override if set,
-        // else the template's static value — so the stored bubble matches what was sent.
+        // Header media actually used in this send — per-row override → campaign
+        // override → template static value — so the stored bubble matches what was sent.
         const campaignVarsForHeader = parseJson<Record<string, string>>(camp.template_vars as string, {});
-        const sentHeaderContent = campaignVarsForHeader._header_media || camp.header_content || '';
+        const sentHeaderContent = rowVars._header_media || campaignVarsForHeader._header_media || camp.header_content || '';
 
         const templateContent = JSON.stringify({
           __type:         'template',

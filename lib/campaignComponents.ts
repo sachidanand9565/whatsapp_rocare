@@ -9,9 +9,10 @@ import { RowDataPacket } from 'mysql2';
 export function buildComponents(camp: RowDataPacket, contactPhone: string, contactName: string | null, rowVars: Record<string, string> = {}): object[] {
   const components: object[] = [];
   const headerType    = (camp.header_type as string || '').toUpperCase();
-  // Use campaign-level header_media override if set, else fall back to template default
+  // Header media priority: per-row override (bulk API "media" field) →
+  // campaign-level override → template default
   const campaignVarsRaw = parseJson<Record<string, string>>(camp.template_vars as string, {});
-  const headerMediaOverride = campaignVarsRaw._header_media || '';
+  const headerMediaOverride = rowVars._header_media || campaignVarsRaw._header_media || '';
   const headerContent = headerMediaOverride || (camp.header_content as string) || '';
 
   if (['IMAGE', 'DOCUMENT', 'VIDEO'].includes(headerType) && headerContent) {
