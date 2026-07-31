@@ -124,6 +124,44 @@ export async function runProcessTick(onlyId: number | null): Promise<TickResult>
   }
 }
 
+// Campaigns currently being drained by an immediate post-queue loop (send-bulk
+// fire-and-forget) — prevents stacking a second loop on repeated API calls.
+const draining = new Set<number>();
+
+/**
+ * Send a campaign's whole pending queue NOW — runs process ticks back-to-back
+ * (each batch still paced at ~TARGET_MSG_PER_SEC for Meta's rate limit) until
+ * nothing is pending, instead of waiting for the 60s cron to send one
+ * BATCH_SIZE slice per minute.
+ */
+export async function drainCampaign(campaignId: number, maxTicks = 60): Promise<void> {
+  if (draining.has(campaignId)) return;
+  draining.add(campaignId);
+  try {
+    for (let i = 0; i < maxTicks; i++) {
+      const res = await runProcessTick(campaignId);
+      if (res.message === 'tick already running') {
+        // A cron tick (or another drain) holds the global slot — wait it out.
+        await sleep(2000);
+        continue;
+      }
+
+      // Stop when the queue is empty or the campaign was paused/stopped.
+      const rows = await query<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM campaign_contacts cc
+         JOIN campaigns c ON c.id = cc.campaign_id
+         WHERE cc.campaign_id = ? AND cc.status = 'pending' AND c.status = 'running'`,
+        [campaignId]
+      );
+      if (Number(rows[0]?.cnt || 0) === 0) return;
+      await sleep(1000);
+    }
+    console.warn(`[drain] campaign ${campaignId}: maxTicks reached with rows still pending — 60s cron will continue`);
+  } finally {
+    draining.delete(campaignId);
+  }
+}
+
 async function processBatch(
   camp: RowDataPacket, campaignId: number, workspaceId: number,
   budget: number, deadlineAt: number

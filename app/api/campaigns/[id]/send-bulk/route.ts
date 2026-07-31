@@ -22,6 +22,7 @@
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 import { query, execute } from '@/lib/db';
+import { drainCampaign } from '@/lib/campaignProcessor';
 import { apiSuccess, apiError, normalizePhone, utcNow } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 
@@ -182,11 +183,16 @@ export async function POST(
       [now, campaignId, campaignId]
     );
 
+    // Kick off sending immediately — loops batch-after-batch until the queue
+    // is drained (fire-and-forget; the 60s cron remains as fallback if the
+    // process restarts mid-drain).
+    drainCampaign(campaignId).catch((err) => console.error('[campaign/send-bulk] drain', err));
+
     return apiSuccess({
       queued,
       pending,
       invalid: invalid.length,
-      message: `${pending} messages queued — sending starts within a minute`,
+      message: `${pending} messages queued — sending started`,
     });
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
