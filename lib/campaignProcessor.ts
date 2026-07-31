@@ -15,14 +15,15 @@ import { buildComponents, parseJson } from '@/lib/campaignComponents';
 import { sleep, utcNow } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 
-const BATCH_SIZE  = 500; // messages per tick
-const CONCURRENCY = 10;  // messages sent in parallel (well under Meta's 80/sec limit)
-// Meta's Cloud API cap is ~80 msg/sec. We fire CONCURRENCY messages ~simultaneously
-// per chunk, so the delay between chunks must be sized for the whole chunk, not a
-// single message — CONCURRENCY / TARGET_MSG_PER_SEC seconds, converted to ms — with
-// margin below Meta's cap.
-const TARGET_MSG_PER_SEC = 50;
-const CHUNK_DELAY_MS = Math.ceil((CONCURRENCY / TARGET_MSG_PER_SEC) * 1000);
+const BATCH_SIZE  = 2000; // messages per tick
+const CONCURRENCY = 80;   // messages fired in parallel per wave (= Meta's default 80/sec cap)
+// Meta's Cloud API throughput cap is 80 msg/sec per phone number (default tier).
+// We fire a wave of CONCURRENCY sends in parallel, then pace waves so the
+// sustained rate stays at TARGET_MSG_PER_SEC. The wave's own HTTP time counts
+// toward its pacing window — a slow wave gets no extra sleep on top, so real
+// throughput stays close to the target instead of latency + fixed delay.
+const TARGET_MSG_PER_SEC = 70;
+const WAVE_WINDOW_MS = Math.ceil((CONCURRENCY / TARGET_MSG_PER_SEC) * 1000);
 // Stop starting new work this many ms into a tick so one tick finishes before
 // the next interval fires (per-campaign DB locks also guard against overlap).
 const TICK_DEADLINE_MS = 50_000;
@@ -221,14 +222,27 @@ async function processBatch(
         // Per-contact vars override campaign vars (CSV mode)
         const rowVars = parseJson<Record<string, string>>(contact.row_vars as string, {});
         const components = buildComponents(camp, contact.phone as string, contact.contact_name as string | null, rowVars);
-        const result = await sendTemplateMessage(
-          camp.access_token as string,
-          camp.phone_number_id as string,
-          contact.phone as string,
-          camp.tname as string,
-          camp.language as string,
-          components
-        );
+        // Meta rate-limit (130429 / HTTP 429) is transient at this send rate —
+        // back off and retry instead of failing the contact.
+        let result;
+        for (let attempt = 0; ; attempt++) {
+          try {
+            result = await sendTemplateMessage(
+              camp.access_token as string,
+              camp.phone_number_id as string,
+              contact.phone as string,
+              camp.tname as string,
+              camp.language as string,
+              components
+            );
+            break;
+          } catch (sendErr) {
+            const e = sendErr as { response?: { status?: number; data?: { error?: { code?: number } } } };
+            const rateLimited = e?.response?.status === 429 || e?.response?.data?.error?.code === 130429;
+            if (!rateLimited || attempt >= 2) throw sendErr;
+            await sleep(1500 * (attempt + 1));
+          }
+        }
 
         const wamid = (result?.messages as Record<string, unknown>[])?.[0]?.id as string;
 
@@ -290,13 +304,17 @@ async function processBatch(
     }
 
     for (let i = 0; i < contacts.length; i += CONCURRENCY) {
-      // Stop starting new chunks near the deadline — leftover rows stay pending
+      // Stop starting new waves near the deadline — leftover rows stay pending
       // and the next tick picks them up.
       if (Date.now() >= deadlineAt) break;
-      const chunk = contacts.slice(i, i + CONCURRENCY);
-      const results = await Promise.all(chunk.map((c) => sendOne(c)));
+      const wave = contacts.slice(i, i + CONCURRENCY);
+      const waveStart = Date.now();
+      const results = await Promise.all(wave.map((c) => sendOne(c)));
       for (const ok of results) ok ? sentCount++ : failedCount++;
-      if (i + CONCURRENCY < contacts.length) await sleep(CHUNK_DELAY_MS);
+      if (i + CONCURRENCY < contacts.length) {
+        const remainingWindow = WAVE_WINDOW_MS - (Date.now() - waveStart);
+        if (remainingWindow > 0) await sleep(remainingWindow);
+      }
     }
 
     // Update running counts on campaign
