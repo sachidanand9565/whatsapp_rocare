@@ -485,7 +485,14 @@ export default function CampaignDetailPage() {
   if (!campaign) return <p className="text-gray-500 p-8">Campaign not found.</p>;
 
   const typeCfg = TYPE_CONFIG[campaign.campaign_type] || TYPE_CONFIG.broadcast;
-  const total   = campaign.total_contacts || 0;
+  // API campaigns are reusable pipes — the same contact receives many messages
+  // over time, so the Overview total must be total messages processed
+  // (sent + failed + pending), not unique contacts, or every tile shows >100%.
+  // For one-shot broadcasts the two match; max() covers re-queued sends.
+  const processed = counts.sent + counts.failed + counts.pending;
+  const total = campaign.campaign_type === 'api'
+    ? processed
+    : Math.max(campaign.total_contacts || 0, processed);
 
   // Chart series config per tab
   const CHART_SERIES: Partial<Record<TabKey, { key: string; name: string; color: string }[]>> = {

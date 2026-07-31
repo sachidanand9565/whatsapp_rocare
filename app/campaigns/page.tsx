@@ -90,15 +90,18 @@ export default function CampaignsPage() {
   function ccRead(c: Campaign)      { return Number(anyC(c).cc_read      ?? c.read_count      ?? 0); }
   function ccFailed(c: Campaign)    { return Number(anyC(c).cc_failed    ?? c.failed_count    ?? 0); }
 
+  // Rates are per message SENT, not per unique contact — API campaigns send
+  // many messages to the same contacts, so a contact-based denominator
+  // shows >100%.
   function deliveryRate(c: Campaign) {
-    const total = c.total_contacts;
-    if (!total) return '—';
-    return `${Math.round((ccDelivered(c) / total) * 100)}%`;
+    const sent = ccSent(c);
+    if (!sent) return '—';
+    return `${Math.round((ccDelivered(c) / sent) * 100)}%`;
   }
   function readRate(c: Campaign) {
-    const total = c.total_contacts;
-    if (!total) return '—';
-    return `${Math.round((ccRead(c) / total) * 100)}%`;
+    const sent = ccSent(c);
+    if (!sent) return '—';
+    return `${Math.round((ccRead(c) / sent) * 100)}%`;
   }
 
   const filtered = filterType === 'all'
