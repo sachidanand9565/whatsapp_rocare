@@ -21,10 +21,12 @@ function createPool(): mysql.Pool {
     password:           process.env.DB_PASSWORD,
     database:           process.env.DB_NAME,
     waitForConnections: true,
-    // Serverless (Vercel): har instance apna pool banata hai. DB user ki
-    // max_user_connections (e.g. 30) SABHI instances ke beech shared hai, isliye
-    // per-instance limit chhota rakho. Env se tune ho sakta hai bina redeploy.
-    connectionLimit:    Number(process.env.DB_CONNECTION_LIMIT) || 3,
+    // AWS par ek hi long-lived instance chalta hai (Vercel serverless nahi),
+    // to pool thoda bada rakh sakte hain: campaign sender apni waves ke DB
+    // writes karta hai aur panel/API requests ko bhi connections chahiye —
+    // 3 par sab ek dusre ke peeche queue ho ke proxy timeouts (502) de rahe
+    // the. Env se tune ho sakta hai bina redeploy.
+    connectionLimit:    Number(process.env.DB_CONNECTION_LIMIT) || 10,
     queueLimit:         0,            // 0 = unlimited queue (error ke bajaye wait)
     // Idle connections ko jaldi band karo taaki dusre instances ke liye slot khaali ho
     maxIdle:            1,

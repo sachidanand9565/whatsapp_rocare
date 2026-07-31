@@ -9,7 +9,7 @@
  *  - GET /api/campaigns/process (manual trigger / external cron), which runs
  *    it in the background and responds immediately so proxies never 504
  */
-import pool, { query, execute, insert } from '@/lib/db';
+import pool, { query, execute } from '@/lib/db';
 import { sendTemplateMessage } from '@/lib/whatsapp';
 import { buildComponents, parseJson } from '@/lib/campaignComponents';
 import { sleep, utcNow } from '@/lib/utils';
@@ -217,7 +217,15 @@ async function processBatch(
     let sentCount = 0;
     let failedCount = 0;
 
-    async function sendOne(contact: RowDataPacket) {
+    type WaveOutcome =
+      | { ok: true;  ccId: number; contactId: number; wamid: string | null; content: string }
+      | { ok: false; ccId: number; error: string };
+
+    // sendOne only talks to Meta — all DB bookkeeping happens per-wave in
+    // recordWave. Per-message writes at this concurrency starved the pool and
+    // panel/API requests queued behind them (proxy 502s).
+    async function sendOne(contact: RowDataPacket): Promise<WaveOutcome> {
+      const ccId = contact.cc_id as number;
       try {
         // Per-contact vars override campaign vars (CSV mode)
         const rowVars = parseJson<Record<string, string>>(contact.row_vars as string, {});
@@ -271,18 +279,7 @@ async function processBatch(
           workspace_id:   workspaceId,
         });
 
-        const t = utcNow();
-        const msgId = await insert(
-          `INSERT INTO messages (workspace_id, contact_id, wamid, direction, type, content, campaign_id, status, sent_at, created_at)
-           VALUES (?, ?, ?, 'outbound', 'template', ?, ?, 'sent', ?, ?)`,
-          [workspaceId, contact.contact_id, wamid, templateContent, campaignId, t, t]
-        );
-
-        await execute(
-          'UPDATE campaign_contacts SET status = ?, message_id = ?, sent_at = ? WHERE id = ?',
-          ['sent', msgId, t, contact.cc_id]
-        );
-        return true;
+        return { ok: true, ccId, contactId: contact.contact_id as number, wamid: wamid || null, content: templateContent };
       } catch (err) {
         const axiosErr = err as { response?: { data?: { error?: { message?: string; error_data?: { details?: string } } }; status?: number } };
         if (axiosErr?.response) {
@@ -295,11 +292,56 @@ async function processBatch(
         const errMessage = metaErr?.message
           ? `Meta: ${metaErr.message}${metaErr.error_data?.details ? ` — ${metaErr.error_data.details}` : ''}`
           : String(err);
+        return { ok: false, ccId, error: errMessage.slice(0, 1000) };
+      }
+    }
+
+    // Persist a whole wave in ~3 batched queries instead of 2 per message.
+    async function recordWave(outcomes: WaveOutcome[]) {
+      const sentRows = outcomes.filter((o): o is Extract<WaveOutcome, { ok: true }> => o.ok);
+      const failRows = outcomes.filter((o): o is Extract<WaveOutcome, { ok: false }> => !o.ok);
+      const t = utcNow();
+
+      if (sentRows.length > 0) {
+        try {
+          await execute(
+            `INSERT INTO messages (workspace_id, contact_id, wamid, direction, type, content, campaign_id, status, sent_at, created_at)
+             VALUES ${sentRows.map(() => "(?, ?, ?, 'outbound', 'template', ?, ?, 'sent', ?, ?)").join(',')}`,
+            sentRows.flatMap((o) => [workspaceId, o.contactId, o.wamid, o.content, campaignId, t, t])
+          );
+          // Map inserted message ids back via wamid (unique per send)
+          const wamids = sentRows.map((o) => o.wamid).filter((w): w is string => !!w);
+          const idRows = wamids.length > 0
+            ? await query<RowDataPacket[]>(
+                `SELECT id, wamid FROM messages WHERE campaign_id = ? AND wamid IN (${wamids.map(() => '?').join(',')})`,
+                [campaignId, ...wamids]
+              )
+            : [];
+          const msgIdByWamid = new Map(idRows.map((r) => [r.wamid as string, r.id as number]));
+          await execute(
+            `UPDATE campaign_contacts SET status = 'sent', sent_at = ?,
+               message_id = CASE id ${sentRows.map(() => 'WHEN ? THEN ?').join(' ')} END
+             WHERE id IN (${sentRows.map(() => '?').join(',')})`,
+            [t, ...sentRows.flatMap((o) => [o.ccId, o.wamid ? (msgIdByWamid.get(o.wamid) ?? null) : null]), ...sentRows.map((o) => o.ccId)]
+          );
+        } catch (err) {
+          // These messages ARE already sent — the rows must leave 'pending'
+          // no matter what, or the next tick re-sends real messages.
+          console.error('[process] wave bookkeeping failed:', err);
+          await execute(
+            `UPDATE campaign_contacts SET status = 'sent', sent_at = ? WHERE id IN (${sentRows.map(() => '?').join(',')})`,
+            [t, ...sentRows.map((o) => o.ccId)]
+          ).catch((e2) => console.error('[process] CRITICAL: could not mark wave sent — possible double-send next tick:', e2));
+        }
+      }
+
+      if (failRows.length > 0) {
         await execute(
-          'UPDATE campaign_contacts SET status = ?, error = ? WHERE id = ?',
-          ['failed', errMessage.slice(0, 1000), contact.cc_id]
-        );
-        return false;
+          `UPDATE campaign_contacts SET status = 'failed',
+             error = CASE id ${failRows.map(() => 'WHEN ? THEN ?').join(' ')} END
+           WHERE id IN (${failRows.map(() => '?').join(',')})`,
+          [...failRows.flatMap((o) => [o.ccId, o.error]), ...failRows.map((o) => o.ccId)]
+        ).catch((e) => console.error('[process] failed-rows update error:', e));
       }
     }
 
@@ -309,8 +351,10 @@ async function processBatch(
       if (Date.now() >= deadlineAt) break;
       const wave = contacts.slice(i, i + CONCURRENCY);
       const waveStart = Date.now();
-      const results = await Promise.all(wave.map((c) => sendOne(c)));
-      for (const ok of results) ok ? sentCount++ : failedCount++;
+      const outcomes = await Promise.all(wave.map((c) => sendOne(c)));
+      for (const o of outcomes) o.ok ? sentCount++ : failedCount++;
+      // Batched bookkeeping counts toward the wave's pacing window too
+      await recordWave(outcomes);
       if (i + CONCURRENCY < contacts.length) {
         const remainingWindow = WAVE_WINDOW_MS - (Date.now() - waveStart);
         if (remainingWindow > 0) await sleep(remainingWindow);
