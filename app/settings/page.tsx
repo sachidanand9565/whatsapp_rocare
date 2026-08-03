@@ -319,6 +319,7 @@ export default function SettingsPage() {
   const [fwCampaigns, setFwCampaigns] = useState<Campaign[]>([]);
   const [fwForm, setFwForm]           = useState({ name: '', campaign_id: '', api_url: '', api_method: 'POST', api_headers: '' });
   const [fwAdding, setFwAdding]       = useState(false);
+  const [fwEditId, setFwEditId]       = useState<number | null>(null);
   const [showFwHeaders, setShowFwHeaders] = useState(false);
 
   const APP_ID    = process.env.NEXT_PUBLIC_FACEBOOK_APP_ID || '';
@@ -411,21 +412,41 @@ export default function SettingsPage() {
     if (!fwForm.name || !fwForm.campaign_id || !fwForm.api_url) return;
     setFwAdding(true);
     try {
-      await apiFetch('/api/failed-webhooks', {
-        method: 'POST',
-        body: JSON.stringify({
-          name:        fwForm.name,
-          campaign_id: Number(fwForm.campaign_id),
-          api_url:     fwForm.api_url,
-          api_method:  fwForm.api_method,
-          api_headers: fwForm.api_headers || null,
-        }),
+      const body = JSON.stringify({
+        name:        fwForm.name,
+        campaign_id: Number(fwForm.campaign_id),
+        api_url:     fwForm.api_url,
+        api_method:  fwForm.api_method,
+        api_headers: fwForm.api_headers || null,
       });
-      setFwForm({ name: '', campaign_id: '', api_url: '', api_method: 'POST', api_headers: '' });
+      if (fwEditId) {
+        await apiFetch(`/api/failed-webhooks/${fwEditId}`, { method: 'PATCH', body });
+      } else {
+        await apiFetch('/api/failed-webhooks', { method: 'POST', body });
+      }
+      toast.success(fwEditId ? 'Webhook updated!' : 'Failed message webhook added!');
+      cancelFwEdit();
       loadFw();
-      toast.success('Failed message webhook added!');
-    } catch { toast.error('Failed to add webhook'); }
+    } catch { toast.error(fwEditId ? 'Failed to update webhook' : 'Failed to add webhook'); }
     finally   { setFwAdding(false); }
+  }
+
+  function startFwEdit(item: FailedWebhook) {
+    setFwEditId(item.id);
+    setFwForm({
+      name:        item.name,
+      campaign_id: String(item.campaign_id),
+      api_url:     item.api_url,
+      api_method:  item.api_method,
+      api_headers: item.api_headers || '',
+    });
+    setShowFwHeaders(!!item.api_headers);
+  }
+
+  function cancelFwEdit() {
+    setFwEditId(null);
+    setFwForm({ name: '', campaign_id: '', api_url: '', api_method: 'POST', api_headers: '' });
+    setShowFwHeaders(false);
   }
 
   async function toggleFw(item: FailedWebhook) {
@@ -439,6 +460,7 @@ export default function SettingsPage() {
   async function deleteFw(id: number) {
     if (!confirm('Delete this webhook?')) return;
     await apiFetch(`/api/failed-webhooks/${id}`, { method: 'DELETE' }).catch(() => {});
+    if (id === fwEditId) cancelFwEdit();
     loadFw();
     toast.success('Webhook deleted');
   }
@@ -1469,7 +1491,7 @@ Response:
               <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
                 <Zap size={18} className="text-red-500" />
                 <div>
-                  <h3 className="font-semibold text-gray-900">Add Failed Message Webhook</h3>
+                  <h3 className="font-semibold text-gray-900">{fwEditId ? 'Edit Failed Message Webhook' : 'Add Failed Message Webhook'}</h3>
                   <p className="text-xs text-gray-400 mt-0.5">Fires an API call when a campaign message fails to deliver</p>
                 </div>
               </div>
@@ -1542,10 +1564,18 @@ Response:
 }`}</pre>
                 </div>
 
-                <button type="submit" disabled={fwAdding}
-                  className="btn-primary flex items-center gap-2 w-full justify-center">
-                  <Plus size={16} />{fwAdding ? 'Adding...' : 'Add Webhook'}
-                </button>
+                <div className="flex gap-2">
+                  {fwEditId && (
+                    <button type="button" onClick={cancelFwEdit}
+                      className="btn-secondary flex-1 text-sm">Cancel</button>
+                  )}
+                  <button type="submit" disabled={fwAdding}
+                    className="btn-primary flex items-center gap-2 flex-1 justify-center">
+                    {fwEditId
+                      ? <><Save size={16} />{fwAdding ? 'Saving...' : 'Update Webhook'}</>
+                      : <><Plus size={16} />{fwAdding ? 'Adding...' : 'Add Webhook'}</>}
+                  </button>
+                </div>
               </form>
             </div>
 
@@ -1582,6 +1612,14 @@ Response:
                       {item.is_active
                         ? <ToggleRight size={20} className="text-whatsapp-green" />
                         : <ToggleLeft size={20} />}
+                    </button>
+                    <button onClick={() => startFwEdit(item)} title="Edit"
+                      className={`p-1.5 rounded-lg transition-colors ${
+                        fwEditId === item.id
+                          ? 'text-blue-600 bg-blue-50'
+                          : 'text-gray-400 hover:text-blue-500 hover:bg-blue-50'
+                      }`}>
+                      <Pencil size={15} />
                     </button>
                     <button onClick={() => deleteFw(item.id)} title="Delete"
                       className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
