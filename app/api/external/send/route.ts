@@ -203,7 +203,29 @@ export async function POST(req: NextRequest) {
       }
       result = await sendTemplateMessage(at, pn, contactPhone, template.name!, template.language || 'en', components);
       dbType = 'template';
-      storedContent = JSON.stringify({ __type: 'template', template_name: template.name, body: bodyText || `[Template: ${template.name}]` });
+      // Store the template's REAL content (like campaign sends do) so the
+      // inbox bubble shows the actual message, not a "[Template: name]" placeholder
+      const tplRows = await query<RowDataPacket[]>(
+        'SELECT body_text, header_type, header_content, footer_text, buttons FROM templates WHERE workspace_id = ? AND name = ? LIMIT 1',
+        [workspaceId, template.name]
+      );
+      const tplDef = tplRows[0];
+      let renderedBody = (tplDef?.body_text as string) || bodyText || `[Template: ${template.name}]`;
+      (template.params || []).forEach((p, i) => {
+        renderedBody = renderedBody.replace(new RegExp(`\\{\\{${i + 1}\\}\\}`, 'g'), String(p));
+      });
+      let tplButtons: unknown[] = [];
+      try { tplButtons = JSON.parse((tplDef?.buttons as string) || '[]'); } catch { tplButtons = []; }
+      storedContent = JSON.stringify({
+        __type:         'template',
+        template_name:  template.name,
+        header_type:    tplDef?.header_type || 'NONE',
+        header_content: template.header_media || tplDef?.header_content || '',
+        body:           renderedBody,
+        footer:         tplDef?.footer_text || '',
+        buttons:        tplButtons,
+        workspace_id:   workspaceId,
+      });
 
     } else {
       result = await sendTextMessage(at, pn, contactPhone, bodyText);
