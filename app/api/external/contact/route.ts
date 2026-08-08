@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
   const contact = contactRows[0];
 
   // ── Fetch all messages ───────────────────────────────────────
-  const messages = await query<RowDataPacket[]>(
+  const rows = await query<RowDataPacket[]>(
     `SELECT id, wamid, direction, type, content, status,
             sent_at, delivered_at, read_at, created_at
      FROM messages
@@ -57,6 +57,32 @@ export async function GET(req: NextRequest) {
      ORDER BY COALESCE(created_at, sent_at) ASC, id ASC`,
     [workspaceId, contact.id]
   );
+
+  // Media messages: expose top-level media fields + a ready download link
+  // (media_url) — same shape as the message.received webhook payload, so
+  // callers don't have to parse the content JSON and build URLs themselves.
+  const fwdProto = req.headers.get('x-forwarded-proto') || 'https';
+  const fwdHost  = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
+  const baseUrl  = fwdHost ? `${fwdProto}://${fwdHost}` : '';
+
+  const messages = rows.map((m) => {
+    try {
+      const p = JSON.parse(m.content as string);
+      if (p?.__type === 'media' && p.media_id) {
+        return {
+          ...m,
+          media_id:  String(p.media_id),
+          mime_type: p.mime_type || null,
+          ...(p.caption  ? { caption:  p.caption }  : {}),
+          ...(p.filename ? { filename: p.filename } : {}),
+          ...(baseUrl
+            ? { media_url: `${baseUrl}/api/media/${p.media_id}?workspaceId=${workspaceId}&key=${apiKey}` }
+            : {}),
+        };
+      }
+    } catch { /* not JSON content — plain text message */ }
+    return m;
+  });
 
   return corsResponse({
     contact: {
