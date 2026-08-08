@@ -1133,7 +1133,18 @@ export default function SettingsPage() {
               const buttonExtra = payloadTab === 'button'
                 ? `,\n    "button_text": "Confirm Order",\n    "button_payload": "confirm_order",\n    "replied_to_wamid": "wamid.ABCxyz...",\n    "replied_template": {\n      "template_name": "order_update",\n      "header_type": "TEXT",\n      "header_content": "Order Ready",\n      "body": "Your order #1234 is ready!",\n      "footer": "Regards, Team",\n      "buttons": [{ "type": "QUICK_REPLY", "text": "Confirm Order" }]\n    }`
                 : ``;
-              const payload = `{\n  "event": "message.received",\n  "workspace_id": ${wsId},\n  "contact": { "id": 42, "phone": "916386103750", "name": "Sachidanand Kushwahah" },\n  "message": {\n    "wamid": "wamid.HBgMOTE5...",\n    "type": "${payloadTab}",\n    "content": ${contentMap[payloadTab]},\n    "timestamp": "${Math.floor(Date.now() / 1000)}",\n    "replied_to_wamid": null${buttonExtra}\n  }\n}`;
+              // Media messages also carry top-level media fields + a ready
+              // download link (media_url) — mirror the real forwarded payload
+              const origin  = typeof window !== 'undefined' ? window.location.origin : '';
+              const keyPart = apiKey || 'ws_xxxxxxxxxxxx';
+              const mediaUrl = (id: string) => `${origin}/api/media/${id}?workspaceId=${wsId}&key=${keyPart}`;
+              const mediaExtraMap: Record<string, string> = {
+                image:    `\n    "media_id": "abc123",\n    "mime_type": "image/jpeg",\n    "caption": "Check this",\n    "media_url": "${mediaUrl('abc123')}",`,
+                audio:    `\n    "media_id": "def456",\n    "mime_type": "audio/ogg",\n    "media_url": "${mediaUrl('def456')}",`,
+                document: `\n    "media_id": "ghi789",\n    "mime_type": "application/pdf",\n    "filename": "invoice.pdf",\n    "media_url": "${mediaUrl('ghi789')}",`,
+              };
+              const mediaExtra = mediaExtraMap[payloadTab] || '';
+              const payload = `{\n  "event": "message.received",\n  "workspace_id": ${wsId},\n  "contact": { "id": 42, "phone": "916386103750", "name": "Sachidanand Kushwahah" },\n  "message": {\n    "wamid": "wamid.HBgMOTE5...",\n    "type": "${payloadTab}",\n    "content": ${contentMap[payloadTab]},${mediaExtra}\n    "timestamp": "${Math.floor(Date.now() / 1000)}",\n    "replied_to_wamid": null${buttonExtra}\n  }\n}`;
               return (
                 <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-600 space-y-2">
                   <div className="flex items-center justify-between">
@@ -1154,6 +1165,12 @@ export default function SettingsPage() {
                     ))}
                   </div>
                   <pre className="bg-gray-900 text-green-400 rounded p-2 overflow-x-auto leading-relaxed text-[11px]">{payload}</pre>
+                  {mediaExtra && (
+                    <p className="text-gray-500">
+                      <code className="bg-gray-200 px-1 rounded">media_url</code> is a ready download link (your API key is included) —
+                      GET it to receive the file. Meta keeps media ~30 days, so save the file on your server if you need it permanently.
+                    </p>
+                  )}
                   <p className="text-gray-500">
                     Reply: <code className="bg-gray-200 px-1 rounded">POST /api/send-message</code>
                     {' · '}Signature: <code className="bg-gray-200 px-1 rounded">X-Webhook-Signature: sha256=...</code>

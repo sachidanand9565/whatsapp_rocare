@@ -213,8 +213,22 @@ export async function POST(req: NextRequest) {
 
     wamid = result?.messages?.[0]?.id || null;
   } catch (err: unknown) {
-    const detail = err instanceof Error ? err.message : 'WhatsApp API error';
-    return NextResponse.json({ error: 'Failed to send message', detail }, { status: 502 });
+    // Surface Meta's real error (code + message), not axios's generic
+    // "Request failed with status code 400" — callers need to distinguish
+    // "24h window closed" (131047) from bad params, invalid number, etc.
+    const axiosErr = err as { response?: { data?: { error?: { code?: number; message?: string; error_data?: { details?: string } } } } };
+    const metaErr  = axiosErr?.response?.data?.error;
+    const detail   = metaErr?.message
+      ? `Meta: ${metaErr.message}${metaErr.error_data?.details ? ` — ${metaErr.error_data.details}` : ''}`
+      : (err instanceof Error ? err.message : 'WhatsApp API error');
+    return NextResponse.json({
+      error: 'Failed to send message',
+      detail,
+      ...(metaErr?.code ? { meta_code: metaErr.code } : {}),
+      ...(metaErr?.code === 131047
+        ? { window_closed: true, hint: '24h customer service window is closed — send an approved template first (type: "template"), then free-form messages work once the customer replies.' }
+        : {}),
+    }, { status: 502 });
   }
 
   // ── Save to DB ───────────────────────────────────────────────
