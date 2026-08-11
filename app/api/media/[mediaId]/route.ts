@@ -11,6 +11,27 @@ export const maxDuration = 30; // Vercel: allow up to 30s for two-hop Meta fetch
 
 const MAX_MEDIA_BYTES = 100 * 1024 * 1024; // WhatsApp's own max media size (video/document)
 
+// Meta's CDN needs BOTH quirks handled:
+//  - a User-Agent header, or it rejects the request
+//  - Authorization re-attached on every redirect hop — Node's fetch DROPS the
+//    Authorization header on cross-origin redirects, and video/audio/document
+//    URLs often redirect to another CDN host (images usually don't, which is
+//    why only images appeared to work).
+async function fetchFromMetaCdn(url: string, token: string, hops = 0): Promise<Response> {
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'User-Agent':  'WhatsAppPanel/1.0',
+    },
+    redirect: 'manual',
+  });
+  if ([301, 302, 303, 307, 308].includes(res.status) && hops < 3) {
+    const loc = res.headers.get('location');
+    if (loc) return fetchFromMetaCdn(new URL(loc, url).toString(), token, hops + 1);
+  }
+  return res;
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: { mediaId: string } }
@@ -83,11 +104,9 @@ export async function GET(
   let buffer: ArrayBuffer;
   let contentType: string;
   try {
-    const fileRes = await fetch(metaData.url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const fileRes = await fetchFromMetaCdn(metaData.url, accessToken);
     if (!fileRes.ok) {
-      console.error('[media] CDN download failed:', fileRes.status);
+      console.error(`[media] CDN download failed for ${mediaId}: HTTP ${fileRes.status} (${metaData.mime_type || 'unknown type'})`);
       return new NextResponse('Failed to download media', { status: 502 });
     }
     const declaredLength = Number(fileRes.headers.get('content-length') || 0);
