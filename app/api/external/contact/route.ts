@@ -58,6 +58,24 @@ export async function GET(req: NextRequest) {
     [workspaceId, contact.id]
   );
 
+  // DB stores UTC — convert every *_at timestamp to IST ("YYYY-MM-DD HH:MM:SS")
+  // so callers can display times directly without timezone math.
+  const toIST = (ts: unknown): string | null => {
+    if (!ts || typeof ts !== 'string') return null;
+    const d = new Date(ts.replace(' ', 'T') + 'Z');
+    if (isNaN(d.getTime())) return ts;
+    const date = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const time = d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour12: false });
+    return `${date} ${time}`;
+  };
+  const istTimestamps = <T extends Record<string, unknown>>(row: T): T => {
+    const out: Record<string, unknown> = { ...row };
+    for (const k of Object.keys(out)) {
+      if (k.endsWith('_at') && out[k]) out[k] = toIST(out[k]);
+    }
+    return out as T;
+  };
+
   // Media messages: expose top-level media fields + a ready download link
   // (media_url) — same shape as the message.received webhook payload, so
   // callers don't have to parse the content JSON and build URLs themselves.
@@ -65,7 +83,7 @@ export async function GET(req: NextRequest) {
   const fwdHost  = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
   const baseUrl  = fwdHost ? `${fwdProto}://${fwdHost}` : '';
 
-  const messages = rows.map((m) => {
+  const messages = rows.map(istTimestamps).map((m) => {
     try {
       const p = JSON.parse(m.content as string);
       if (p?.__type === 'media' && p.media_id) {
@@ -97,9 +115,10 @@ export async function GET(req: NextRequest) {
       notes:       contact.notes       || null,
       opted_in:    !!contact.opted_in,
       chat_status: contact.chat_status || 'open',
-      created_at:  contact.created_at,
+      created_at:  toIST(contact.created_at),
     },
     messages,
     total_messages: messages.length,
+    timezone: 'Asia/Kolkata',
   });
 }
