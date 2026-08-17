@@ -4,7 +4,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { query, insert, execute } from '@/lib/db';
-import { parseWebhookBody, markAsRead, callAction, sendTemplateMessage, TemplateStatusUpdate, IncomingCall } from '@/lib/whatsapp';
+import { parseWebhookBody, markAsRead, sendTemplateMessage, TemplateStatusUpdate, IncomingCall } from '@/lib/whatsapp';
 import { normalizePhone, utcNow, unixToUtc } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { emitSSE } from '@/lib/sse';
@@ -497,10 +497,13 @@ export async function POST(req: NextRequest) {
   }
 
   // ---- WhatsApp Business Calling API events (field = "calls") ----
-  // connect   → call is ringing. Phase 1 has no WebRTC softphone, so we notify
-  //             the inbox (SSE) and REJECT the call so the customer's phone
-  //             doesn't ring into a void; the terminate event then logs it as
-  //             a missed call and the auto-callback (if enabled) fires.
+  // connect   → call is ringing. Phase 1 has no WebRTC softphone yet, so we
+  //             only notify the inbox (SSE) and let the call ring out naturally
+  //             on the customer's side (Meta ends it as unanswered after its
+  //             ring timeout); the terminate event then logs it as a missed
+  //             call and the auto-callback template (if enabled) fires.
+  //             Deliberately NOT rejecting — an instant reject reads as
+  //             "declined" to the customer, a ring-out reads as "busy".
   // terminate → final record: COMPLETED (answered, with duration) or FAILED
   //             (missed / rejected / unanswered).
   for (const call of calls) {
@@ -530,11 +533,6 @@ export async function POST(req: NextRequest) {
         callId: call.call_id, callerPhone: phone,
         callerName: (contactRow[0].name as string) || call.profileName || phone,
       });
-      // No softphone yet → reject so it becomes a clean missed call on both ends
-      if (!isBusinessInitiated && workspaceAccessToken && phoneNumberId) {
-        callAction(workspaceAccessToken, phoneNumberId, call.call_id, 'reject')
-          .catch((e) => console.warn('[calls] reject failed:', (e as Error)?.message));
-      }
       continue;
     }
 
