@@ -10,7 +10,7 @@ const emitter = new EventEmitter();
 emitter.setMaxListeners(500);
 
 export interface SSEPayload {
-  type:        'new_message' | 'status_update' | 'chat_status_update' | 'campaign_update' | 'incoming_call' | 'call_ended';
+  type:        'new_message' | 'status_update' | 'chat_status_update' | 'campaign_update' | 'incoming_call' | 'call_ended' | 'call_answer';
   workspaceId: number;
   contactId?:  number;
   direction?:  'inbound' | 'outbound';
@@ -18,9 +18,12 @@ export interface SSEPayload {
   status?:     string;   // for status_update
   chatStatus?: string;   // for chat_status_update
   campaignId?: number;   // for campaign_update
-  callId?:     string;   // for incoming_call / call_ended
+  callId?:     string;   // for incoming_call / call_ended / call_answer
   callerPhone?: string;  // for incoming_call
   callerName?:  string;  // for incoming_call
+  sdp?:         string;  // for incoming_call: caller's WebRTC SDP offer
+                         // for call_answer (business-initiated): callee's SDP answer
+  callDirection?: 'inbound' | 'outbound';
   // Filled in per-subscriber by app/api/events/route.ts (not by emitSSE callers) so
   // the inbox can upsert its contact list from the push instead of re-fetching it.
   contact?:      Contact | null;

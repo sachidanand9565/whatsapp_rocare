@@ -438,20 +438,48 @@ export async function updateCallingSettings(accessToken: string, phoneNumberId: 
   return data as { success?: boolean };
 }
 
-// ---- Call control: reject / terminate (accept needs a WebRTC SDP answer — phase 2) ----
+// ---- Call control ----
+// reject / terminate need no media. pre_accept / accept carry the browser's
+// WebRTC SDP answer (RFC 8866). Order matters: pre_accept BEFORE accept —
+// Meta rejects an accept that wasn't preceded by pre_accept.
 export async function callAction(
   accessToken:   string,
   phoneNumberId: string,
   callId:        string,
-  action:        'reject' | 'terminate'
+  action:        'reject' | 'terminate' | 'pre_accept' | 'accept',
+  sdpAnswer?:    string
+) {
+  const client = createWAClient(accessToken);
+  const body: Record<string, unknown> = {
+    messaging_product: 'whatsapp',
+    call_id:           callId,
+    action,
+  };
+  if ((action === 'pre_accept' || action === 'accept') && sdpAnswer) {
+    body.session = { sdp_type: 'answer', sdp: sdpAnswer };
+  }
+  const { data } = await client.post(`/${phoneNumberId}/calls`, body);
+  return data as { success?: boolean };
+}
+
+// ---- Business-initiated call: ring the customer with our SDP offer ----
+// Requires the customer to have granted call permission (callback permission
+// prompt or a call_permission_request message) within the last 7 days.
+export async function startBusinessCall(
+  accessToken:   string,
+  phoneNumberId: string,
+  toPhone:       string,
+  sdpOffer:      string
 ) {
   const client = createWAClient(accessToken);
   const { data } = await client.post(`/${phoneNumberId}/calls`, {
     messaging_product: 'whatsapp',
-    call_id:           callId,
-    action,
+    to:                toPhone,
+    action:            'connect',
+    session:           { sdp_type: 'offer', sdp: sdpOffer },
   });
-  return data as { success?: boolean };
+  // { messaging_product, calls: [{ id: 'wacid.…' }] }
+  return data as { calls?: { id: string }[] };
 }
 
 // ---- Mark message as read ----

@@ -527,11 +527,22 @@ export async function POST(req: NextRequest) {
     const msgDirection = isBusinessInitiated ? 'outbound' : 'inbound';
 
     if (call.event === 'connect') {
-      // Ringing — tell open inbox tabs right away
+      if (isBusinessInitiated) {
+        // Outbound call we started: the customer picked up — this connect event
+        // carries THEIR SDP answer. Hand it to the agent's browser to finish WebRTC.
+        emitSSE({
+          type: 'call_answer', workspaceId, contactId,
+          callId: call.call_id, sdp: call.sdp, callDirection: 'outbound',
+        });
+        continue;
+      }
+      // Inbound: ringing — push to open inbox tabs with the caller's SDP offer so
+      // the softphone can answer (pre_accept/accept via /api/calling/action)
       emitSSE({
         type: 'incoming_call', workspaceId, contactId,
         callId: call.call_id, callerPhone: phone,
         callerName: (contactRow[0].name as string) || call.profileName || phone,
+        sdp: call.sdp, callDirection: 'inbound',
       });
       continue;
     }

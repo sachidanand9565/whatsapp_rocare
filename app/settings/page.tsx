@@ -1504,8 +1504,8 @@ Response:
                   <div className="flex-1">
                     <p className="text-sm font-medium text-gray-800">Enable calling on this number</p>
                     <p className="text-xs text-gray-400 mt-1">
-                      Shows a call button on your WhatsApp profile and chat. Incoming calls are logged in the Inbox
-                      (answering calls in the browser is coming next). Meta may take a few minutes to reflect changes.
+                      Shows a call button on your WhatsApp profile and chat. Agents answer and place calls right
+                      from the Inbox (browser mic needed). Meta may take a few minutes to reflect changes.
                     </p>
                   </div>
                   <button onClick={toggleCalling} disabled={callingSaving}
