@@ -665,9 +665,101 @@ function renderTplPreview(text: string): React.ReactNode {
 }
 
 // ── Main Inbox Page ───────────────────────────────────────────
+// ── Incoming WhatsApp call popup ──────────────────────────────
+interface IncomingCall { callId: string; contactId?: number; name: string; phone: string; startedAt: number }
+
+// Ringtone via Web Audio (no asset needed): classic double-ring, repeats every 3s.
+// Browsers block audio until the user has interacted with the page once —
+// we still try; a muted ring is better than a crash.
+function startRingtone(): () => void {
+  let ctx: AudioContext | null = null;
+  let timer: ReturnType<typeof setInterval> | null = null;
+  try {
+    const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    ctx = new AC();
+    const beep = (at: number, freq: number, dur: number) => {
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine'; osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, at);
+      gain.gain.linearRampToValueAtTime(0.25, at + 0.02);
+      gain.gain.setValueAtTime(0.25, at + dur - 0.04);
+      gain.gain.linearRampToValueAtTime(0, at + dur);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(at); osc.stop(at + dur);
+    };
+    const ring = () => {
+      if (!ctx) return;
+      const t = ctx.currentTime;
+      beep(t, 880, 0.35); beep(t + 0.45, 880, 0.35);       // ring-ring
+      beep(t + 0.0, 1320, 0.35); beep(t + 0.45, 1320, 0.35); // harmonic
+    };
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    ring();
+    timer = setInterval(ring, 3000);
+  } catch { /* audio unsupported */ }
+  return () => {
+    if (timer) clearInterval(timer);
+    try { ctx?.close(); } catch { /* ignore */ }
+  };
+}
+
+function IncomingCallPopup({ call, onDecline, onOpenChat, busy }: {
+  call: IncomingCall; onDecline: () => void; onOpenChat: () => void; busy: boolean;
+}) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const stop = startRingtone();
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - call.startedAt) / 1000)), 1000);
+    return () => { stop(); clearInterval(t); };
+  }, [call.callId, call.startedAt]);
+
+  const initials = (call.name || call.phone || '?').replace(/[^\p{L}\p{N} ]/gu, '').trim().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase() || '#';
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-start justify-center pt-16 pointer-events-none">
+      <div className="pointer-events-auto w-[340px] rounded-2xl shadow-2xl border border-emerald-700/40 overflow-hidden animate-[pulse_2s_ease-in-out_infinite]"
+        style={{ background: 'linear-gradient(160deg,#064e3b 0%,#065f46 60%,#047857 100%)' }}>
+        <div className="px-5 pt-5 pb-4 text-white">
+          <p className="text-[11px] uppercase tracking-widest text-emerald-200 flex items-center gap-1.5">
+            <PhoneCall size={12} className="animate-bounce" /> Incoming WhatsApp call
+          </p>
+          <div className="flex items-center gap-3 mt-3">
+            <div className="w-14 h-14 rounded-full bg-white/15 flex items-center justify-center text-xl font-bold ring-4 ring-white/10">
+              {initials}
+            </div>
+            <div className="min-w-0">
+              <p className="font-semibold text-lg leading-tight truncate">{call.name || call.phone}</p>
+              <p className="text-emerald-200 text-sm truncate">+{call.phone}</p>
+              <p className="text-emerald-300/80 text-[11px] mt-0.5">Ringing… {elapsed}s</p>
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 px-4 pb-4">
+          <button onClick={onDecline} disabled={busy}
+            className="flex items-center justify-center gap-2 rounded-xl bg-red-500 hover:bg-red-600 disabled:opacity-60 text-white font-semibold py-2.5 transition-colors">
+            <PhoneMissed size={16} /> Decline
+          </button>
+          <button disabled title="Answering in the browser is coming with the softphone update"
+            className="flex items-center justify-center gap-2 rounded-xl bg-emerald-400/40 text-white/70 font-semibold py-2.5 cursor-not-allowed">
+            <PhoneCall size={16} /> Answer
+          </button>
+        </div>
+        <button onClick={onOpenChat}
+          className="w-full text-center text-[11px] text-emerald-200 hover:text-white bg-black/15 py-2 transition-colors">
+          Open chat →
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function InboxPage() {
   const [contacts, setContacts]     = useState<Contact[]>([]);
   const [selected, setSelected]     = useState<Contact | null>(null);
+  const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
+  const [callBusy, setCallBusy]     = useState(false);
   const [showProfileMobile, setShowProfileMobile] = useState(false);
   const [messages, setMessages]     = useState<Message[]>([]);
   const [contactsLoading, setContactsLoading] = useState(true);
@@ -1010,20 +1102,26 @@ export default function InboxPage() {
             inIntervened?: boolean;
             callerName?: string;
             callerPhone?: string;
+            callId?: string;
           };
 
-          if (data.type === 'incoming_call') {
-            // WhatsApp call ringing — surface it prominently (Phase 1: notify only,
-            // in-browser answering arrives with the WebRTC softphone)
-            toast(`📞 Incoming WhatsApp call from ${data.callerName || data.callerPhone || 'a customer'}`, {
-              duration: 8000, icon: '📞',
-              style: { background: '#065f46', color: '#fff' },
+          if (data.type === 'incoming_call' && data.callId) {
+            // WhatsApp call ringing — show the call popup (with ringtone)
+            setIncomingCall({
+              callId:    data.callId,
+              contactId: data.contactId,
+              name:      data.callerName || '',
+              phone:     data.callerPhone || '',
+              startedAt: Date.now(),
             });
             try {
               if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
                 new Notification('Incoming WhatsApp call', { body: data.callerName || data.callerPhone || '' });
               }
             } catch { /* notifications unsupported */ }
+          } else if (data.type === 'call_ended') {
+            // Customer hung up / rang out / we declined — dismiss the popup
+            setIncomingCall(prev => (prev && (!data.callId || prev.callId === data.callId)) ? null : prev);
           } else if (data.type === 'new_message') {
             if (data.contact) {
               applyContactUpdate(data.contact, !!data.inInbox, !!data.inIntervened);
@@ -1419,8 +1517,46 @@ export default function InboxPage() {
   const templateMsgCount = messages.filter((m) => m.type === 'template' && m.direction === 'outbound').length;
   const sessionMsgCount  = messages.filter((m) => m.direction === 'outbound' && m.type !== 'template').length;
 
+  // Incoming call: decline via Meta, open chat, and a safety auto-dismiss in case
+  // the terminate webhook/SSE never reaches this tab
+  async function declineIncomingCall() {
+    if (!incomingCall) return;
+    setCallBusy(true);
+    try {
+      await apiFetch('/api/calling/action', { method: 'POST', body: JSON.stringify({ call_id: incomingCall.callId, action: 'reject' }) });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not decline');
+    } finally {
+      setCallBusy(false);
+      setIncomingCall(null);
+    }
+  }
+  function openIncomingCallChat() {
+    if (!incomingCall) return;
+    const c = [...contacts, ...intervenedContacts].find((x) => x.id === incomingCall.contactId || x.phone === incomingCall.phone);
+    if (c) selectContact(c);
+    else toast('Contact will appear in the list in a moment', { icon: '📞' });
+  }
+  useEffect(() => {
+    if (!incomingCall) return;
+    const t = setTimeout(() => setIncomingCall(null), 90_000);
+    return () => clearTimeout(t);
+  }, [incomingCall]);
+  // Ask once for desktop notification permission so calls alert even when the
+  // tab is in the background (browsers require a user gesture → on first click)
+  useEffect(() => {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'default') return;
+    const ask = () => { Notification.requestPermission().catch(() => {}); window.removeEventListener('click', ask); };
+    window.addEventListener('click', ask, { once: true });
+    return () => window.removeEventListener('click', ask);
+  }, []);
+
   return (
     <div className="h-[calc(100vh-5rem)] flex border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
+      {incomingCall && (
+        <IncomingCallPopup call={incomingCall} busy={callBusy}
+          onDecline={declineIncomingCall} onOpenChat={openIncomingCallChat} />
+      )}
 
       {/* ── Left: Contact List ──────────────────────────────── */}
       <div className={`${selected ? 'hidden lg:flex' : 'flex'} w-full lg:w-72 border-r border-gray-200 flex-col flex-shrink-0`}>
