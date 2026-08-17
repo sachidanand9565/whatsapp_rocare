@@ -2,8 +2,10 @@
  * POST /api/auth/meta/connect
  * Full workspace connect:
  *  1. Save WABA credentials to workspace
- *  2. Subscribe Meta webhook for this WABA
- *  3. Import all templates from Meta into DB
+ *  2. Register the phone number on Cloud API (Embedded Signup verifies the
+ *     number but does NOT register it — Meta shows "Pending" until this call)
+ *  3. Subscribe Meta webhook for this WABA
+ *  4. Import all templates from Meta into DB
  */
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
@@ -12,6 +14,12 @@ import { apiSuccess, apiError } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 
 const GV = 'v20.0';
+
+// Two-step verification PIN used when registering numbers on Cloud API.
+// Meta requires a 6-digit PIN for /register; the same PIN is needed to
+// re-register the number later, so it lives in env (WA_REGISTER_PIN),
+// with a fixed default so registration never silently skips.
+const REGISTER_PIN = (process.env.WA_REGISTER_PIN || '123456').replace(/\D/g, '').slice(0, 6).padStart(6, '0');
 
 interface MetaComponent {
   type: string; format?: string; text?: string;
@@ -79,7 +87,35 @@ export async function POST(req: NextRequest) {
       { step: 'Credentials saved', status: 'ok' },
     ];
 
-    // ── 2. Subscribe Meta App webhook on the WABA ─────────────
+    // ── 2. Register phone number on Cloud API ─────────────────
+    // Without this the number stays "Pending" in Meta Business Manager and
+    // cannot send messages. Idempotent — re-registering an already registered
+    // number simply succeeds.
+    try {
+      const regRes = await fetch(
+        `https://graph.facebook.com/${GV}/${phone_number_id}/register`,
+        {
+          method:  'POST',
+          headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ messaging_product: 'whatsapp', pin: REGISTER_PIN }),
+        }
+      );
+      const regData = await regRes.json() as { success?: boolean; error?: { message?: string; code?: number } };
+      if (regData.success || regRes.ok) {
+        results.push({ step: 'Phone number registered', status: 'ok' });
+      } else {
+        const code = regData.error?.code;
+        const hint = code === 133005
+          ? 'Two-step PIN mismatch — this number already has a different PIN. Reset it in Meta Business Manager → Phone numbers → Two-step verification, then reconnect.'
+          : regData.error?.message || 'Registration failed';
+        console.warn(`[meta/connect] register failed for ${phone_number_id}:`, JSON.stringify(regData.error));
+        results.push({ step: 'Phone number registration', status: 'warn', detail: hint });
+      }
+    } catch (e) {
+      results.push({ step: 'Phone number registration', status: 'warn', detail: String(e) });
+    }
+
+    // ── 3. Subscribe Meta App webhook on the WABA ─────────────
     try {
       // Use user access token directly — it has admin access to the WABA from Embedded Signup
       const subRes = await fetch(
@@ -107,7 +143,7 @@ export async function POST(req: NextRequest) {
       results.push({ step: 'Webhook subscription', status: 'warn', detail: String(e) });
     }
 
-    // ── 3. Import templates from Meta ─────────────────────────
+    // ── 4. Import templates from Meta ─────────────────────────
     try {
       let importedCount = 0;
       let updatedCount  = 0;
