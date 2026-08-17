@@ -49,9 +49,22 @@ export async function POST(req: NextRequest) {
   try {
     const payload = await requireAuth(req);
 
-    const { access_token, waba_id, phone_number_id, business_name, display_phone_number } = await req.json();
+    const { access_token, waba_id, phone_number_id, business_name, display_phone_number, coexistence } = await req.json();
     if (!access_token || !waba_id || !phone_number_id) {
       return apiError('access_token, waba_id and phone_number_id are required', 400);
+    }
+    // Coexistence = number is already registered on the WhatsApp Business App.
+    // Detect from the client flag OR from Meta (platform_type) so a coexistence
+    // number is never re-registered even if the client forgot the flag.
+    let isCoexistence = !!coexistence;
+    if (!isCoexistence) {
+      try {
+        const pRes = await fetch(`https://graph.facebook.com/${GV}/${phone_number_id}?fields=platform_type&access_token=${access_token}`);
+        const pData = await pRes.json() as { platform_type?: string };
+        if (pData.platform_type === 'SMB_APP' || pData.platform_type === 'ON_PREMISE_AND_SMB_APP' || pData.platform_type === 'CLOUD_API_AND_SMB_APP') {
+          isCoexistence = true;
+        }
+      } catch { /* non-fatal */ }
     }
 
     // ── 0. Check phone_number_id not already used by another workspace ──
@@ -91,7 +104,11 @@ export async function POST(req: NextRequest) {
     // Without this the number stays "Pending" in Meta Business Manager and
     // cannot send messages. Idempotent — re-registering an already registered
     // number simply succeeds.
-    try {
+    // SKIPPED for coexistence: the number is already registered via the
+    // WhatsApp Business App; calling /register there is wrong per Meta docs.
+    if (isCoexistence) {
+      results.push({ step: 'Phone number registration', status: 'ok', detail: 'Skipped — coexistence number is registered via the WhatsApp Business App' });
+    } else try {
       const regRes = await fetch(
         `https://graph.facebook.com/${GV}/${phone_number_id}/register`,
         {
@@ -129,7 +146,13 @@ export async function POST(req: NextRequest) {
           body: JSON.stringify({
             // smb_message_echoes: coexistence — messages sent from the phone's
             // WhatsApp Business App arrive as echoes so the panel shows them too
-            subscribed_fields: ['messages', 'message_template_status_update', 'smb_message_echoes'],
+            // history / smb_app_state_sync: coexistence contacts + chat history
+            // sync deliveries (Meta REQUIRES these subscribed for coexistence)
+            // calls: WhatsApp Business Calling API events (connect / terminate)
+            subscribed_fields: [
+              'messages', 'message_template_status_update', 'calls',
+              'smb_message_echoes', 'smb_app_state_sync', 'history',
+            ],
           }),
         }
       );
@@ -141,6 +164,36 @@ export async function POST(req: NextRequest) {
       }
     } catch (e) {
       results.push({ step: 'Webhook subscription', status: 'warn', detail: String(e) });
+    }
+
+    // ── 3b. Coexistence: trigger contacts + history sync ──────
+    // Meta REQUIRES this within 24h of onboarding a WhatsApp Business App
+    // number, otherwise the number is offboarded from Cloud API. Contacts
+    // (smb_app_state_sync) first, then message history — both arrive later via
+    // webhooks (fields smb_app_state_sync / history) which we subscribed above.
+    if (isCoexistence) {
+      for (const syncType of ['smb_app_state_sync', 'history'] as const) {
+        try {
+          const syncRes = await fetch(
+            `https://graph.facebook.com/${GV}/${phone_number_id}/smb_app_data`,
+            {
+              method:  'POST',
+              headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },
+              body:    JSON.stringify({ messaging_product: 'whatsapp', sync_type: syncType }),
+            }
+          );
+          const syncData = await syncRes.json() as { request_id?: string; error?: { message?: string } };
+          const label = syncType === 'history' ? 'Chat history sync' : 'Contacts sync';
+          if (syncRes.ok && syncData.request_id) {
+            results.push({ step: label, status: 'ok', detail: 'Requested — data arrives over the next minutes via webhook' });
+          } else {
+            console.warn(`[meta/connect] ${syncType} sync failed:`, JSON.stringify(syncData.error));
+            results.push({ step: label, status: 'warn', detail: syncData.error?.message || 'Sync request rejected' });
+          }
+        } catch (e) {
+          results.push({ step: syncType === 'history' ? 'Chat history sync' : 'Contacts sync', status: 'warn', detail: String(e) });
+        }
+      }
     }
 
     // ── 4. Import templates from Meta ─────────────────────────

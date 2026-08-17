@@ -4,7 +4,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { query, insert, execute } from '@/lib/db';
-import { parseWebhookBody, markAsRead, TemplateStatusUpdate, IncomingCall } from '@/lib/whatsapp';
+import { parseWebhookBody, markAsRead, callAction, sendTemplateMessage, TemplateStatusUpdate, IncomingCall } from '@/lib/whatsapp';
 import { normalizePhone, utcNow, unixToUtc } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { emitSSE } from '@/lib/sse';
@@ -53,21 +53,26 @@ export async function POST(req: NextRequest) {
   }
 
   // Identify workspace by phoneNumberId
-  const { messages, statuses, phoneNumberId, wabaId, profileNames, templateStatusUpdates, calls, echoes } = parseWebhookBody(body);
+  const {
+    messages, statuses, phoneNumberId, wabaId, profileNames, templateStatusUpdates, calls, echoes,
+    syncedContacts, historyMessages, historyProgress,
+  } = parseWebhookBody(body);
 
   let workspaceId: number | null = null;
   let workspaceAccessToken = '';
   let workspaceApiKey = '';
+  let workspacePhone = '';   // business number digits — used to orient coexistence history
   let activeWebhooks: { url: string; secret: string | null }[] = [];
   if (phoneNumberId) {
     const ws = await query<RowDataPacket[]>(
-      'SELECT id, access_token, api_key FROM workspaces WHERE phone_number_id = ? AND is_active = 1 LIMIT 1',
+      'SELECT id, access_token, api_key, phone_display FROM workspaces WHERE phone_number_id = ? AND is_active = 1 LIMIT 1',
       [phoneNumberId]
     );
     if (ws.length > 0) {
       workspaceId = ws[0].id as number;
       workspaceAccessToken = ws[0].access_token as string || '';
       workspaceApiKey = (ws[0].api_key as string) || '';
+      workspacePhone = String(ws[0].phone_display || '').replace(/\D/g, '');
       // Fetch all active custom webhooks for this workspace
       try {
         const hooks = await query<RowDataPacket[]>(
@@ -410,37 +415,161 @@ export async function POST(req: NextRequest) {
     emitSSE({ type: 'new_message', workspaceId, contactId, direction: 'outbound' });
   }
 
-  // ---- Process incoming WhatsApp calls ----
-  for (const call of calls) {
-    const phone = normalizePhone(call.from);
-    if (!phone || !workspaceId) continue;
+  // ---- Coexistence: contacts synced from the WhatsApp Business App ----
+  // (field = smb_app_state_sync — after the onboarding sync request, and again
+  // whenever the business edits contacts in the app)
+  if (workspaceId && syncedContacts.length > 0) {
+    let added = 0;
+    for (const c of syncedContacts) {
+      const phone = normalizePhone(c.phone);
+      if (!phone) continue;
+      if (c.action === 'remove') continue; // keep the contact + its chats; app deletion shouldn't wipe panel history
+      const name = c.full_name || c.first_name || null;
+      await execute(
+        `INSERT INTO contacts (workspace_id, phone, name, source, opted_in)
+         VALUES (?, ?, ?, 'whatsapp_app', 1)
+         ON DUPLICATE KEY UPDATE name = IF(name IS NULL OR name = '' OR name = phone, VALUES(name), name)`,
+        [workspaceId, phone, name]
+      ).catch(() => {});
+      added++;
+    }
+    console.log(`[coexistence] contacts sync: ${added} contacts upserted for workspace ${workspaceId}`);
+  }
 
-    // Upsert contact
+  // ---- Coexistence: chat history from the WhatsApp Business App ----
+  // (field = history — chunks arrive over minutes after the onboarding sync
+  // request; each message is inserted once, keyed by wamid)
+  if (workspaceId && historyMessages.length > 0) {
+    let inserted = 0;
+    for (const h of historyMessages) {
+      if (!h.wamid) continue;
+      // Business number sent it → outbound; otherwise inbound from the customer
+      const fromDigits = String(h.from || '').replace(/\D/g, '');
+      const isOutbound = !!workspacePhone && fromDigits === workspacePhone;
+      const customer   = normalizePhone(isOutbound ? h.to : h.from);
+      if (!customer) continue;
+
+      await execute(
+        'INSERT IGNORE INTO contacts (workspace_id, phone, source, opted_in) VALUES (?, ?, ?, 1)',
+        [workspaceId, customer, 'whatsapp_app']
+      );
+      const cRow = await query<RowDataPacket[]>(
+        'SELECT id FROM contacts WHERE workspace_id = ? AND phone = ? LIMIT 1',
+        [workspaceId, customer]
+      );
+      if (cRow.length === 0) continue;
+      const cId = cRow[0].id as number;
+
+      let content = '';
+      if (h.type === 'text') content = h.text || '';
+      else {
+        const media = (h.image || h.video || h.document || h.audio || h.sticker) as Record<string, unknown> | undefined;
+        content = media
+          ? JSON.stringify({ __type: 'media', media_id: media.id, mime_type: media.mime_type, caption: media.caption, filename: media.filename, workspace_id: workspaceId })
+          : (h.text || `[${h.type}]`);
+      }
+      const st = (h.status || '').toUpperCase();
+      const status = st === 'READ' || st === 'PLAYED' ? 'read'
+        : st === 'DELIVERED' ? 'delivered'
+        : st === 'ERROR' ? 'failed'
+        : isOutbound ? 'sent' : 'delivered';
+      const at = unixToUtc(h.timestamp);
+      const r = await insert(
+        `INSERT IGNORE INTO messages
+           (workspace_id, contact_id, wamid, direction, type, content, status, sent_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [workspaceId, cId, h.wamid, isOutbound ? 'outbound' : 'inbound', h.type, content, status, at, at]
+      ).catch(() => 0);
+      if (r) {
+        inserted++;
+        // Only move last_message_at forward — history must not override newer live activity
+        await execute(
+          `UPDATE contacts SET last_message_at = GREATEST(COALESCE(last_message_at, '1970-01-01'), ?),
+             last_inbound_at = IF(?, GREATEST(COALESCE(last_inbound_at, '1970-01-01'), ?), last_inbound_at)
+           WHERE id = ?`,
+          [at, isOutbound ? 0 : 1, at, cId]
+        ).catch(() => {});
+      }
+    }
+    console.log(`[coexistence] history chunk phase=${historyProgress?.phase} #${historyProgress?.chunk_order} progress=${historyProgress?.progress}% → ${inserted}/${historyMessages.length} messages inserted (workspace ${workspaceId})`);
+    // Refresh inbox lists once per chunk rather than per message
+    emitSSE({ type: 'new_message', workspaceId, direction: 'inbound' });
+  }
+
+  // ---- WhatsApp Business Calling API events (field = "calls") ----
+  // connect   → call is ringing. Phase 1 has no WebRTC softphone, so we notify
+  //             the inbox (SSE) and REJECT the call so the customer's phone
+  //             doesn't ring into a void; the terminate event then logs it as
+  //             a missed call and the auto-callback (if enabled) fires.
+  // terminate → final record: COMPLETED (answered, with duration) or FAILED
+  //             (missed / rejected / unanswered).
+  for (const call of calls) {
+    if (!workspaceId) continue;
+    const isBusinessInitiated = call.direction === 'BUSINESS_INITIATED';
+    // Customer's number is `from` on user-initiated calls, `to` on business-initiated
+    const phone = normalizePhone(isBusinessInitiated ? call.to : call.from);
+    if (!phone || !call.call_id) continue;
+
+    // Upsert contact (also stores the caller's WhatsApp profile name if new)
     await execute(
-      'INSERT IGNORE INTO contacts (workspace_id, phone, source, opted_in) VALUES (?, ?, ?, 1)',
-      [workspaceId, phone, 'inbound']
+      'INSERT IGNORE INTO contacts (workspace_id, phone, name, source, opted_in) VALUES (?, ?, ?, ?, 1)',
+      [workspaceId, phone, call.profileName || null, 'inbound']
     );
     const contactRow = await query<RowDataPacket[]>(
-      'SELECT id FROM contacts WHERE workspace_id = ? AND phone = ? LIMIT 1',
+      'SELECT id, name FROM contacts WHERE workspace_id = ? AND phone = ? LIMIT 1',
       [workspaceId, phone]
     );
     if (contactRow.length === 0) continue;
     const contactId = contactRow[0].id as number;
+    const msgDirection = isBusinessInitiated ? 'outbound' : 'inbound';
 
-    const isMissed = call.status === 'missed_call' || call.status === 'missed';
-    const callContent = JSON.stringify({
-      __type:  'call',
-      status:  isMissed ? 'missed' : 'answered',
-      call_id: call.call_id,
-    });
-    const callAt = unixToUtc(call.timestamp);
-    await insert(
-      `INSERT IGNORE INTO messages
-         (workspace_id, contact_id, wamid, direction, type, content, status, sent_at, created_at)
-       VALUES (?, ?, ?, 'inbound', 'call', ?, 'delivered', ?, ?)`,
-      [workspaceId, contactId, `call_${call.call_id}`, callContent, callAt, utcNow()]
-    );
-    emitSSE({ type: 'new_message', workspaceId, contactId, direction: 'inbound' });
+    if (call.event === 'connect') {
+      // Ringing — tell open inbox tabs right away
+      emitSSE({
+        type: 'incoming_call', workspaceId, contactId,
+        callId: call.call_id, callerPhone: phone,
+        callerName: (contactRow[0].name as string) || call.profileName || phone,
+      });
+      // No softphone yet → reject so it becomes a clean missed call on both ends
+      if (!isBusinessInitiated && workspaceAccessToken && phoneNumberId) {
+        callAction(workspaceAccessToken, phoneNumberId, call.call_id, 'reject')
+          .catch((e) => console.warn('[calls] reject failed:', (e as Error)?.message));
+      }
+      continue;
+    }
+
+    if (call.event === 'terminate') {
+      const answered = call.status === 'COMPLETED' && (call.duration || 0) > 0;
+      const callContent = JSON.stringify({
+        __type:    'call',
+        status:    answered ? 'answered' : 'missed',
+        call_id:   call.call_id,
+        direction: isBusinessInitiated ? 'outbound' : 'inbound',
+        duration:  call.duration || 0,
+      });
+      const callAt = unixToUtc(call.start_time || call.timestamp);
+      await insert(
+        `INSERT INTO messages
+           (workspace_id, contact_id, wamid, direction, type, content, status, sent_at, created_at)
+         VALUES (?, ?, ?, ?, 'call', ?, 'delivered', ?, ?)
+         ON DUPLICATE KEY UPDATE content = VALUES(content)`,
+        [workspaceId, contactId, `call_${call.call_id}`, msgDirection, callContent, callAt, utcNow()]
+      );
+      await execute(
+        'UPDATE contacts SET last_message_at = ?, last_inbound_at = COALESCE(?, last_inbound_at) WHERE id = ?',
+        [utcNow(), isBusinessInitiated ? null : utcNow(), contactId]
+      ).catch(() => {});
+      emitSSE({ type: 'call_ended', workspaceId, contactId, callId: call.call_id });
+      emitSSE({ type: 'new_message', workspaceId, contactId, direction: msgDirection });
+
+      // Missed inbound call → optional auto-callback template so the agent
+      // can reply even outside the 24h window (configured in Settings → Calling)
+      if (!answered && !isBusinessInitiated && workspaceAccessToken && phoneNumberId) {
+        sendMissedCallAutoReply(workspaceId, contactId, phone, workspaceAccessToken, phoneNumberId)
+          .catch((e) => console.warn('[calls] auto-reply failed:', (e as Error)?.message));
+      }
+      continue;
+    }
   }
 
   // ---- Process status updates ----
@@ -636,6 +765,61 @@ async function fireFailedWebhooks(
       }).catch(() => {});
     } catch { /* ignore */ }
   }
+}
+
+// ---- Missed-call auto-reply (Settings → Calling) ----
+// Sends the workspace's configured template after a missed inbound call so the
+// agent can follow up even when the 24h window is closed. Throttled to one
+// auto-reply per contact per hour so a customer who calls 5 times doesn't get
+// 5 templates.
+async function sendMissedCallAutoReply(
+  workspaceId: number, contactId: number, phone: string,
+  accessToken: string, phoneNumberId: string
+) {
+  const ws = await query<RowDataPacket[]>(
+    'SELECT missed_call_template, missed_call_template_lang FROM workspaces WHERE id = ? LIMIT 1',
+    [workspaceId]
+  ).catch(() => [] as RowDataPacket[]); // columns may not exist before migration
+  const tplName = ws[0]?.missed_call_template as string | null;
+  if (!tplName) return;
+  const tplLang = (ws[0]?.missed_call_template_lang as string) || 'en';
+
+  const recent = await query<RowDataPacket[]>(
+    `SELECT id FROM messages
+     WHERE workspace_id = ? AND contact_id = ? AND direction = 'outbound' AND type = 'template'
+       AND content LIKE ? AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR)
+     LIMIT 1`,
+    [workspaceId, contactId, `%"template_name":"${tplName}"%`]
+  );
+  if (recent.length > 0) return;
+
+  const tplRows = await query<RowDataPacket[]>(
+    'SELECT body_text, header_type, header_content, footer_text, buttons FROM templates WHERE workspace_id = ? AND name = ? LIMIT 1',
+    [workspaceId, tplName]
+  );
+  const tplDef = tplRows[0];
+  const result = await sendTemplateMessage(accessToken, phoneNumberId, phone, tplName, tplLang, []);
+  const wamid = (result?.messages as { id?: string }[] | undefined)?.[0]?.id || null;
+
+  let buttons: unknown[] = [];
+  try { buttons = JSON.parse((tplDef?.buttons as string) || '[]'); } catch { buttons = []; }
+  const content = JSON.stringify({
+    __type:         'template',
+    template_name:  tplName,
+    header_type:    tplDef?.header_type || 'NONE',
+    header_content: tplDef?.header_content || '',
+    body:           (tplDef?.body_text as string) || `[Template: ${tplName}]`,
+    footer:         tplDef?.footer_text || '',
+    buttons,
+    workspace_id:   workspaceId,
+  });
+  const t = utcNow();
+  await insert(
+    `INSERT INTO messages (workspace_id, contact_id, wamid, direction, type, content, status, sent_at, created_at)
+     VALUES (?, ?, ?, 'outbound', 'template', ?, 'sent', ?, ?)`,
+    [workspaceId, contactId, wamid, content, t, t]
+  );
+  emitSSE({ type: 'new_message', workspaceId, contactId, direction: 'outbound' });
 }
 
 // ---- Fire CRM integration on template button reply ----

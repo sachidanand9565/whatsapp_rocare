@@ -397,6 +397,63 @@ export async function sendTypingIndicator(
   }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// WhatsApp Business Calling API (Cloud API)
+// Docs: developers.facebook.com/docs/whatsapp/cloud-api/calling
+// ═══════════════════════════════════════════════════════════════
+
+export interface CallingSettings {
+  status?:                     'ENABLED' | 'DISABLED';
+  call_icon_visibility?:       'DEFAULT' | 'DISABLE_ALL';
+  callback_permission_status?: 'ENABLED' | 'DISABLED';
+  call_hours?: {
+    status:                  'ENABLED' | 'DISABLED';
+    timezone_id:             string;
+    weekly_operating_hours:  { day_of_week: string; open_time: string; close_time: string }[];
+    holiday_schedule?:       { date: string; start_time: string; end_time: string }[];
+  };
+}
+
+// ---- Read calling settings + messaging tier for a phone number ----
+export async function getCallingSettings(accessToken: string, phoneNumberId: string) {
+  const client = createWAClient(accessToken);
+  const [settingsRes, infoRes] = await Promise.all([
+    client.get(`/${phoneNumberId}/settings`, { params: { include_sip_credentials: false } }),
+    client.get(`/${phoneNumberId}`, { params: { fields: 'display_phone_number,verified_name,messaging_limit_tier,quality_rating,status,code_verification_status' } }),
+  ]);
+  return {
+    calling: (settingsRes.data?.calling ?? null) as CallingSettings | null,
+    phone:   infoRes.data as {
+      display_phone_number?: string; verified_name?: string; messaging_limit_tier?: string;
+      quality_rating?: string; status?: string; code_verification_status?: string;
+    },
+  };
+}
+
+// ---- Enable / configure calling on a phone number ----
+// Requires whatsapp_business_management (advanced) + messaging tier ≥ 2000/day.
+export async function updateCallingSettings(accessToken: string, phoneNumberId: string, calling: CallingSettings) {
+  const client = createWAClient(accessToken);
+  const { data } = await client.post(`/${phoneNumberId}/settings`, { calling });
+  return data as { success?: boolean };
+}
+
+// ---- Call control: reject / terminate (accept needs a WebRTC SDP answer — phase 2) ----
+export async function callAction(
+  accessToken:   string,
+  phoneNumberId: string,
+  callId:        string,
+  action:        'reject' | 'terminate'
+) {
+  const client = createWAClient(accessToken);
+  const { data } = await client.post(`/${phoneNumberId}/calls`, {
+    messaging_product: 'whatsapp',
+    call_id:           callId,
+    action,
+  });
+  return data as { success?: boolean };
+}
+
 // ---- Mark message as read ----
 export async function markAsRead(
   accessToken:   string,
@@ -543,11 +600,44 @@ export interface TemplateStatusUpdate {
   reason:           string;
 }
 
+// Calling API webhook (field = "calls"). Two events per call:
+//  - connect:   call is ringing (USER_INITIATED carries the caller's SDP offer)
+//  - terminate: call ended — status COMPLETED (answered) | FAILED (missed/rejected/unanswered)
 export interface IncomingCall {
-  from:      string;
-  call_id:   string;
-  timestamp: string;
-  status:    string; // 'missed_call' | 'answered'
+  from:       string;
+  to:         string;
+  call_id:    string;
+  timestamp:  string;
+  event:      'connect' | 'terminate' | string;
+  direction:  'USER_INITIATED' | 'BUSINESS_INITIATED' | string;
+  status:     string;   // terminate only: 'COMPLETED' | 'FAILED'
+  start_time?: string;
+  end_time?:   string;
+  duration?:   number;  // seconds, terminate + COMPLETED only
+  sdp?:        string;  // connect + USER_INITIATED: caller's SDP offer (for WebRTC accept)
+  profileName?: string;
+}
+
+// Coexistence: WhatsApp Business App contacts pushed via smb_app_state_sync
+// (after we request the sync at onboarding, and on later edits in the app)
+export interface SyncedContact {
+  action:    'add' | 'remove' | string;
+  phone:     string;
+  full_name: string;
+  first_name: string;
+}
+
+// Coexistence: past chats delivered via the `history` webhook in chunks after
+// we request a history sync. Same shape as live messages plus a final status.
+export interface HistoryMessage {
+  wamid:        string;
+  from:         string;
+  to:           string;
+  timestamp:    string;
+  type:         string;
+  text?:        string;
+  image?:       object; audio?: object; document?: object; video?: object; sticker?: object;
+  status:       string;   // DELIVERED | ERROR | PENDING | PLAYED | READ | SENT
 }
 
 // Coexistence: a message the business sends from the WhatsApp Business App on
@@ -575,6 +665,9 @@ export function parseWebhookBody(body: Record<string, unknown>): {
   templateStatusUpdates: TemplateStatusUpdate[];
   calls: IncomingCall[];
   echoes: EchoMessage[];
+  syncedContacts: SyncedContact[];
+  historyMessages: HistoryMessage[];
+  historyProgress: { phase: number; chunk_order: number; progress: number } | null;
 } {
   const result = {
     messages: [] as IncomingMessage[],
@@ -585,6 +678,9 @@ export function parseWebhookBody(body: Record<string, unknown>): {
     templateStatusUpdates: [] as TemplateStatusUpdate[],
     calls: [] as IncomingCall[],
     echoes: [] as EchoMessage[],
+    syncedContacts: [] as SyncedContact[],
+    historyMessages: [] as HistoryMessage[],
+    historyProgress: null as { phase: number; chunk_order: number; progress: number } | null,
   };
   try {
     const entry  = (body.entry as Record<string, unknown>[])?.[0];
@@ -599,12 +695,24 @@ export function parseWebhookBody(body: Record<string, unknown>): {
         const pnId = (v?.metadata as Record<string, unknown>)?.phone_number_id as string;
         if (pnId && !result.phoneNumberId) result.phoneNumberId = pnId;
         const callsList = (v?.calls as Record<string, unknown>[]) ?? [];
+        const contactsList = (v?.contacts as Record<string, unknown>[]) ?? [];
+        const profileName = (contactsList[0]?.profile as Record<string, unknown>)?.name as string | undefined;
         for (const c of callsList) {
+          const session = c.session as Record<string, unknown> | undefined;
           result.calls.push({
-            from:      c.from      as string,
-            call_id:   c.call_id   as string,
-            timestamp: c.timestamp as string,
-            status:    c.status    as string,
+            from:        c.from      as string,
+            to:          (c.to as string) || '',
+            // Real Calling API uses `id` (wacid.…); older/legacy payloads used `call_id`
+            call_id:     ((c.id as string) || (c.call_id as string) || ''),
+            timestamp:   c.timestamp as string,
+            event:       ((c.event as string) || (c.status ? 'terminate' : 'connect')),
+            direction:   ((c.direction as string) || 'USER_INITIATED'),
+            status:      ((c.status as string) || ''),
+            start_time:  c.start_time as string | undefined,
+            end_time:    c.end_time   as string | undefined,
+            duration:    typeof c.duration === 'number' ? c.duration : (c.duration ? Number(c.duration) : undefined),
+            sdp:         session?.sdp as string | undefined,
+            profileName,
           });
         }
       }
@@ -646,6 +754,64 @@ export function parseWebhookBody(body: Record<string, unknown>): {
             video:     m.video as object,
             sticker:   m.sticker as object,
           });
+        }
+      }
+    }
+
+    // Coexistence contacts sync (field = "smb_app_state_sync")
+    for (const change of changes) {
+      if (change.field === 'smb_app_state_sync') {
+        const v    = change.value as Record<string, unknown>;
+        const pnId = (v?.metadata as Record<string, unknown>)?.phone_number_id as string;
+        if (pnId && !result.phoneNumberId) result.phoneNumberId = pnId;
+        const list = (v?.state_sync as Record<string, unknown>[]) ?? [];
+        for (const s of list) {
+          if (s.type !== 'contact') continue;
+          const c = (s.contact as Record<string, unknown>) || {};
+          result.syncedContacts.push({
+            action:     (s.action as string) || 'add',
+            phone:      (c.phone_number as string) || '',
+            full_name:  (c.full_name  as string) || '',
+            first_name: (c.first_name as string) || '',
+          });
+        }
+      }
+    }
+
+    // Coexistence chat history (field = "history") — arrives in chunks
+    for (const change of changes) {
+      if (change.field === 'history') {
+        const v    = change.value as Record<string, unknown>;
+        const pnId = (v?.metadata as Record<string, unknown>)?.phone_number_id as string;
+        if (pnId && !result.phoneNumberId) result.phoneNumberId = pnId;
+        const hist = (v?.history as Record<string, unknown>[]) ?? [];
+        for (const h of hist) {
+          const meta = (h.metadata as Record<string, unknown>) || {};
+          result.historyProgress = {
+            phase:       Number(meta.phase ?? 0),
+            chunk_order: Number(meta.chunk_order ?? 0),
+            progress:    Number(meta.progress ?? 0),
+          };
+          const threads = (h.threads as Record<string, unknown>[]) ?? [];
+          for (const t of threads) {
+            const msgs = (t.messages as Record<string, unknown>[]) ?? [];
+            for (const m of msgs) {
+              result.historyMessages.push({
+                wamid:     m.id as string,
+                from:      m.from as string,
+                to:        m.to as string,
+                timestamp: m.timestamp as string,
+                type:      m.type as string,
+                text:      (m.text as Record<string, unknown>)?.body as string,
+                image:     m.image as object,
+                audio:     m.audio as object,
+                document:  m.document as object,
+                video:     m.video as object,
+                sticker:   m.sticker as object,
+                status:    ((m.history_context as Record<string, unknown>)?.status as string) || '',
+              });
+            }
+          }
         }
       }
     }

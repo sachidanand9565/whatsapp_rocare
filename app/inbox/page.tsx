@@ -221,12 +221,23 @@ function parseButtonsContent(c: string): ButtonsContent | null {
 }
 
 // ── WhatsApp Call bubble ──────────────────────────────────────
-interface CallContent { __type: 'call'; status: 'missed' | 'answered'; call_id: string; }
+interface CallContent {
+  __type: 'call'; status: 'missed' | 'answered'; call_id: string;
+  direction?: 'inbound' | 'outbound'; duration?: number; // seconds
+}
 function parseCallContent(c: string): CallContent | null {
   try { const p = JSON.parse(c); if (p.__type === 'call') return p; } catch { /**/ } return null;
 }
+function fmtCallDuration(sec: number): string {
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
 function CallBubble({ data, time }: { data: CallContent; time: string }) {
-  const isMissed = data.status === 'missed';
+  const isMissed  = data.status === 'missed';
+  const outbound  = data.direction === 'outbound';
+  const label = isMissed
+    ? (outbound ? 'Outgoing call — not answered' : 'Missed WhatsApp Call')
+    : (outbound ? 'Outgoing WhatsApp Call' : 'WhatsApp Call');
   return (
     <div className="flex items-center justify-center my-1">
       <div className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-xs font-medium shadow-sm border
@@ -236,7 +247,10 @@ function CallBubble({ data, time }: { data: CallContent; time: string }) {
         {isMissed
           ? <PhoneMissed size={14} className="text-red-500" />
           : <PhoneCall size={14} className="text-green-600" />}
-        <span>{isMissed ? 'Missed WhatsApp Call' : 'WhatsApp Call'}</span>
+        <span>{label}</span>
+        {!isMissed && (data.duration || 0) > 0 && (
+          <span className="text-gray-500 font-normal">· {fmtCallDuration(data.duration!)}</span>
+        )}
         <span className="text-gray-400 font-normal">{time}</span>
       </div>
     </div>
@@ -994,9 +1008,23 @@ export default function InboxPage() {
             contact?: Contact | null;
             inInbox?: boolean;
             inIntervened?: boolean;
+            callerName?: string;
+            callerPhone?: string;
           };
 
-          if (data.type === 'new_message') {
+          if (data.type === 'incoming_call') {
+            // WhatsApp call ringing — surface it prominently (Phase 1: notify only,
+            // in-browser answering arrives with the WebRTC softphone)
+            toast(`📞 Incoming WhatsApp call from ${data.callerName || data.callerPhone || 'a customer'}`, {
+              duration: 8000, icon: '📞',
+              style: { background: '#065f46', color: '#fff' },
+            });
+            try {
+              if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                new Notification('Incoming WhatsApp call', { body: data.callerName || data.callerPhone || '' });
+              }
+            } catch { /* notifications unsupported */ }
+          } else if (data.type === 'new_message') {
             if (data.contact) {
               applyContactUpdate(data.contact, !!data.inInbox, !!data.inIntervened);
             }

@@ -6,7 +6,7 @@ import {
   Webhook, RefreshCw, Plus, Trash2, ToggleLeft, ToggleRight,
   Facebook, ChevronRight, X, Phone, Loader2, Key, RotateCcw, Zap,
   MessageSquare, Image, FileText, Music, MapPin, MousePointerClick, PauseCircle,
-  Database, Globe, User, Lock, Pencil,
+  Database, Globe, User, Lock, Pencil, PhoneCall,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -252,7 +252,7 @@ export default function SettingsPage() {
   const [workspaceId, setWorkspaceId] = useState<number | null>(null);
 
   // Sidebar navigation
-  const [activeSection, setActiveSection] = useState<'profile' | 'auth' | 'developer' | 'campaigns' | 'crm'>('profile');
+  const [activeSection, setActiveSection] = useState<'profile' | 'auth' | 'developer' | 'campaigns' | 'crm' | 'calling'>('profile');
 
   // ── My Profile state ─────────────────────────────────────────
   const [profileForm, setProfileForm] = useState({ name: '', email: '', phone: '' });
@@ -313,6 +313,22 @@ export default function SettingsPage() {
   const [crmAdding, setCrmAdding]     = useState(false);
   const [crmEditId, setCrmEditId]     = useState<number | null>(null);
   const [showCrmHeaders, setShowCrmHeaders] = useState(false);
+
+  // WhatsApp Business Calling
+  interface CallingState {
+    configured: boolean;
+    calling: { status?: string; call_icon_visibility?: string; callback_permission_status?: string } | null;
+    phone: { display_phone_number?: string; verified_name?: string; messaging_limit_tier?: string; quality_rating?: string } | null;
+    tier_ok?: boolean;
+    meta_error?: string | null;
+    missed_call_template: string | null;
+    missed_call_template_lang: string;
+  }
+  const [callingInfo, setCallingInfo]       = useState<CallingState | null>(null);
+  const [callingLoading, setCallingLoading] = useState(false);
+  const [callingSaving, setCallingSaving]   = useState(false);
+  const [missedTpl, setMissedTpl]           = useState('');
+  const [approvedTemplates, setApprovedTemplates] = useState<{ name: string; language: string }[]>([]);
 
   // Failed message webhooks
   const [fwList, setFwList]           = useState<FailedWebhook[]>([]);
@@ -383,6 +399,7 @@ export default function SettingsPage() {
     loadHooks();
     loadCrm();
     loadFw();
+    loadCalling();
     apiFetch('/api/workspace/api-key').then((r) => setApiKey(r.data?.api_key || ''));
     apiFetch('/api/campaign-settings').then((r) => {
       if (r.data) setAutoPauseCampaigns(!!r.data.auto_pause_campaigns);
@@ -400,6 +417,62 @@ export default function SettingsPage() {
 
   function loadCrm() {
     apiFetch('/api/crm').then((r) => setCrmList(r.data || [])).catch(() => {});
+  }
+
+  function loadCalling() {
+    setCallingLoading(true);
+    apiFetch('/api/calling/settings')
+      .then((r) => {
+        setCallingInfo(r.data || null);
+        setMissedTpl(r.data?.missed_call_template || '');
+      })
+      .catch(() => {})
+      .finally(() => setCallingLoading(false));
+    apiFetch('/api/templates').then((r) => {
+      const approved = (r.data || [])
+        .filter((t: { status: string }) => t.status === 'APPROVED')
+        .map((t: { name: string; language: string }) => ({ name: t.name, language: t.language }));
+      setApprovedTemplates(approved);
+    }).catch(() => {});
+  }
+
+  async function toggleCalling() {
+    if (!callingInfo) return;
+    const enabling = callingInfo.calling?.status !== 'ENABLED';
+    setCallingSaving(true);
+    try {
+      await apiFetch('/api/calling/settings', { method: 'PUT', body: JSON.stringify({ enabled: enabling }) });
+      toast.success(enabling ? 'Calling enabled — WhatsApp may take a few minutes to show the call button' : 'Calling disabled');
+      loadCalling();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    } finally { setCallingSaving(false); }
+  }
+
+  async function setCallIconVisibility(v: 'DEFAULT' | 'DISABLE_ALL') {
+    setCallingSaving(true);
+    try {
+      await apiFetch('/api/calling/settings', { method: 'PUT', body: JSON.stringify({ call_icon_visibility: v }) });
+      toast.success('Updated');
+      loadCalling();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    } finally { setCallingSaving(false); }
+  }
+
+  async function saveMissedCallTemplate() {
+    setCallingSaving(true);
+    try {
+      const tpl = approvedTemplates.find((t) => t.name === missedTpl);
+      await apiFetch('/api/calling/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ missed_call_template: missedTpl || null, missed_call_template_lang: tpl?.language || 'en' }),
+      });
+      toast.success(missedTpl ? 'Missed-call auto-reply saved' : 'Missed-call auto-reply turned off');
+      loadCalling();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    } finally { setCallingSaving(false); }
   }
 
   function loadFw() {
@@ -617,7 +690,10 @@ export default function SettingsPage() {
     try {
       const r = await apiFetch('/api/auth/meta/connect', {
         method: 'POST',
-        body: JSON.stringify({ access_token: useToken, waba_id, phone_number_id, business_name, display_phone_number }),
+        // coexistence: number already lives on the WhatsApp Business App — the
+        // server must skip /register and instead subscribe the coexistence
+        // webhook fields + trigger the contacts/history sync Meta requires.
+        body: JSON.stringify({ access_token: useToken, waba_id, phone_number_id, business_name, display_phone_number, coexistence: coexistMode }),
       });
       setConnectResults(r.data?.results || []);
       apiFetch('/api/workspace').then((wr) => {
@@ -793,6 +869,9 @@ export default function SettingsPage() {
           </button>
           <button onClick={() => setActiveSection('crm')} className={navBtn('crm')}>
             <Database size={14} /> CRM
+          </button>
+          <button onClick={() => setActiveSection('calling')} className={navBtn('calling')}>
+            <PhoneCall size={14} /> Calling
           </button>
         </div>
       </aside>
@@ -1345,6 +1424,147 @@ Response:
               </button>
             </div>
           </div>
+        </>)}
+
+        {/* ─── CALLING SECTION ─── */}
+        {activeSection === 'calling' && (<>
+          <h2 className="text-lg font-bold text-gray-900">WhatsApp Calling</h2>
+
+          {callingLoading && !callingInfo && (
+            <div className="card flex items-center gap-2 text-sm text-gray-500">
+              <Loader2 size={16} className="animate-spin" /> Checking calling status with Meta…
+            </div>
+          )}
+
+          {callingInfo && !callingInfo.configured && (
+            <div className="card text-sm text-gray-600">
+              Connect your WhatsApp number first (Auth &amp; WhatsApp) to manage calling.
+            </div>
+          )}
+
+          {callingInfo?.configured && (() => {
+            const enabled  = callingInfo.calling?.status === 'ENABLED';
+            const tier     = callingInfo.phone?.messaging_limit_tier || '—';
+            const tierOk   = !!callingInfo.tier_ok;
+            const iconVis  = callingInfo.calling?.call_icon_visibility || 'DEFAULT';
+            return (<>
+              {/* Status + enable */}
+              <div className="card space-y-4">
+                <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+                  <PhoneCall size={18} className="text-whatsapp-teal" />
+                  <div>
+                    <h3 className="font-semibold text-gray-900">Business Calling API</h3>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Let customers call your WhatsApp number — calls show up in the Inbox as call events.
+                    </p>
+                  </div>
+                  <button onClick={loadCalling} disabled={callingLoading} title="Refresh from Meta"
+                    className="ml-auto p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50">
+                    <RefreshCw size={14} className={callingLoading ? 'animate-spin' : ''} />
+                  </button>
+                </div>
+
+                {callingInfo.meta_error && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">
+                    Meta error: {callingInfo.meta_error}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-gray-400">Number</p>
+                    <p className="font-semibold text-gray-800 mt-0.5">{callingInfo.phone?.display_phone_number || '—'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-gray-400">Calling</p>
+                    <p className={`font-semibold mt-0.5 ${enabled ? 'text-green-600' : 'text-gray-500'}`}>
+                      {enabled ? 'Enabled' : 'Disabled'}
+                    </p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-gray-400">Messaging tier</p>
+                    <p className={`font-semibold mt-0.5 ${tierOk ? 'text-green-600' : 'text-amber-600'}`}>
+                      {tier.replace('TIER_', '')}
+                    </p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-gray-400">Quality</p>
+                    <p className="font-semibold text-gray-800 mt-0.5">{callingInfo.phone?.quality_rating || '—'}</p>
+                  </div>
+                </div>
+
+                {!tierOk && !enabled && (
+                  <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg px-3 py-2">
+                    Meta requires a messaging limit of <b>2,000+ / day</b> to enable calling. Your number is on tier <b>{tier.replace('TIER_', '')}</b> —
+                    the tier grows automatically as you send more quality messages. You can still try enabling; Meta will reject if not eligible.
+                  </div>
+                )}
+
+                <div className="flex items-start justify-between gap-4 pt-1">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-800">Enable calling on this number</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Shows a call button on your WhatsApp profile and chat. Incoming calls are logged in the Inbox
+                      (answering calls in the browser is coming next). Meta may take a few minutes to reflect changes.
+                    </p>
+                  </div>
+                  <button onClick={toggleCalling} disabled={callingSaving}
+                    className="flex-shrink-0 mt-0.5 disabled:opacity-50 transition-opacity"
+                    title={enabled ? 'Click to disable' : 'Click to enable'}>
+                    {enabled
+                      ? <ToggleRight size={36} className="text-whatsapp-teal" />
+                      : <ToggleLeft  size={36} className="text-gray-300" />}
+                  </button>
+                </div>
+
+                {enabled && (
+                  <div className="flex items-start justify-between gap-4 pt-1 border-t border-gray-100">
+                    <div className="flex-1 pt-3">
+                      <p className="text-sm font-medium text-gray-800">Show call button to customers</p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        Hide the button to stop new customer-initiated calls without fully disabling calling.
+                      </p>
+                    </div>
+                    <button onClick={() => setCallIconVisibility(iconVis === 'DEFAULT' ? 'DISABLE_ALL' : 'DEFAULT')}
+                      disabled={callingSaving} className="flex-shrink-0 mt-3 disabled:opacity-50">
+                      {iconVis === 'DEFAULT'
+                        ? <ToggleRight size={36} className="text-whatsapp-teal" />
+                        : <ToggleLeft  size={36} className="text-gray-300" />}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Missed-call auto reply */}
+              <div className="card space-y-3">
+                <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+                  <MessageSquare size={18} className="text-whatsapp-teal" />
+                  <div>
+                    <h3 className="font-semibold text-gray-900">Missed-call auto reply</h3>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      When a customer's call is missed, send this approved template automatically so your agent
+                      can follow up — even if the 24h chat window is closed. Max one per contact per hour.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2 items-center">
+                  <select value={missedTpl} onChange={(e) => setMissedTpl(e.target.value)} className="input flex-1">
+                    <option value="">Off — don't send anything</option>
+                    {approvedTemplates.map((t) => (
+                      <option key={`${t.name}:${t.language}`} value={t.name}>{t.name} ({t.language})</option>
+                    ))}
+                  </select>
+                  <button onClick={saveMissedCallTemplate} disabled={callingSaving}
+                    className="btn-primary flex items-center gap-1.5 text-sm">
+                    {callingSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-400">
+                  Tip: use a template without body variables (e.g. "We missed your call — reply here and our team will get back to you").
+                </p>
+              </div>
+            </>);
+          })()}
         </>)}
 
         {/* ─── CRM SECTION ─── */}
