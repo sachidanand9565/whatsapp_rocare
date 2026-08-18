@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/hooks/useApi';
 import {
   PhoneCall, PhoneIncoming, PhoneOutgoing, PhoneMissed, Clock, Search,
-  RefreshCw, Loader2, Settings, ChevronLeft, ChevronRight, XCircle,
+  RefreshCw, Loader2, Settings, ChevronLeft, ChevronRight, XCircle, Play, Download,
 } from 'lucide-react';
 
 interface CallRow {
@@ -15,6 +15,47 @@ interface CallRow {
   started_at: string | null; answered_at: string | null; ended_at: string | null; created_at: string;
   contact_id: number | null; contact_name: string | null; contact_phone: string | null;
   agent_id: number | null; agent_name: string | null;
+  has_recording?: number | boolean; recording_sec?: number | null;
+}
+
+// Inline recording player — fetches a short-lived presigned URL on first play
+function RecordingCell({ callId }: { callId: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+  async function load() {
+    if (url || loading) return;
+    setLoading(true); setErr('');
+    try {
+      const r = await apiFetch(`/api/calling/recording?call_id=${encodeURIComponent(callId)}`);
+      setUrl(r.data?.url || null);
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Failed'); }
+    finally { setLoading(false); }
+  }
+  async function download() {
+    try {
+      const r = await apiFetch(`/api/calling/recording?call_id=${encodeURIComponent(callId)}&download=1`);
+      if (r.data?.url) window.open(r.data.url, '_blank');
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Failed'); }
+  }
+  if (url) {
+    return (
+      <div className="flex items-center gap-2">
+        <audio controls autoPlay src={url} className="h-8 w-56" preload="none" />
+        <button onClick={download} title="Download" className="text-gray-400 hover:text-gray-700"><Download size={14} /></button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <button onClick={load} disabled={loading}
+        className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-60">
+        {loading ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Play
+      </button>
+      <button onClick={download} title="Download" className="text-gray-400 hover:text-gray-700"><Download size={14} /></button>
+      {err && <span className="text-[11px] text-red-500">{err}</span>}
+    </div>
+  );
 }
 interface Stats { incoming: number; outgoing: number; completed: number; missed: number; talk_seconds: number }
 
@@ -164,16 +205,17 @@ export default function CallsPage() {
                 <th className="text-left font-semibold px-4 py-3">Status</th>
                 <th className="text-left font-semibold px-4 py-3">Agent</th>
                 <th className="text-left font-semibold px-4 py-3">Duration</th>
+                <th className="text-left font-semibold px-4 py-3">Recording</th>
                 <th className="text-left font-semibold px-4 py-3">When</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
               {loading && calls.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400"><Loader2 size={18} className="animate-spin inline" /></td></tr>
+                <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400"><Loader2 size={18} className="animate-spin inline" /></td></tr>
               )}
               {!loading && calls.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400 text-sm">
+                <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 text-sm">
                   No calls yet. Once calling is enabled, every WhatsApp call on your number shows up here.
                 </td></tr>
               )}
@@ -199,6 +241,9 @@ export default function CallsPage() {
                     </td>
                     <td className="px-4 py-3 text-gray-700">{c.agent_name || <span className="text-gray-300">—</span>}</td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-700">{c.status === 'completed' ? fmtDur(c.duration_sec) : '—'}</td>
+                    <td className="px-4 py-3">
+                      {c.has_recording ? <RecordingCell callId={c.call_id} /> : <span className="text-gray-300 text-xs">—</span>}
+                    </td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{fmtWhen(c.started_at || c.created_at)}</td>
                     <td className="px-4 py-3 text-right">
                       {c.contact_id && (

@@ -11,6 +11,7 @@ import { requireAuth } from '@/lib/auth';
 import { query, execute } from '@/lib/db';
 import { apiSuccess, apiError } from '@/lib/utils';
 import { getCallingSettings, updateCallingSettings, CallingSettings } from '@/lib/whatsapp';
+import { s3Configured } from '@/lib/s3';
 import { RowDataPacket } from 'mysql2';
 
 // migration-calling.sql adds the calling_* / missed_call_* columns; until it
@@ -21,7 +22,8 @@ async function loadWorkspace(workspaceId: number) {
     try {
       const rows = await query<RowDataPacket[]>(
         `SELECT id, access_token, phone_number_id, calling_enabled,
-                missed_call_template, missed_call_template_lang
+                missed_call_template, missed_call_template_lang,
+                record_calls, recording_retention_days
          FROM workspaces WHERE id = ? LIMIT 1`,
         [workspaceId]
       );
@@ -83,6 +85,9 @@ export async function GET(req: NextRequest) {
       meta_error,
       missed_call_template:      ws.missed_call_template || null,
       missed_call_template_lang: ws.missed_call_template_lang || 'en',
+      record_calls:              !!ws.record_calls,
+      recording_retention_days:  Number(ws.recording_retention_days ?? 90),
+      recording_storage_ready:   s3Configured(),
     });
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
@@ -103,9 +108,26 @@ export async function PUT(req: NextRequest) {
       call_icon_visibility?: 'DEFAULT' | 'DISABLE_ALL';
       missed_call_template?: string | null;
       missed_call_template_lang?: string;
+      record_calls?: boolean;
+      recording_retention_days?: number;
     };
 
     // ── Local prefs (no Meta call needed) ──
+    if ('record_calls' in body || 'recording_retention_days' in body) {
+      if (!callingColumnsAvailable) {
+        return apiError('Run migration-calling.sql first — recording columns are missing on the workspaces table', 400);
+      }
+      if (body.record_calls && !s3Configured()) {
+        return apiError('Recording storage (S3) is not configured on the server — set S3_BUCKET / S3_REGION first', 400);
+      }
+      const sets: string[] = []; const vals: (number)[] = [];
+      if ('record_calls' in body) { sets.push('record_calls = ?'); vals.push(body.record_calls ? 1 : 0); }
+      if ('recording_retention_days' in body) {
+        sets.push('recording_retention_days = ?');
+        vals.push(Math.max(0, Math.min(3650, Number(body.recording_retention_days) || 0)));
+      }
+      await execute(`UPDATE workspaces SET ${sets.join(', ')} WHERE id = ?`, [...vals, ws.id]);
+    }
     if ('missed_call_template' in body) {
       if (!callingColumnsAvailable) {
         return apiError('Run migration-calling.sql first — the missed-call columns are missing on the workspaces table', 400);

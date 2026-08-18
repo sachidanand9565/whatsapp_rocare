@@ -794,8 +794,8 @@ function IncomingCallPopup({ call, onDecline, onAnswer, onOpenChat, busy }: {
 }
 
 // Floating in-call bar: caller, live timer, mute, hang up
-function ActiveCallBar({ call, muted, onToggleMute, onHangup }: {
-  call: ActiveCall; muted: boolean; onToggleMute: () => void; onHangup: () => void;
+function ActiveCallBar({ call, muted, recording, onToggleMute, onHangup }: {
+  call: ActiveCall; muted: boolean; recording: boolean; onToggleMute: () => void; onHangup: () => void;
 }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
@@ -812,8 +812,13 @@ function ActiveCallBar({ call, muted, onToggleMute, onHangup }: {
         <span className={`w-2.5 h-2.5 rounded-full ${call.phase === 'active' ? 'bg-emerald-300 animate-pulse' : 'bg-amber-300 animate-pulse'}`} />
         <div className="min-w-0 max-w-[220px]">
           <p className="text-sm font-semibold truncate leading-tight">{call.name || call.phone}</p>
-          <p className="text-[11px] text-emerald-200 leading-tight">
+          <p className="text-[11px] text-emerald-200 leading-tight flex items-center gap-1.5">
             {call.direction === 'outbound' ? 'Outgoing' : 'Incoming'} · {label}
+            {recording && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-200" title="This call is being recorded">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" /> REC
+              </span>
+            )}
           </p>
         </div>
         <button onClick={onToggleMute} title={muted ? 'Unmute' : 'Mute'}
@@ -839,6 +844,12 @@ export default function InboxPage() {
   const callSessionRef = useRef<WhatsAppCallSession | null>(null);
   const activeCallRef  = useRef<ActiveCall | null>(null);
   const lastSdpRef     = useRef<string>('');   // our SDP answer, re-sent with 'accept'
+  const recordCallsRef = useRef(false);        // Settings → Calling → Record calls
+  useEffect(() => {
+    apiFetch('/api/calling/settings')
+      .then((r) => { recordCallsRef.current = !!r.data?.record_calls && !!r.data?.recording_storage_ready; })
+      .catch(() => {});
+  }, []);
   useEffect(() => { activeCallRef.current = activeCall; }, [activeCall]);
   const [showProfileMobile, setShowProfileMobile] = useState(false);
   const [messages, setMessages]     = useState<Message[]>([]);
@@ -1680,6 +1691,7 @@ export default function InboxPage() {
           body: JSON.stringify({ call_id: call.callId, action: 'accept', sdp: lastSdpRef.current }),
         }).then(() => {
           setActiveCall(prev => prev ? { ...prev, phase: 'active', startedAt: Date.now() } : prev);
+          if (recordCallsRef.current) callSessionRef.current?.startRecording();
         }).catch((err) => { toast.error('Accept failed: ' + (err?.message || err)); endActiveCall(true); });
       },
       onDisconnected: (reason) => {
@@ -1718,7 +1730,10 @@ export default function InboxPage() {
   async function startOutboundCall(contact: Contact) {
     if (activeCallRef.current) { toast.error('Already on a call'); return; }
     const session = new WhatsAppCallSession({
-      onConnected: () => setActiveCall(prev => prev ? { ...prev, phase: 'active', startedAt: Date.now() } : prev),
+      onConnected: () => {
+        setActiveCall(prev => prev ? { ...prev, phase: 'active', startedAt: Date.now() } : prev);
+        if (recordCallsRef.current) callSessionRef.current?.startRecording();
+      },
       onDisconnected: (reason) => { if (reason === 'failed') { toast.error('Call connection failed'); endActiveCall(true); } },
     });
     callSessionRef.current = session;
@@ -1754,10 +1769,34 @@ export default function InboxPage() {
       apiFetch('/api/calling/action', { method: 'POST', body: JSON.stringify({ call_id: ac.callId, action: 'terminate' }) })
         .catch(() => {});
     }
-    callSessionRef.current?.close();
+    const session = callSessionRef.current;
     callSessionRef.current = null;
     setActiveCall(null);
     setCallMuted(false);
+    if (!session) return;
+    // Finish the recording (if any) and upload it in the background, then close
+    const callId = ac?.callId || '';
+    session.stopRecording()
+      .then((rec) => {
+        if (!rec || !callId) return;
+        const fd = new FormData();
+        fd.append('call_id', callId);
+        fd.append('seconds', String(rec.seconds));
+        fd.append('file', rec.blob, `call_${callId}.webm`);
+        // raw fetch: apiFetch forces a JSON content-type which breaks multipart
+        const token = localStorage.getItem('token');
+        return fetch('/api/calling/recording', {
+          method: 'POST', body: fd,
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
+          .then(async (res) => {
+            if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `HTTP ${res.status}`); }
+            toast.success('Call recording saved', { duration: 2500 });
+          })
+          .catch((err) => toast.error('Recording upload failed: ' + (err?.message || err), { duration: 6000 }));
+      })
+      .catch(() => {})
+      .finally(() => session.close());
   }
   function toggleCallMute() {
     const next = !callMuted;
@@ -1807,6 +1846,7 @@ export default function InboxPage() {
       )}
       {activeCall && (
         <ActiveCallBar call={activeCall} muted={callMuted}
+          recording={activeCall.phase === 'active' && recordCallsRef.current}
           onToggleMute={toggleCallMute} onHangup={() => endActiveCall(true)} />
       )}
 

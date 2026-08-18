@@ -46,6 +46,15 @@ export function startInternalCron() {
   }, CRON_INTERVAL_MS);
   // Never keep the process alive just for the scheduler
   timer.unref?.();
+
+  // Daily housekeeping: expire old call recordings per workspace retention
+  // (first run 5 min after boot, then every 24h). Deferred import — callLogs
+  // pulls in the S3 SDK, no need to load it on the hot path.
+  const purge = () => import('@/lib/callLogs')
+    .then((m) => m.purgeExpiredRecordings())
+    .catch((err) => console.error('[recording-purge]', err));
+  const first = setTimeout(() => { purge(); const daily = setInterval(purge, 24 * 60 * 60 * 1000); daily.unref?.(); }, 5 * 60 * 1000);
+  first.unref?.();
 }
 
 /** Run one processing tick. onlyId limits it to a single campaign (full budget). */

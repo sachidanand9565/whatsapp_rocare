@@ -59,19 +59,25 @@ export async function GET(req: NextRequest) {
       );
       total = Number(cnt[0]?.total || 0);
 
-      calls = await query<RowDataPacket[]>(
+      const listSql = (withRec: boolean) =>
         `SELECT cl.id, cl.call_id, cl.direction, cl.status, cl.duration_sec,
                 cl.started_at, cl.answered_at, cl.ended_at, cl.created_at,
                 cl.contact_id, c.name AS contact_name, c.phone AS contact_phone,
                 cl.agent_id, u.name AS agent_name
+                ${withRec ? ', (cl.recording_key IS NOT NULL) AS has_recording, cl.recording_sec' : ', 0 AS has_recording, NULL AS recording_sec'}
          FROM call_logs cl
          LEFT JOIN contacts c ON c.id = cl.contact_id
          LEFT JOIN users u    ON u.id = cl.agent_id
          WHERE ${whereSql}
          ORDER BY cl.created_at DESC, cl.id DESC
-         LIMIT ? OFFSET ?`,
-        [...params, limit, offset]
-      );
+         LIMIT ? OFFSET ?`;
+      try {
+        calls = await query<RowDataPacket[]>(listSql(true), [...params, limit, offset]);
+      } catch (e) {
+        // recording columns not migrated yet — list without them
+        if ((e as { code?: string })?.code !== 'ER_BAD_FIELD_ERROR') throw e;
+        calls = await query<RowDataPacket[]>(listSql(false), [...params, limit, offset]);
+      }
     } catch (e) {
       if ((e as { code?: string })?.code === 'ER_NO_SUCH_TABLE') {
         return apiSuccess({ stats, calls: [], pagination: { page, limit, total: 0, pages: 0 }, migration_needed: true });

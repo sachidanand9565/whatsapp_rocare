@@ -323,8 +323,12 @@ export default function SettingsPage() {
     meta_error?: string | null;
     missed_call_template: string | null;
     missed_call_template_lang: string;
+    record_calls?: boolean;
+    recording_retention_days?: number;
+    recording_storage_ready?: boolean;
   }
   const [callingInfo, setCallingInfo]       = useState<CallingState | null>(null);
+  const [retentionDays, setRetentionDays]   = useState(90);
   const [callingLoading, setCallingLoading] = useState(false);
   const [callingSaving, setCallingSaving]   = useState(false);
   const [missedTpl, setMissedTpl]           = useState('');
@@ -425,6 +429,7 @@ export default function SettingsPage() {
       .then((r) => {
         setCallingInfo(r.data || null);
         setMissedTpl(r.data?.missed_call_template || '');
+        setRetentionDays(Number(r.data?.recording_retention_days ?? 90));
       })
       .catch(() => {})
       .finally(() => setCallingLoading(false));
@@ -454,6 +459,29 @@ export default function SettingsPage() {
     try {
       await apiFetch('/api/calling/settings', { method: 'PUT', body: JSON.stringify({ call_icon_visibility: v }) });
       toast.success('Updated');
+      loadCalling();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    } finally { setCallingSaving(false); }
+  }
+
+  async function toggleRecordCalls() {
+    if (!callingInfo) return;
+    const next = !callingInfo.record_calls;
+    setCallingSaving(true);
+    try {
+      await apiFetch('/api/calling/settings', { method: 'PUT', body: JSON.stringify({ record_calls: next }) });
+      toast.success(next ? 'Call recording ON — calls answered/placed from the Inbox will be recorded' : 'Call recording OFF');
+      loadCalling();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed', { duration: 7000 });
+    } finally { setCallingSaving(false); }
+  }
+  async function saveRetention() {
+    setCallingSaving(true);
+    try {
+      await apiFetch('/api/calling/settings', { method: 'PUT', body: JSON.stringify({ recording_retention_days: retentionDays }) });
+      toast.success('Retention saved');
       loadCalling();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed');
@@ -1533,6 +1561,49 @@ Response:
                     </button>
                   </div>
                 )}
+              </div>
+
+              {/* Call recording */}
+              <div className="card space-y-3">
+                <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+                  <Zap size={18} className="text-red-500" />
+                  <div>
+                    <h3 className="font-semibold text-gray-900">Call recording</h3>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Record both sides of calls answered or placed from the Inbox. Files are stored privately in S3
+                      and playable from the Calls page. Agents see a red REC badge during recorded calls.
+                    </p>
+                  </div>
+                </div>
+                {!callingInfo.recording_storage_ready && (
+                  <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg px-3 py-2">
+                    Storage not configured — set <code className="bg-amber-100 px-1 rounded">S3_BUCKET</code>, <code className="bg-amber-100 px-1 rounded">S3_REGION</code>
+                    (and access keys) in the server env, then restart. Recording can be turned on after that.
+                  </div>
+                )}
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-800">Record calls</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Make sure your customers are informed that calls may be recorded (add it to your business
+                      profile / greeting) — recording laws vary by region.
+                    </p>
+                  </div>
+                  <button onClick={toggleRecordCalls} disabled={callingSaving || !callingInfo.recording_storage_ready}
+                    className="flex-shrink-0 mt-0.5 disabled:opacity-50 transition-opacity">
+                    {callingInfo.record_calls
+                      ? <ToggleRight size={36} className="text-red-500" />
+                      : <ToggleLeft  size={36} className="text-gray-300" />}
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
+                  <p className="text-sm text-gray-700 flex-1">Keep recordings for</p>
+                  <input type="number" min={0} max={3650} value={retentionDays}
+                    onChange={(e) => setRetentionDays(Number(e.target.value))}
+                    className="input w-24 text-center" />
+                  <span className="text-xs text-gray-500">days (0 = forever)</span>
+                  <button onClick={saveRetention} disabled={callingSaving} className="btn-secondary text-sm">Save</button>
+                </div>
               </div>
 
               {/* Missed-call auto reply */}

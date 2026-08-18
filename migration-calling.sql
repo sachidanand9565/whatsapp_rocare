@@ -37,3 +37,18 @@ CREATE TABLE IF NOT EXISTS call_logs (
   INDEX idx_ws_created (workspace_id, created_at),
   INDEX idx_ws_contact (workspace_id, contact_id)
 );
+
+-- ------------------------------------------------------------
+-- Call recording (S3). Recordings are captured in the agent's browser
+-- (both sides mixed), uploaded on hang-up, stored PRIVATE in S3 and
+-- played back via short-lived presigned URLs.
+-- ------------------------------------------------------------
+ALTER TABLE call_logs
+  ADD COLUMN recording_key   VARCHAR(512) NULL,       -- S3 object key
+  ADD COLUMN recording_bytes INT NULL,
+  ADD COLUMN recording_mime  VARCHAR(64) NULL,
+  ADD COLUMN recording_sec   INT NULL;                -- recorded length (may differ from call duration)
+
+ALTER TABLE workspaces
+  ADD COLUMN record_calls           TINYINT(1) NOT NULL DEFAULT 0,   -- master switch (Settings → Calling)
+  ADD COLUMN recording_retention_days INT NOT NULL DEFAULT 90;      -- auto-delete after N days (0 = keep forever)
