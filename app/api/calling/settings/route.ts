@@ -14,25 +14,26 @@ import { getCallingSettings, updateCallingSettings, CallingSettings } from '@/li
 import { s3Configured } from '@/lib/s3';
 import { RowDataPacket } from 'mysql2';
 
-// migration-calling.sql adds the calling_* / missed_call_* columns; until it
-// runs, fall back to the base columns so the page still loads (prefs read as off).
+// migration-calling.sql adds the calling_* / missed_call_* / record_* columns;
+// until it runs, fall back to the base columns so the page still loads.
+// Re-probed on EVERY request (cheap: one indexed row) so that running the
+// migration takes effect immediately — no server restart needed.
 let callingColumnsAvailable = true;
 async function loadWorkspace(workspaceId: number) {
-  if (callingColumnsAvailable) {
-    try {
-      const rows = await query<RowDataPacket[]>(
-        `SELECT id, access_token, phone_number_id, calling_enabled,
-                missed_call_template, missed_call_template_lang,
-                record_calls, recording_retention_days
-         FROM workspaces WHERE id = ? LIMIT 1`,
-        [workspaceId]
-      );
-      return rows[0];
-    } catch (e) {
-      if ((e as { code?: string })?.code !== 'ER_BAD_FIELD_ERROR') throw e;
-      callingColumnsAvailable = false;
-      console.warn('[calling/settings] run migration-calling.sql — calling columns missing on workspaces');
-    }
+  try {
+    const rows = await query<RowDataPacket[]>(
+      `SELECT id, access_token, phone_number_id, calling_enabled,
+              missed_call_template, missed_call_template_lang,
+              record_calls, recording_retention_days
+       FROM workspaces WHERE id = ? LIMIT 1`,
+      [workspaceId]
+    );
+    callingColumnsAvailable = true;
+    return rows[0];
+  } catch (e) {
+    if ((e as { code?: string })?.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    callingColumnsAvailable = false;
+    console.warn('[calling/settings] run migration-calling.sql — calling/recording columns missing on workspaces');
   }
   const rows = await query<RowDataPacket[]>(
     'SELECT id, access_token, phone_number_id FROM workspaces WHERE id = ? LIMIT 1',

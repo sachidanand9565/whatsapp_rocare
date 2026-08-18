@@ -8,14 +8,17 @@ import { query, execute } from '@/lib/db';
 import { utcNow } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 
-let tableMissing = false;
+// After a "table missing" error we back off for a minute (not forever) so
+// running the migration takes effect without a server restart.
+let tableMissingUntil = 0;
+const tableMissing = () => Date.now() < tableMissingUntil;
 function isMissing(e: unknown): boolean {
   return (e as { code?: string })?.code === 'ER_NO_SUCH_TABLE';
 }
 async function safe(fn: () => Promise<unknown>) {
-  if (tableMissing) return;
+  if (tableMissing()) return;
   try { await fn(); } catch (e) {
-    if (isMissing(e)) { tableMissing = true; console.warn('[call_logs] table missing — run migration-calling.sql'); }
+    if (isMissing(e)) { tableMissingUntil = Date.now() + 60_000; console.warn('[call_logs] table missing — run migration-calling.sql'); }
     else console.warn('[call_logs]', (e as Error).message);
   }
 }
@@ -81,7 +84,7 @@ export async function logCallEnded(o: {
  */
 export async function purgeExpiredRecordings(): Promise<number> {
   const { s3Configured, deleteRecording } = await import('@/lib/s3');
-  if (!s3Configured() || tableMissing) return 0;
+  if (!s3Configured() || tableMissing()) return 0;
   let rows: RowDataPacket[] = [];
   try {
     rows = await query<RowDataPacket[]>(
