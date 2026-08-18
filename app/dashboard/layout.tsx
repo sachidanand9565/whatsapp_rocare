@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   LayoutDashboard, MessageSquare, Users, Megaphone,
   FileText, Bot, BarChart3, Settings, LogOut, Menu, X,
-  History, CreditCard, UserCog, ChevronRight, Plus, Check, ShieldCheck, GitBranch, ShoppingCart, Building2, Target,
+  History, CreditCard, UserCog, ChevronRight, Plus, Check, ShieldCheck, GitBranch, ShoppingCart, Building2, Target, PhoneCall,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -17,6 +17,7 @@ const ALL_NAV = [
   { label: 'Dashboard',  href: '/dashboard',   icon: LayoutDashboard, roles: ['admin','manager','agent'] },
   { label: 'Inbox',      href: '/inbox',        icon: MessageSquare,   roles: ['admin','manager','agent'] },
   { label: 'History',    href: '/history',      icon: History,         roles: ['admin','manager','agent'] },
+  { label: 'Calls',      href: '/calls',        icon: PhoneCall,       roles: ['admin','manager','agent'] },
   { label: 'Contacts',   href: '/contacts',     icon: Users,           roles: ['admin','manager','agent'] },
   { label: 'Leads',      href: '/leads',        icon: Target,          roles: ['admin','manager','agent'] },
   { label: 'Campaigns',  href: '/campaigns',    icon: Megaphone,       roles: ['admin','manager','agent'] },

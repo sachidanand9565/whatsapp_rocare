@@ -462,6 +462,75 @@ export async function callAction(
   return data as { success?: boolean };
 }
 
+// ---- Call permission: where do we stand with this user? ----
+// status: no_permission | temporary (7 days) | permanent
+export interface CallPermissionInfo {
+  status:          'no_permission' | 'temporary' | 'permanent' | string;
+  expiration_time: number | null;      // unix seconds (temporary only)
+  can_request:     boolean;            // send_call_permission_request allowed now?
+  can_call:        boolean;            // start_call allowed now?
+  request_limits:  { time_period: string; max_allowed: number; current_usage: number }[];
+}
+export async function getCallPermission(accessToken: string, phoneNumberId: string, userWaId: string): Promise<CallPermissionInfo> {
+  const client = createWAClient(accessToken);
+  const { data } = await client.get(`/${phoneNumberId}/call_permissions`, { params: { user_wa_id: userWaId } });
+  const actions = (data?.actions as { action_name: string; can_perform_action: boolean; limits?: CallPermissionInfo['request_limits'] }[]) || [];
+  const req  = actions.find((a) => a.action_name === 'send_call_permission_request');
+  const call = actions.find((a) => a.action_name === 'start_call');
+  return {
+    status:          data?.permission?.status || 'no_permission',
+    expiration_time: data?.permission?.expiration_time ?? null,
+    can_request:     !!req?.can_perform_action,
+    can_call:        !!call?.can_perform_action,
+    request_limits:  req?.limits || [],
+  };
+}
+
+// ---- Call permission request (free-form; needs an open 24h window) ----
+// Limits: 1 per 24h, 2 per 7 days per user. Reply arrives as an interactive
+// message of type call_permission_reply.
+export async function sendCallPermissionRequest(accessToken: string, phoneNumberId: string, to: string, bodyText: string) {
+  const client = createWAClient(accessToken);
+  const { data } = await client.post(`/${phoneNumberId}/messages`, {
+    messaging_product: 'whatsapp',
+    recipient_type:    'individual',
+    to,
+    type:              'interactive',
+    interactive: {
+      type:   'call_permission_request',
+      action: { name: 'call_permission_request' },
+      body:   { text: bodyText },
+    },
+  });
+  return data;
+}
+
+// ---- "Call us" button (voice_call CTA) — customer taps to call our number ----
+export async function sendVoiceCallButton(
+  accessToken: string, phoneNumberId: string, to: string,
+  bodyText: string, buttonText = 'Call us', ttlMinutes = 4320, headerText?: string, footerText?: string
+) {
+  const client = createWAClient(accessToken);
+  const interactive: Record<string, unknown> = {
+    type:   'voice_call',
+    body:   { text: bodyText },
+    action: {
+      name:       'voice_call',
+      parameters: { display_text: buttonText.slice(0, 20), ttl_minutes: ttlMinutes },
+    },
+  };
+  if (headerText) interactive.header = { type: 'text', text: headerText };
+  if (footerText) interactive.footer = { text: footerText };
+  const { data } = await client.post(`/${phoneNumberId}/messages`, {
+    messaging_product: 'whatsapp',
+    recipient_type:    'individual',
+    to,
+    type:              'interactive',
+    interactive,
+  });
+  return data;
+}
+
 // ---- Business-initiated call: ring the customer with our SDP offer ----
 // Requires the customer to have granted call permission (callback permission
 // prompt or a call_permission_request message) within the last 7 days.
@@ -873,6 +942,16 @@ export function parseWebhookBody(body: Record<string, unknown>): {
           interactiveReply = { id: btnReply.id as string, title: btnReply.title as string, replyType: 'button_reply' };
         } else if (listReply) {
           interactiveReply = { id: listReply.id as string, title: listReply.title as string, replyType: 'list_reply' };
+        } else if (ia.type === 'call_permission_reply' && ia.call_permission_reply) {
+          // Customer answered our call-permission request (accept / reject).
+          // Surface as an interactive reply so the chat shows a readable line.
+          const cpr = ia.call_permission_reply as Record<string, unknown>;
+          const accepted = cpr.response === 'accept';
+          interactiveReply = {
+            id:        `call_permission:${cpr.response}`,
+            title:     accepted ? '✅ Allowed WhatsApp calls from you' : '❌ Declined WhatsApp calls',
+            replyType: 'button_reply',
+          };
         }
       }
 

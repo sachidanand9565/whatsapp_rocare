@@ -16,6 +16,7 @@ import { requireAuth } from '@/lib/auth';
 import { query, execute } from '@/lib/db';
 import { apiSuccess, apiError, normalizePhone } from '@/lib/utils';
 import { callAction, startBusinessCall } from '@/lib/whatsapp';
+import { logCallStart, logCallAnswered, logCallRejected } from '@/lib/callLogs';
 import { RowDataPacket } from 'mysql2';
 
 const ACTIONS = ['reject', 'terminate', 'pre_accept', 'accept', 'connect'] as const;
@@ -50,6 +51,13 @@ export async function POST(req: NextRequest) {
           'INSERT IGNORE INTO contacts (workspace_id, phone, source, opted_in) VALUES (?, ?, ?, 1)',
           [payload.workspaceId, to, 'inbound']
         ).catch(() => {});
+        const cRow = await query<RowDataPacket[]>(
+          'SELECT id FROM contacts WHERE workspace_id = ? AND phone = ? LIMIT 1', [payload.workspaceId, to]
+        );
+        await logCallStart({
+          workspaceId: payload.workspaceId, contactId: (cRow[0]?.id as number) || null,
+          callId, direction: 'outbound', agentId: payload.userId,
+        });
         return apiSuccess({ call_id: callId });
       } catch (e) {
         const err = e as { response?: { data?: { error?: { message?: string; code?: number; error_data?: { details?: string } } } } };
@@ -81,6 +89,9 @@ export async function POST(req: NextRequest) {
       console.warn(`[calling/action] ${action} failed:`, JSON.stringify(me || detail));
       return apiError(`Meta: ${detail}`, 502);
     }
+    // Attribute the call to this agent for the Calls page
+    if (action === 'accept') await logCallAnswered(body.call_id, payload.userId);
+    if (action === 'reject') await logCallRejected(body.call_id, payload.userId);
     return apiSuccess({ done: true });
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);

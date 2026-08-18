@@ -257,6 +257,32 @@ function CallBubble({ data, time }: { data: CallContent; time: string }) {
     </div>
   );
 }
+// Outbound calling-related interactive messages we sent
+interface CallInteractiveContent { __type: 'call_permission_request' | 'voice_call_button'; body: string; button?: string }
+function parseCallInteractive(c: string): CallInteractiveContent | null {
+  try { const p = JSON.parse(c); if (p.__type === 'call_permission_request' || p.__type === 'voice_call_button') return p; } catch { /**/ } return null;
+}
+function CallInteractiveBubble({ data, status, time }: { data: CallInteractiveContent; status: string; time: string }) {
+  const isPerm = data.__type === 'call_permission_request';
+  return (
+    <div className="w-72 rounded-2xl rounded-br-sm overflow-hidden shadow-sm border border-green-100">
+      <div className="bg-[#dcf8c6] px-4 py-2.5">
+        <p className="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed">{data.body}</p>
+        <p className="text-xs text-gray-400 text-right mt-1">
+          {time}
+          <span className={`ml-1 ${status === 'read' ? 'text-blue-500' : 'text-gray-400'}`}>
+            {status === 'read' || status === 'delivered' ? '✓✓' : '✓'}
+          </span>
+        </p>
+      </div>
+      <div className="bg-white px-4 py-2 text-center text-sm font-medium text-[#00a5f4] border-t border-gray-200 flex items-center justify-center gap-1.5">
+        {isPerm ? <><PhoneCall size={13} /> Allow calls</> : <><PhoneCall size={13} /> {data.button || 'Call us'}</>}
+      </div>
+      {isPerm && <p className="bg-white text-[10px] text-gray-400 text-center pb-1.5">Call permission request</p>}
+    </div>
+  );
+}
+
 function ButtonsBubble({ data, status, time }: { data: ButtonsContent; status: string; time: string }) {
   return (
     <div className="w-72 rounded-2xl rounded-br-sm overflow-hidden shadow-sm border border-green-100">
@@ -1477,6 +1503,48 @@ export default function InboxPage() {
     finally { setActioning(false); }
   }
 
+  // ── Call menu (header "Call" dropdown): permission status + 3 actions ──
+  const [showCallMenu, setShowCallMenu] = useState(false);
+  const [callPerm, setCallPerm] = useState<{
+    permission: { status: string; expiration_time: number | null; can_request: boolean; can_call: boolean } | null;
+    window_open: boolean; meta_error: string | null;
+  } | null>(null);
+  const [callPermLoading, setCallPermLoading] = useState(false);
+  const [callMenuBusy, setCallMenuBusy] = useState<'' | 'request' | 'call_button'>('');
+  const callMenuRef = useRef<HTMLDivElement>(null);
+
+  function openCallMenu() {
+    if (!selected) return;
+    setShowCallMenu((s) => !s);
+    setCallPermLoading(true);
+    setCallPerm(null);
+    apiFetch(`/api/calling/permission?contactId=${selected.id}`)
+      .then((r) => setCallPerm(r.data || null))
+      .catch(() => setCallPerm(null))
+      .finally(() => setCallPermLoading(false));
+  }
+  async function sendCallMenuAction(action: 'request' | 'call_button') {
+    if (!selected) return;
+    setCallMenuBusy(action);
+    try {
+      await apiFetch('/api/calling/permission', { method: 'POST', body: JSON.stringify({ contactId: selected.id, action }) });
+      toast.success(action === 'request' ? 'Call permission request sent' : '"Call us" button sent');
+      setShowCallMenu(false);
+      loadMessages(selected.id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed', { duration: 7000 });
+    } finally { setCallMenuBusy(''); }
+  }
+  useEffect(() => {
+    if (!showCallMenu) return;
+    function handleOutside(e: MouseEvent) {
+      if (callMenuRef.current && !callMenuRef.current.contains(e.target as Node)) setShowCallMenu(false);
+    }
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [showCallMenu]);
+  useEffect(() => { setShowCallMenu(false); }, [selected?.id]);
+
   // Close transfer dropdown when clicking outside
   useEffect(() => {
     if (!showTransfer) return;
@@ -1710,6 +1778,18 @@ export default function InboxPage() {
   }, [incomingCall]);
   // Tear down mic/peer connection if the agent navigates away mid-call
   useEffect(() => () => { callSessionRef.current?.close(); }, []);
+  // Deep link: /inbox?contact=ID (from Calls page "Chat", notifications, etc.)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const id = Number(new URLSearchParams(window.location.search).get('contact') || 0);
+    if (!id) return;
+    apiFetch(`/api/contacts/${id}`)
+      .then((r) => { if (r.data?.id) selectContact(r.data as Contact); })
+      .catch(() => {});
+    // strip the param so a refresh doesn't re-select
+    window.history.replaceState({}, '', '/inbox');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Ask once for desktop notification permission so calls alert even when the
   // tab is in the background (browsers require a user gesture → on first click)
   useEffect(() => {
@@ -2071,13 +2151,77 @@ export default function InboxPage() {
               <p className="font-semibold text-sm text-gray-900 truncate">{selected.name || selected.phone}</p>
               <p className="text-xs text-gray-400">+{selected.phone}</p>
             </div>
-            {/* WhatsApp voice call (Business Calling API) — needs calling enabled
-                in Settings → Calling and the customer's call permission */}
-            <button onClick={() => startOutboundCall(selected)} disabled={!!activeCall}
-              title={activeCall ? 'Already on a call' : 'Call on WhatsApp'}
-              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 bg-whatsapp-green hover:bg-whatsapp-teal disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-colors flex-shrink-0">
-              <PhoneOutgoing size={13} /><span className="hidden sm:inline">Call</span>
-            </button>
+            {/* WhatsApp voice call menu (Business Calling API) — needs calling
+                enabled in Settings → Calling; outbound calls need the customer's permission */}
+            <div className="relative flex-shrink-0" ref={callMenuRef}>
+              <button onClick={openCallMenu} disabled={!!activeCall}
+                title={activeCall ? 'Already on a call' : 'WhatsApp call options'}
+                className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40 border ${
+                  showCallMenu ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-white border-gray-200 text-gray-700 hover:border-emerald-300 hover:text-emerald-700'
+                }`}>
+                <PhoneCall size={13} /><span className="hidden sm:inline">Call</span>
+                <ChevronDown size={11} className={`transition-transform ${showCallMenu ? 'rotate-180' : ''}`} />
+              </button>
+              {showCallMenu && (() => {
+                const p = callPerm?.permission;
+                const granted = p?.status === 'temporary' || p?.status === 'permanent';
+                const expires = p?.expiration_time
+                  ? new Date(p.expiration_time * 1000).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
+                  : null;
+                const windowOpen = !!callPerm?.window_open;
+                return (
+                  <div className="absolute right-0 top-full mt-1.5 w-72 bg-white border border-gray-200 rounded-xl shadow-xl z-30 overflow-hidden">
+                    {/* Permission status */}
+                    <div className={`px-3.5 py-2.5 border-b border-gray-100 flex items-start gap-2 ${granted ? 'bg-emerald-50/60' : 'bg-gray-50'}`}>
+                      {callPermLoading ? (
+                        <><Loader2 size={15} className="animate-spin text-gray-400 mt-0.5" /><p className="text-xs text-gray-500">Checking call permission…</p></>
+                      ) : granted ? (
+                        <><CheckCircle size={15} className="text-emerald-600 mt-0.5" />
+                          <div>
+                            <p className="text-xs font-semibold text-gray-800">Call permission granted</p>
+                            <p className="text-[11px] text-gray-500">{p?.status === 'permanent' ? 'Permanent' : expires ? `Valid till ${expires}` : 'Temporary'}</p>
+                          </div></>
+                      ) : (
+                        <><Info size={15} className="text-amber-500 mt-0.5" />
+                          <div>
+                            <p className="text-xs font-semibold text-gray-800">No call permission yet</p>
+                            <p className="text-[11px] text-gray-500">{callPerm?.meta_error ? callPerm.meta_error : 'Ask the customer to allow calls before calling.'}</p>
+                          </div></>
+                      )}
+                    </div>
+
+                    {/* Actions */}
+                    <button onClick={() => { setShowCallMenu(false); startOutboundCall(selected); }}
+                      disabled={!granted || callPermLoading}
+                      className="w-full text-left px-3.5 py-2.5 hover:bg-gray-50 disabled:opacity-45 disabled:cursor-not-allowed flex items-center gap-3 border-b border-gray-50">
+                      <span className="w-9 h-9 rounded-lg bg-emerald-600 text-white flex items-center justify-center flex-shrink-0"><PhoneOutgoing size={16} /></span>
+                      <span><p className="text-sm font-semibold text-gray-800">Call now</p><p className="text-[11px] text-gray-400">Voice call from your browser</p></span>
+                    </button>
+                    <button onClick={() => sendCallMenuAction('request')}
+                      disabled={callMenuBusy !== '' || callPermLoading || (p ? !p.can_request : false)}
+                      className="w-full text-left px-3.5 py-2.5 hover:bg-gray-50 disabled:opacity-45 disabled:cursor-not-allowed flex items-center gap-3 border-b border-gray-50">
+                      <span className="w-9 h-9 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center flex-shrink-0">
+                        {callMenuBusy === 'request' ? <Loader2 size={16} className="animate-spin" /> : <UserCheck size={16} />}
+                      </span>
+                      <span><p className="text-sm font-semibold text-gray-800">Request call permission</p><p className="text-[11px] text-gray-400">Sends a WhatsApp consent prompt{p && !p.can_request ? ' · limit reached (1/24h, 2/week)' : ''}</p></span>
+                    </button>
+                    <button onClick={() => sendCallMenuAction('call_button')}
+                      disabled={callMenuBusy !== ''}
+                      className="w-full text-left px-3.5 py-2.5 hover:bg-gray-50 disabled:opacity-45 flex items-center gap-3">
+                      <span className="w-9 h-9 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center flex-shrink-0">
+                        {callMenuBusy === 'call_button' ? <Loader2 size={16} className="animate-spin" /> : <PhoneCall size={16} />}
+                      </span>
+                      <span><p className="text-sm font-semibold text-gray-800">Send &ldquo;Call us&rdquo; button</p><p className="text-[11px] text-gray-400">Customer taps to call your number</p></span>
+                    </button>
+
+                    <p className="px-3.5 py-2 text-[10.5px] text-gray-400 border-t border-gray-100 flex items-center gap-1">
+                      <Zap size={10} />
+                      {windowOpen ? '24 h window open — free-form request allowed.' : '24 h window closed — requests need a template.'}
+                    </p>
+                  </div>
+                );
+              })()}
+            </div>
             <button onClick={() => setShowProfileMobile(true)} className="lg:hidden text-gray-400 hover:text-gray-600 flex-shrink-0">
               <Info size={18} />
             </button>
@@ -2152,6 +2296,7 @@ export default function InboxPage() {
               const listMsg  = parseListContent(m.content);
               const btnsMsg  = parseButtonsContent(m.content);
               const callMsg  = parseCallContent(m.content);
+              const callIx   = parseCallInteractive(m.content);
               const repliedMsg = m.replied_to_wamid ? messages.find((x) => x.wamid === m.replied_to_wamid) : null;
               const msgDate  = toLocalDate(m.created_at);
               const timeStr  = msgDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
@@ -2230,6 +2375,8 @@ export default function InboxPage() {
                   className={`flex transition-all ${m.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
                   {tpl ? (
                     <TemplateBubble data={tpl} status={m.status} time={timeStr} />
+                  ) : callIx ? (
+                    <CallInteractiveBubble data={callIx} status={m.status} time={timeStr} />
                   ) : btnsMsg ? (
                     <ButtonsBubble data={btnsMsg} status={m.status} time={timeStr} />
                   ) : listMsg ? (

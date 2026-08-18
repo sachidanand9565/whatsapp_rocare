@@ -9,6 +9,7 @@ import { normalizePhone, utcNow, unixToUtc } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { emitSSE } from '@/lib/sse';
 import { enqueueFlowJob } from '@/lib/queue';
+import { logCallStart, logCallEnded } from '@/lib/callLogs';
 
 // ---- GET: Verify webhook with Meta ----
 export async function GET(req: NextRequest) {
@@ -527,6 +528,11 @@ export async function POST(req: NextRequest) {
     const msgDirection = isBusinessInitiated ? 'outbound' : 'inbound';
 
     if (call.event === 'connect') {
+      await logCallStart({
+        workspaceId, contactId, callId: call.call_id,
+        direction: isBusinessInitiated ? 'outbound' : 'inbound',
+        startedAt: unixToUtc(call.timestamp),
+      });
       if (isBusinessInitiated) {
         // Outbound call we started: the customer picked up — this connect event
         // carries THEIR SDP answer. Hand it to the agent's browser to finish WebRTC.
@@ -568,6 +574,13 @@ export async function POST(req: NextRequest) {
         'UPDATE contacts SET last_message_at = ?, last_inbound_at = COALESCE(?, last_inbound_at) WHERE id = ?',
         [utcNow(), isBusinessInitiated ? null : utcNow(), contactId]
       ).catch(() => {});
+      await logCallEnded({
+        workspaceId, contactId, callId: call.call_id,
+        direction: isBusinessInitiated ? 'outbound' : 'inbound',
+        answered, durationSec: call.duration || 0,
+        startedAt: call.start_time ? unixToUtc(call.start_time) : undefined,
+        endedAt:   call.end_time   ? unixToUtc(call.end_time)   : unixToUtc(call.timestamp),
+      });
       emitSSE({ type: 'call_ended', workspaceId, contactId, callId: call.call_id });
       emitSSE({ type: 'new_message', workspaceId, contactId, direction: msgDirection });
 
