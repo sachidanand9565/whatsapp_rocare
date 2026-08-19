@@ -430,6 +430,28 @@ export async function getCallingSettings(accessToken: string, phoneNumberId: str
   };
 }
 
+// ---- WhatsApp Business Profile (what customers see when they tap the business name) ----
+export interface BusinessProfile {
+  about?: string;        // ≤139 chars, shown under the name
+  description?: string;  // ≤512 chars, shown in the profile body
+  address?: string; email?: string; websites?: string[]; vertical?: string;
+  profile_picture_url?: string;
+}
+export async function getBusinessProfile(accessToken: string, phoneNumberId: string): Promise<BusinessProfile> {
+  const client = createWAClient(accessToken);
+  const { data } = await client.get(`/${phoneNumberId}/whatsapp_business_profile`, {
+    params: { fields: 'about,description,address,email,websites,vertical,profile_picture_url' },
+  });
+  return (data?.data?.[0] ?? {}) as BusinessProfile;
+}
+export async function updateBusinessProfile(
+  accessToken: string, phoneNumberId: string, fields: Partial<Pick<BusinessProfile, 'about' | 'description'>>
+) {
+  const client = createWAClient(accessToken);
+  const { data } = await client.post(`/${phoneNumberId}/whatsapp_business_profile`, { messaging_product: 'whatsapp', ...fields });
+  return data as { success?: boolean };
+}
+
 // ---- Enable / configure calling on a phone number ----
 // Requires whatsapp_business_management (advanced) + messaging tier ≥ 2000/day.
 export async function updateCallingSettings(accessToken: string, phoneNumberId: string, calling: CallingSettings) {

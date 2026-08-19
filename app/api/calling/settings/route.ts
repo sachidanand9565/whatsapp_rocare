@@ -11,7 +11,8 @@ import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 import { query, execute } from '@/lib/db';
 import { apiSuccess, apiError } from '@/lib/utils';
-import { getCallingSettings, updateCallingSettings, CallingSettings } from '@/lib/whatsapp';
+import { getCallingSettings, updateCallingSettings, CallingSettings, getBusinessProfile, updateBusinessProfile } from '@/lib/whatsapp';
+import { callHoursProfileLine, mergeHoursIntoDescription, HOURS_MARKER } from '@/lib/call-hours';
 import { s3Configured } from '@/lib/s3';
 import { RowDataPacket } from 'mysql2';
 
@@ -122,10 +123,17 @@ export async function GET(req: NextRequest) {
     let calling: CallingSettings | null = null;
     let phone: Record<string, unknown> | null = null;
     let meta_error: string | null = null;
+    // Is our "📞 Calling hours …" line currently on the WhatsApp business profile?
+    let profile_hours_line: string | null = null;
     try {
-      const live = await getCallingSettings(ws.access_token as string, ws.phone_number_id as string);
+      const [live, profile] = await Promise.all([
+        getCallingSettings(ws.access_token as string, ws.phone_number_id as string),
+        getBusinessProfile(ws.access_token as string, ws.phone_number_id as string).catch(() => null),
+      ]);
       calling = live.calling;
       phone   = live.phone;
+      const found = String(profile?.description || '').split('\n').find((l) => l.trim().startsWith(HOURS_MARKER));
+      profile_hours_line = found ? found.trim() : null;
     } catch (e) {
       const err = e as { response?: { data?: { error?: { message?: string } } } };
       meta_error = err?.response?.data?.error?.message || (e as Error).message;
@@ -156,6 +164,8 @@ export async function GET(req: NextRequest) {
       record_calls:              !!ws.record_calls,
       recording_retention_days:  Number(ws.recording_retention_days ?? 90),
       recording_storage_ready:   s3Configured(),
+      hours_on_profile:          !!profile_hours_line,
+      profile_hours_line,
     });
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
@@ -175,6 +185,7 @@ export async function PUT(req: NextRequest) {
       enabled?: boolean;
       call_icon_visibility?: 'DEFAULT' | 'DISABLE_ALL';
       call_hours?: CallHoursInput;
+      show_hours_on_profile?: boolean;
       missed_call_template?: string | null;
       missed_call_template_lang?: string;
       record_calls?: boolean;
@@ -208,7 +219,7 @@ export async function PUT(req: NextRequest) {
     }
 
     // ── Meta-side calling settings ──
-    if ('enabled' in body || 'call_icon_visibility' in body || 'call_hours' in body) {
+    if ('enabled' in body || 'call_icon_visibility' in body || 'call_hours' in body || 'show_hours_on_profile' in body) {
       if (!ws.access_token || !ws.phone_number_id) {
         return apiError('WhatsApp not connected in this workspace', 400);
       }
@@ -227,13 +238,40 @@ export async function PUT(req: NextRequest) {
       }
 
       try {
-        await updateCallingSettings(ws.access_token as string, ws.phone_number_id as string, calling);
+        // Only the profile flag may have been sent — nothing to push to calling settings then
+        if (Object.keys(calling).length) {
+          await updateCallingSettings(ws.access_token as string, ws.phone_number_id as string, calling);
+        }
       } catch (e) {
         const err = e as { response?: { data?: { error?: { message?: string; code?: number; error_user_msg?: string } } } };
         const me = err?.response?.data?.error;
         const detail = me?.error_user_msg || me?.message || (e as Error).message;
         console.warn('[calling/settings] Meta update failed:', JSON.stringify(me || detail));
         return apiError(`Meta rejected the change: ${detail}`, 502);
+      }
+      // Keep the "📞 Calling hours …" line on the WhatsApp business profile in
+      // sync so customers see the window BEFORE they tap call. Explicit flag
+      // wins; otherwise refresh the line only if it's already on the profile.
+      if (calling.call_hours || 'show_hours_on_profile' in body) {
+        try {
+          const profile = await getBusinessProfile(ws.access_token as string, ws.phone_number_id as string);
+          const current = String(profile.description || '');
+          const already = current.split('\n').some((l) => l.trim().startsWith(HOURS_MARKER));
+          const want    = 'show_hours_on_profile' in body ? !!body.show_hours_on_profile : already;
+          // Hours just saved in this request, else whatever Meta currently has
+          const hours   = calling.call_hours
+            ?? (want ? (await getCallingSettings(ws.access_token as string, ws.phone_number_id as string)).calling?.call_hours : undefined);
+          const line    = want ? callHoursProfileLine(hours) : '';
+          const next    = mergeHoursIntoDescription(current, line);
+          if (next !== current.trim()) {
+            await updateBusinessProfile(ws.access_token as string, ws.phone_number_id as string, { description: next });
+          }
+        } catch (e) {
+          const err = e as { response?: { data?: { error?: { message?: string; error_user_msg?: string } } } };
+          const me = err?.response?.data?.error;
+          console.warn('[calling/settings] profile hours sync failed:', me?.error_user_msg || me?.message || (e as Error).message);
+          return apiError(`Hours saved, but WhatsApp profile update failed: ${me?.error_user_msg || me?.message || (e as Error).message}`, 502);
+        }
       }
       // Local mirror is best-effort — Meta is the source of truth (GET re-syncs it)
       if ('enabled' in body && callingColumnsAvailable) {

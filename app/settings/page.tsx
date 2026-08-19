@@ -9,6 +9,7 @@ import {
   Database, Globe, User, Lock, Pencil, PhoneCall, Clock,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { callHoursProfileLine } from '@/lib/call-hours';
 
 // ── FB SDK type shim ──────────────────────────────────────────
 declare global {
@@ -337,6 +338,8 @@ export default function SettingsPage() {
     record_calls?: boolean;
     recording_retention_days?: number;
     recording_storage_ready?: boolean;
+    hours_on_profile?: boolean;
+    profile_hours_line?: string | null;
   }
   const [callingInfo, setCallingInfo]       = useState<CallingState | null>(null);
   const [retentionDays, setRetentionDays]   = useState(90);
@@ -356,6 +359,7 @@ export default function SettingsPage() {
   };
   const [callHours, setCallHours]           = useState<CallHours>(DEFAULT_CALL_HOURS);
   const [callHoursDirty, setCallHoursDirty] = useState(false);
+  const [hoursOnProfile, setHoursOnProfile] = useState(false);
   const [newHoliday, setNewHoliday]         = useState('');
   const TIMEZONES: string[] = (() => {
     try {
@@ -525,6 +529,7 @@ export default function SettingsPage() {
         setRetentionDays(Number(r.data?.recording_retention_days ?? 90));
         setCallHours(callHoursFromMeta(r.data?.calling?.call_hours));
         setCallHoursDirty(false);
+        setHoursOnProfile(!!r.data?.hours_on_profile);
       })
       .catch(() => {})
       .finally(() => setCallingLoading(false));
@@ -560,7 +565,7 @@ export default function SettingsPage() {
     } finally { setCallingSaving(false); }
   }
 
-  async function saveCallHours(next: CallHours = callHours) {
+  async function saveCallHours(next: CallHours = callHours, showOnProfile: boolean = hoursOnProfile) {
     if (next.status === 'ENABLED' && next.weekly_operating_hours.length === 0) {
       toast.error('Add at least one day with hours first');
       return;
@@ -573,14 +578,22 @@ export default function SettingsPage() {
     }
     setCallingSaving(true);
     try {
-      await apiFetch('/api/calling/settings', { method: 'PUT', body: JSON.stringify({ call_hours: next }) });
+      await apiFetch('/api/calling/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ call_hours: next, show_hours_on_profile: next.status === 'ENABLED' && showOnProfile }),
+      });
       toast.success(next.status === 'ENABLED'
-        ? 'Calling hours saved — customers can call only within these hours'
+        ? (showOnProfile ? 'Calling hours saved & shown on your WhatsApp profile' : 'Calling hours saved — customers can call only within these hours')
         : 'Calling hours off — customers can call any time');
       loadCalling();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed', { duration: 7000 });
     } finally { setCallingSaving(false); }
+  }
+  function toggleHoursOnProfile() {
+    const next = !hoursOnProfile;
+    setHoursOnProfile(next);
+    saveCallHours(callHours, next);
   }
   function toggleCallHours() {
     const next: CallHours = { ...callHours, status: callHours.status === 'ENABLED' ? 'DISABLED' : 'ENABLED' };
@@ -1697,8 +1710,9 @@ Response:
                       <div className="flex-1">
                         <h3 className="font-semibold text-gray-900">Calling hours</h3>
                         <p className="text-xs text-gray-400 mt-0.5">
-                          Set the time window when customers can call you. Outside these hours WhatsApp greys out the
-                          call button and tells the customer you're closed — no missed calls pile up overnight.
+                          Set the time window when customers can call you. Outside these hours WhatsApp blocks the
+                          call and tells the customer you're closed. Turn on "Show on profile" below so customers
+                          see the hours on your WhatsApp profile <b>before</b> they try to call.
                         </p>
                       </div>
                       {hoursOn && openNow !== null && (
@@ -1826,6 +1840,38 @@ Response:
                           </button>
                         </div>
                       </div>
+
+                      {/* Show hours to customers on the WhatsApp profile */}
+                      {(() => {
+                        const preview = callHoursProfileLine({ ...callHours, status: 'ENABLED' });
+                        return (
+                          <div className="pt-2 border-t border-gray-100">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="flex-1">
+                                <p className="text-sm font-medium text-gray-800">Show calling hours on your WhatsApp profile</p>
+                                <p className="text-xs text-gray-400 mt-1">
+                                  Adds a line to your Business Profile description so customers know when they can call —
+                                  <b> before</b> they tap the call button. Kept in sync automatically whenever you change the hours.
+                                </p>
+                              </div>
+                              <button onClick={toggleHoursOnProfile} disabled={callingSaving || !enabled || !hoursOn}
+                                title={!hoursOn ? 'Turn on calling hours first' : hoursOnProfile ? 'Remove from profile' : 'Show on profile'}
+                                className="flex-shrink-0 mt-0.5 disabled:opacity-50 transition-opacity">
+                                {hoursOnProfile && hoursOn
+                                  ? <ToggleRight size={36} className="text-whatsapp-teal" />
+                                  : <ToggleLeft  size={36} className="text-gray-300" />}
+                              </button>
+                            </div>
+                            <div className="mt-2 bg-[#e7fbe6] border border-green-100 rounded-xl px-3 py-2 text-xs text-gray-800 leading-relaxed">
+                              <p className="text-[10px] uppercase tracking-wide text-gray-400 mb-0.5">Customers will see</p>
+                              {preview || <span className="text-gray-400">Add at least one day with hours to preview</span>}
+                            </div>
+                            {hoursOnProfile && hoursOn && callingInfo.profile_hours_line && callingInfo.profile_hours_line !== preview && (
+                              <p className="text-[11px] text-amber-600 mt-1">Profile currently shows an older schedule — click <b>Save hours</b> to update it.</p>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {/* Save */}
                       <div className="flex items-center justify-between gap-3 pt-2 border-t border-gray-100">
