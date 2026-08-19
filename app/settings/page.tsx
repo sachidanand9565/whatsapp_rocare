@@ -6,7 +6,7 @@ import {
   Webhook, RefreshCw, Plus, Trash2, ToggleLeft, ToggleRight,
   Facebook, ChevronRight, X, Phone, Loader2, Key, RotateCcw, Zap,
   MessageSquare, Image, FileText, Music, MapPin, MousePointerClick, PauseCircle,
-  Database, Globe, User, Lock, Pencil, PhoneCall,
+  Database, Globe, User, Lock, Pencil, PhoneCall, Clock,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -315,9 +315,20 @@ export default function SettingsPage() {
   const [showCrmHeaders, setShowCrmHeaders] = useState(false);
 
   // WhatsApp Business Calling
+  interface CallHourSlot { day_of_week: string; open_time: string; close_time: string }
+  interface CallHoliday  { date: string; start_time: string; end_time: string }
+  interface CallHours {
+    status: 'ENABLED' | 'DISABLED';
+    timezone_id: string;
+    weekly_operating_hours: CallHourSlot[];
+    holiday_schedule: CallHoliday[];
+  }
   interface CallingState {
     configured: boolean;
-    calling: { status?: string; call_icon_visibility?: string; callback_permission_status?: string } | null;
+    calling: {
+      status?: string; call_icon_visibility?: string; callback_permission_status?: string;
+      call_hours?: Partial<CallHours> | null;
+    } | null;
     phone: { display_phone_number?: string; verified_name?: string; messaging_limit_tier?: string; quality_rating?: string } | null;
     tier_ok?: boolean;
     meta_error?: string | null;
@@ -333,6 +344,88 @@ export default function SettingsPage() {
   const [callingSaving, setCallingSaving]   = useState(false);
   const [missedTpl, setMissedTpl]           = useState('');
   const [approvedTemplates, setApprovedTemplates] = useState<{ name: string; language: string }[]>([]);
+
+  // Call hours ("calling time") — stored on Meta; the call button is hidden
+  // outside this window automatically. Times are HHMM (24h) on the wire.
+  const CALL_DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+  const DEFAULT_CALL_HOURS: CallHours = {
+    status: 'DISABLED',
+    timezone_id: 'Asia/Kolkata',
+    weekly_operating_hours: CALL_DAYS.slice(0, 6).map((d) => ({ day_of_week: d, open_time: '0900', close_time: '1800' })),
+    holiday_schedule: [],
+  };
+  const [callHours, setCallHours]           = useState<CallHours>(DEFAULT_CALL_HOURS);
+  const [callHoursDirty, setCallHoursDirty] = useState(false);
+  const [newHoliday, setNewHoliday]         = useState('');
+  const TIMEZONES: string[] = (() => {
+    try {
+      const sv = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.('timeZone');
+      if (sv?.length) return sv;
+    } catch { /* older browser */ }
+    return ['Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'Europe/London', 'America/New_York', 'America/Los_Angeles', 'UTC'];
+  })();
+  // "HHMM" ⇄ "HH:MM" (for <input type="time">)
+  const hhmmToInput = (t: string) => (t && t.length === 4 ? `${t.slice(0, 2)}:${t.slice(2)}` : '');
+  const inputToHhmm = (t: string) => t.replace(':', '');
+  const fmtHHMM = (t: string) => {
+    if (!t || t.length !== 4) return t;
+    const h = Number(t.slice(0, 2)), m = t.slice(2);
+    return `${((h + 11) % 12) + 1}:${m} ${h < 12 ? 'AM' : 'PM'}`;
+  };
+  function callHoursFromMeta(raw?: Partial<CallHours> | null): CallHours {
+    if (!raw) return DEFAULT_CALL_HOURS;
+    const weekly = (raw.weekly_operating_hours || []).map((s) => ({
+      day_of_week: String(s.day_of_week || '').toUpperCase(),
+      open_time:   String(s.open_time  || '').replace(':', ''),
+      close_time:  String(s.close_time || '').replace(':', ''),
+    }));
+    return {
+      status:      raw.status === 'ENABLED' ? 'ENABLED' : 'DISABLED',
+      timezone_id: raw.timezone_id || 'Asia/Kolkata',
+      // Meta returns nothing until hours are set once — prefill a sensible week
+      weekly_operating_hours: weekly.length ? weekly : DEFAULT_CALL_HOURS.weekly_operating_hours,
+      holiday_schedule: (raw.holiday_schedule || []).map((h) => ({
+        date: h.date || '', start_time: String(h.start_time || '0000').replace(':', ''), end_time: String(h.end_time || '2359').replace(':', ''),
+      })),
+    };
+  }
+  // Is the business open for calls right now (in the configured timezone)?
+  function callHoursOpenNow(ch: CallHours): boolean | null {
+    if (ch.status !== 'ENABLED') return null;
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: ch.timezone_id, weekday: 'long', hour: '2-digit', minute: '2-digit', hour12: false,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+      }).formatToParts(new Date());
+      const get = (t: string) => parts.find((p) => p.type === t)?.value || '';
+      const day  = get('weekday').toUpperCase();
+      const hour = get('hour') === '24' ? '00' : get('hour').padStart(2, '0'); // en-US 24h can render midnight as "24"
+      const now  = `${hour}${get('minute').padStart(2, '0')}`;
+      const date = `${get('year')}-${get('month')}-${get('day')}`;
+      const hol  = ch.holiday_schedule.find((h) => h.date === date);
+      if (hol && now >= hol.start_time && now <= hol.end_time) return false;
+      return ch.weekly_operating_hours.some((s) => s.day_of_week === day && now >= s.open_time && now < s.close_time);
+    } catch { return null; }
+  }
+  function updateCallHours(patch: Partial<CallHours>) {
+    setCallHours((c) => ({ ...c, ...patch }));
+    setCallHoursDirty(true);
+  }
+  function setDaySlots(day: string, slots: { open_time: string; close_time: string }[]) {
+    const others = callHours.weekly_operating_hours.filter((s) => s.day_of_week !== day);
+    updateCallHours({ weekly_operating_hours: [...others, ...slots.map((s) => ({ day_of_week: day, ...s }))] });
+  }
+  function copyDayToAll(day: string) {
+    const src = callHours.weekly_operating_hours.filter((s) => s.day_of_week === day);
+    if (!src.length) return;
+    const activeDays = new Set(callHours.weekly_operating_hours.map((s) => s.day_of_week));
+    const next: CallHourSlot[] = [];
+    for (const d of CALL_DAYS) {
+      if (d === day || activeDays.has(d)) src.forEach((s) => next.push({ ...s, day_of_week: d }));
+    }
+    updateCallHours({ weekly_operating_hours: next });
+    toast.success(`Copied ${day.slice(0, 3)} hours to all active days`);
+  }
 
   // Failed message webhooks
   const [fwList, setFwList]           = useState<FailedWebhook[]>([]);
@@ -430,6 +523,8 @@ export default function SettingsPage() {
         setCallingInfo(r.data || null);
         setMissedTpl(r.data?.missed_call_template || '');
         setRetentionDays(Number(r.data?.recording_retention_days ?? 90));
+        setCallHours(callHoursFromMeta(r.data?.calling?.call_hours));
+        setCallHoursDirty(false);
       })
       .catch(() => {})
       .finally(() => setCallingLoading(false));
@@ -463,6 +558,34 @@ export default function SettingsPage() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed');
     } finally { setCallingSaving(false); }
+  }
+
+  async function saveCallHours(next: CallHours = callHours) {
+    if (next.status === 'ENABLED' && next.weekly_operating_hours.length === 0) {
+      toast.error('Add at least one day with hours first');
+      return;
+    }
+    for (const s of next.weekly_operating_hours) {
+      if (!s.open_time || !s.close_time || s.open_time >= s.close_time) {
+        toast.error(`${s.day_of_week.slice(0, 3)}: opening time must be before closing time`);
+        return;
+      }
+    }
+    setCallingSaving(true);
+    try {
+      await apiFetch('/api/calling/settings', { method: 'PUT', body: JSON.stringify({ call_hours: next }) });
+      toast.success(next.status === 'ENABLED'
+        ? 'Calling hours saved — customers can call only within these hours'
+        : 'Calling hours off — customers can call any time');
+      loadCalling();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed', { duration: 7000 });
+    } finally { setCallingSaving(false); }
+  }
+  function toggleCallHours() {
+    const next: CallHours = { ...callHours, status: callHours.status === 'ENABLED' ? 'DISABLED' : 'ENABLED' };
+    setCallHours(next);
+    saveCallHours(next);
   }
 
   async function toggleRecordCalls() {
@@ -1562,6 +1685,162 @@ Response:
                   </div>
                 )}
               </div>
+
+              {/* Calling hours (calling time) */}
+              {(() => {
+                const hoursOn = callHours.status === 'ENABLED';
+                const openNow = callHoursOpenNow(callHours);
+                return (
+                  <div className="card space-y-3">
+                    <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+                      <Clock size={18} className="text-whatsapp-teal" />
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-gray-900">Calling hours</h3>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          Set the time window when customers can call you. Outside these hours WhatsApp greys out the
+                          call button and tells the customer you're closed — no missed calls pile up overnight.
+                        </p>
+                      </div>
+                      {hoursOn && openNow !== null && (
+                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${
+                          openNow ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                          {openNow ? '● Open now' : '● Closed now'}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-gray-800">Restrict calls to business hours</p>
+                        <p className="text-xs text-gray-400 mt-1">
+                          Off = customers can call 24×7. On = only during the schedule below.
+                        </p>
+                      </div>
+                      <button onClick={toggleCallHours} disabled={callingSaving || !enabled}
+                        title={!enabled ? 'Enable calling first' : hoursOn ? 'Click to allow calls any time' : 'Click to restrict to business hours'}
+                        className="flex-shrink-0 mt-0.5 disabled:opacity-50 transition-opacity">
+                        {hoursOn
+                          ? <ToggleRight size={36} className="text-whatsapp-teal" />
+                          : <ToggleLeft  size={36} className="text-gray-300" />}
+                      </button>
+                    </div>
+
+                    <div className={`space-y-3 pt-3 border-t border-gray-100 ${hoursOn ? '' : 'opacity-60'}`}>
+                      {/* Timezone */}
+                      <div className="flex items-center gap-2">
+                        <label className="text-sm text-gray-700 flex-1">Timezone</label>
+                        <select value={callHours.timezone_id}
+                          onChange={(e) => updateCallHours({ timezone_id: e.target.value })}
+                          className="input w-64 text-sm">
+                          {!TIMEZONES.includes(callHours.timezone_id) && <option value={callHours.timezone_id}>{callHours.timezone_id}</option>}
+                          {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>)}
+                        </select>
+                      </div>
+
+                      {/* Weekly schedule */}
+                      <div className="space-y-1.5">
+                        {CALL_DAYS.map((day) => {
+                          const slots = callHours.weekly_operating_hours.filter((s) => s.day_of_week === day);
+                          const active = slots.length > 0;
+                          return (
+                            <div key={day} className="flex items-start gap-3 py-1.5 border-b border-gray-50 last:border-0">
+                              <label className="flex items-center gap-2 w-28 flex-shrink-0 pt-1.5 cursor-pointer select-none">
+                                <input type="checkbox" checked={active}
+                                  onChange={(e) => setDaySlots(day, e.target.checked ? [{ open_time: '0900', close_time: '1800' }] : [])}
+                                  className="accent-whatsapp-teal" />
+                                <span className={`text-sm ${active ? 'text-gray-800 font-medium' : 'text-gray-400'}`}>
+                                  {day.charAt(0) + day.slice(1).toLowerCase()}
+                                </span>
+                              </label>
+                              <div className="flex-1 min-w-0">
+                                {!active && <p className="text-xs text-gray-400 pt-2">Closed</p>}
+                                {slots.map((s, i) => (
+                                  <div key={i} className="flex items-center gap-2 mb-1.5 flex-wrap">
+                                    <input type="time" value={hhmmToInput(s.open_time)}
+                                      onChange={(e) => { const n = [...slots]; n[i] = { ...s, open_time: inputToHhmm(e.target.value) }; setDaySlots(day, n); }}
+                                      className="input w-32 text-sm py-1" />
+                                    <span className="text-xs text-gray-400">to</span>
+                                    <input type="time" value={hhmmToInput(s.close_time)}
+                                      onChange={(e) => { const n = [...slots]; n[i] = { ...s, close_time: inputToHhmm(e.target.value) }; setDaySlots(day, n); }}
+                                      className="input w-32 text-sm py-1" />
+                                    <span className="text-[11px] text-gray-400 hidden sm:inline">
+                                      {fmtHHMM(s.open_time)} – {fmtHHMM(s.close_time)}
+                                    </span>
+                                    {slots.length > 1 && (
+                                      <button type="button" onClick={() => setDaySlots(day, slots.filter((_, j) => j !== i))}
+                                        className="p-1 text-gray-400 hover:text-red-500" title="Remove slot"><X size={13} /></button>
+                                    )}
+                                  </div>
+                                ))}
+                                {active && (
+                                  <div className="flex items-center gap-3">
+                                    {slots.length < 2 && (
+                                      <button type="button"
+                                        onClick={() => setDaySlots(day, [...slots, { open_time: '1900', close_time: '2100' }])}
+                                        className="text-[11px] text-whatsapp-teal hover:underline flex items-center gap-0.5">
+                                        <Plus size={11} /> Add a break / second slot
+                                      </button>
+                                    )}
+                                    <button type="button" onClick={() => copyDayToAll(day)}
+                                      className="text-[11px] text-gray-400 hover:text-gray-600 flex items-center gap-0.5">
+                                      <Copy size={11} /> Copy to all active days
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Holidays */}
+                      <div className="pt-2 border-t border-gray-100">
+                        <p className="text-sm font-medium text-gray-800">Holidays (closed all day)</p>
+                        <p className="text-xs text-gray-400 mt-0.5 mb-2">Calls are blocked on these dates even if the weekday is normally open.</p>
+                        {callHours.holiday_schedule.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mb-2">
+                            {callHours.holiday_schedule.map((h) => (
+                              <span key={h.date} className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 text-xs px-2 py-1 rounded-lg">
+                                {new Date(h.date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                {(h.start_time !== '0000' || h.end_time !== '2359') && (
+                                  <span className="text-gray-400">({fmtHHMM(h.start_time)}–{fmtHHMM(h.end_time)})</span>
+                                )}
+                                <button type="button" title="Remove"
+                                  onClick={() => updateCallHours({ holiday_schedule: callHours.holiday_schedule.filter((x) => x.date !== h.date) })}
+                                  className="text-gray-400 hover:text-red-500"><X size={12} /></button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <input type="date" value={newHoliday} onChange={(e) => setNewHoliday(e.target.value)}
+                            className="input w-44 text-sm py-1" />
+                          <button type="button" disabled={!newHoliday}
+                            onClick={() => {
+                              if (callHours.holiday_schedule.some((h) => h.date === newHoliday)) { toast.error('Already added'); return; }
+                              updateCallHours({ holiday_schedule: [...callHours.holiday_schedule, { date: newHoliday, start_time: '0000', end_time: '2359' }].sort((a, b) => a.date.localeCompare(b.date)) });
+                              setNewHoliday('');
+                            }}
+                            className="btn-secondary text-sm flex items-center gap-1 disabled:opacity-50">
+                            <Plus size={13} /> Add holiday
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Save */}
+                      <div className="flex items-center justify-between gap-3 pt-2 border-t border-gray-100">
+                        <p className="text-[11px] text-gray-400">
+                          {callHoursDirty ? 'Unsaved changes — click Save to push to WhatsApp.' : 'Saved on WhatsApp. Changes may take a few minutes to reflect for customers.'}
+                        </p>
+                        <button onClick={() => saveCallHours()} disabled={callingSaving || !enabled}
+                          className="btn-primary flex items-center gap-1.5 text-sm">
+                          {callingSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save hours
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Call recording */}
               <div className="card space-y-3">

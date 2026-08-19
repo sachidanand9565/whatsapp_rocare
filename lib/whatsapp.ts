@@ -409,7 +409,7 @@ export interface CallingSettings {
   call_hours?: {
     status:                  'ENABLED' | 'DISABLED';
     timezone_id:             string;
-    weekly_operating_hours:  { day_of_week: string; open_time: string; close_time: string }[];
+    weekly_operating_hours?: { day_of_week: string; open_time: string; close_time: string }[];
     holiday_schedule?:       { date: string; start_time: string; end_time: string }[];
   };
 }

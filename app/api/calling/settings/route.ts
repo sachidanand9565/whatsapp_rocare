@@ -1,7 +1,8 @@
 /**
  * GET /api/calling/settings — live calling status from Meta + workspace prefs
  * PUT /api/calling/settings — enable/disable calling on Meta, set call icon
- *                             visibility, missed-call auto-reply template
+ *                             visibility, call hours (calling time window),
+ *                             missed-call auto-reply template, recording prefs
  *
  * WhatsApp Business Calling API needs the phone number on messaging tier
  * ≥ 2000/day; below that Meta rejects enabling and we surface the reason.
@@ -13,6 +14,72 @@ import { apiSuccess, apiError } from '@/lib/utils';
 import { getCallingSettings, updateCallingSettings, CallingSettings } from '@/lib/whatsapp';
 import { s3Configured } from '@/lib/s3';
 import { RowDataPacket } from 'mysql2';
+
+// ── Call hours (Meta-native "calling time") ──
+// Meta stores these on the phone number and hides/blocks the call button
+// outside the window automatically. Times travel as "HHMM" (24h) — the UI
+// sends "HH:MM" from <input type="time">, so accept both.
+type CallHoursInput = {
+  status?: 'ENABLED' | 'DISABLED' | boolean;
+  timezone_id?: string;
+  weekly_operating_hours?: { day_of_week?: string; open_time?: string; close_time?: string }[];
+  holiday_schedule?: { date?: string; start_time?: string; end_time?: string }[];
+};
+const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+
+function toHHMM(v: unknown): string | null {
+  const s = String(v ?? '').trim().replace(':', '');
+  if (!/^\d{4}$/.test(s)) return null;
+  const h = Number(s.slice(0, 2)), m = Number(s.slice(2));
+  if (h > 23 || m > 59) return null;
+  return s;
+}
+function isValidTimezone(tz: string): boolean {
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; } catch { return false; }
+}
+
+function normalizeCallHours(input: CallHoursInput | undefined):
+  { value: NonNullable<CallingSettings['call_hours']> } | { error: string } {
+  if (!input || typeof input !== 'object') return { error: 'call_hours must be an object' };
+  const enabled = input.status === true || input.status === 'ENABLED';
+  const timezone_id = String(input.timezone_id || 'Asia/Kolkata').trim();
+  if (!isValidTimezone(timezone_id)) return { error: `Unknown timezone "${timezone_id}"` };
+
+  const weekly: { day_of_week: string; open_time: string; close_time: string }[] = [];
+  for (const slot of input.weekly_operating_hours || []) {
+    const day = String(slot?.day_of_week || '').toUpperCase();
+    if (!DAYS.includes(day)) return { error: `Invalid day "${slot?.day_of_week}"` };
+    const open = toHHMM(slot?.open_time), close = toHHMM(slot?.close_time);
+    if (!open || !close) return { error: `Invalid time for ${day} — use HH:MM (24h)` };
+    if (open >= close) return { error: `${day}: opening time must be before closing time` };
+    weekly.push({ day_of_week: day, open_time: open, close_time: close });
+  }
+  // Meta accepts at most 2 slots per day
+  for (const d of DAYS) {
+    if (weekly.filter((w) => w.day_of_week === d).length > 2) return { error: `${d}: max 2 time slots per day` };
+  }
+  if (enabled && weekly.length === 0) return { error: 'Add at least one day with calling hours, or turn call hours off' };
+
+  const holidays: { date: string; start_time: string; end_time: string }[] = [];
+  for (const h of input.holiday_schedule || []) {
+    const date = String(h?.date || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: `Invalid holiday date "${h?.date}" — use YYYY-MM-DD` };
+    const start = toHHMM(h?.start_time ?? '0000'), end = toHHMM(h?.end_time ?? '2359');
+    if (!start || !end || start >= end) return { error: `Holiday ${date}: invalid time range` };
+    holidays.push({ date, start_time: start, end_time: end });
+  }
+
+  // Order by day so Meta / the UI show a tidy week
+  weekly.sort((a, b) => DAYS.indexOf(a.day_of_week) - DAYS.indexOf(b.day_of_week) || a.open_time.localeCompare(b.open_time));
+  const value: NonNullable<CallingSettings['call_hours']> = {
+    status: enabled ? 'ENABLED' : 'DISABLED',
+    timezone_id,
+  };
+  // Turning hours OFF with every day unchecked → just flip status; don't send an empty week
+  if (weekly.length) value.weekly_operating_hours = weekly;
+  if (holidays.length) value.holiday_schedule = holidays;
+  return { value };
+}
 
 // migration-calling.sql adds the calling_* / missed_call_* / record_* columns;
 // until it runs, fall back to the base columns so the page still loads.
@@ -107,6 +174,7 @@ export async function PUT(req: NextRequest) {
     const body = await req.json() as {
       enabled?: boolean;
       call_icon_visibility?: 'DEFAULT' | 'DISABLE_ALL';
+      call_hours?: CallHoursInput;
       missed_call_template?: string | null;
       missed_call_template_lang?: string;
       record_calls?: boolean;
@@ -140,7 +208,7 @@ export async function PUT(req: NextRequest) {
     }
 
     // ── Meta-side calling settings ──
-    if ('enabled' in body || 'call_icon_visibility' in body) {
+    if ('enabled' in body || 'call_icon_visibility' in body || 'call_hours' in body) {
       if (!ws.access_token || !ws.phone_number_id) {
         return apiError('WhatsApp not connected in this workspace', 400);
       }
@@ -152,6 +220,11 @@ export async function PUT(req: NextRequest) {
         if (body.enabled) calling.callback_permission_status = 'ENABLED';
       }
       if (body.call_icon_visibility) calling.call_icon_visibility = body.call_icon_visibility;
+      if ('call_hours' in body) {
+        const parsed = normalizeCallHours(body.call_hours);
+        if ('error' in parsed) return apiError(parsed.error, 400);
+        calling.call_hours = parsed.value;
+      }
 
       try {
         await updateCallingSettings(ws.access_token as string, ws.phone_number_id as string, calling);
