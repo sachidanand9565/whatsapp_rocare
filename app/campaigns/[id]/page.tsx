@@ -10,7 +10,7 @@ import {
 import toast from 'react-hot-toast';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import MediaLibrary, { type MediaItem as MLItem } from '@/app/components/MediaLibrary';
-import { decryptId, encryptId } from '@/lib/idCrypt';
+import { decryptId } from '@/lib/idCrypt';
 
 // Stored datetimes are UTC ("YYYY-MM-DD HH:mm:ss"). Parse as UTC, display in IST.
 function toUtcDate(s: string): Date {
@@ -1747,9 +1747,11 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
   -H "Content-Type: application/json" \\
   -d '${JSON.stringify(bodyObj, null, 2)}'`;
 
+  // Campaign NAME in the URL — stable across renders (the old encrypted id
+  // token was salted, so it looked different every time the page opened).
   const bulkEndpoint = typeof window !== 'undefined'
-    ? `${window.location.origin}/api/campaigns/${encryptId(campaign.id)}/send`
-    : `/api/campaigns/${campaign.id}/send`;
+    ? `${window.location.origin}/api/campaigns/${encodeURIComponent(campaign.name)}/send`
+    : `/api/campaigns/${encodeURIComponent(campaign.name)}/send`;
 
   const bulkBodyObj = {
     apiKey:   wsApiKey || 'YOUR_WORKSPACE_API_KEY',

@@ -23,6 +23,7 @@ import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 import { query, execute } from '@/lib/db';
 import { drainCampaign } from '@/lib/campaignProcessor';
+import { resolveCampaignId } from '@/lib/resolveCampaign';
 import { apiSuccess, apiError, normalizePhone, utcNow } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 
@@ -75,8 +76,9 @@ export async function POST(
       payload = await requireAuth(req);
     }
 
-    const campaignId = Number(params.id);
-    if (!campaignId) return apiError('Invalid campaign ID', 400);
+    // Accept a numeric ID, a legacy encrypted token, or the campaign NAME
+    const campaignId = await resolveCampaignId(params.id, payload.workspaceId);
+    if (!campaignId) return apiError('Campaign not found — use the campaign name (URL-encoded) or its ID in the URL', 404);
 
     const messages = rawBody.messages as BulkRow[] | undefined;
     if (!Array.isArray(messages) || messages.length === 0) {
