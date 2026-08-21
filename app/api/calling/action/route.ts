@@ -17,6 +17,7 @@ import { query, execute } from '@/lib/db';
 import { apiSuccess, apiError, normalizePhone } from '@/lib/utils';
 import { callAction, startBusinessCall } from '@/lib/whatsapp';
 import { logCallStart, logCallAnswered, logCallRejected } from '@/lib/callLogs';
+import { emitSSE } from '@/lib/sse';
 import { RowDataPacket } from 'mysql2';
 
 const ACTIONS = ['reject', 'terminate', 'pre_accept', 'accept', 'connect'] as const;
@@ -92,6 +93,23 @@ export async function POST(req: NextRequest) {
     // Attribute the call to this agent for the Calls page
     if (action === 'accept') await logCallAnswered(body.call_id, payload.userId);
     if (action === 'reject') await logCallRejected(body.call_id, payload.userId);
+
+    // Tell every other open panel to stop ringing for this call:
+    //  - pre_accept fires the moment an agent clicks Answer (earliest signal),
+    //    accept repeats it as a safety net — the client handler is idempotent.
+    //  - reject ends the call for everyone; broadcast immediately instead of
+    //    waiting for Meta's terminate webhook.
+    if (action === 'pre_accept' || action === 'accept') {
+      const u = await query<RowDataPacket[]>(
+        'SELECT name FROM users WHERE id = ? LIMIT 1', [payload.userId]
+      ).catch(() => [] as RowDataPacket[]);
+      emitSSE({
+        type: 'call_taken', workspaceId: payload.workspaceId,
+        callId: body.call_id, agentName: (u[0]?.name as string) || undefined,
+      });
+    } else if (action === 'reject') {
+      emitSSE({ type: 'call_ended', workspaceId: payload.workspaceId, callId: body.call_id });
+    }
     return apiSuccess({ done: true });
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);

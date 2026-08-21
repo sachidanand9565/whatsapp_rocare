@@ -843,6 +843,7 @@ export default function InboxPage() {
   const [callMuted, setCallMuted]   = useState(false);
   const callSessionRef = useRef<WhatsAppCallSession | null>(null);
   const activeCallRef  = useRef<ActiveCall | null>(null);
+  const incomingCallRef = useRef<IncomingCall | null>(null);
   const lastSdpRef     = useRef<string>('');   // our SDP answer, re-sent with 'accept'
   const recordCallsRef = useRef(false);        // Settings → Calling → Record calls
   useEffect(() => {
@@ -851,6 +852,7 @@ export default function InboxPage() {
       .catch(() => {});
   }, []);
   useEffect(() => { activeCallRef.current = activeCall; }, [activeCall]);
+  useEffect(() => { incomingCallRef.current = incomingCall; }, [incomingCall]);
   const [showProfileMobile, setShowProfileMobile] = useState(false);
   const [messages, setMessages]     = useState<Message[]>([]);
   const [contactsLoading, setContactsLoading] = useState(true);
@@ -1195,6 +1197,7 @@ export default function InboxPage() {
             callerPhone?: string;
             callId?: string;
             sdp?: string;
+            agentName?: string;
           };
 
           if (data.type === 'incoming_call' && data.callId) {
@@ -1221,6 +1224,13 @@ export default function InboxPage() {
               callSessionRef.current.applyAnswer(data.sdp)
                 .then(() => setActiveCall(prev => prev ? { ...prev, phase: 'connecting' } : prev))
                 .catch((err) => { toast.error('Could not connect audio: ' + (err?.message || err)); endActiveCall(true); });
+            }
+          } else if (data.type === 'call_taken' && data.callId) {
+            // Another agent answered — stop ringing on this panel
+            const cur = incomingCallRef.current;
+            if (cur && cur.callId === data.callId) {
+              setIncomingCall(null);
+              toast(`Call answered by ${data.agentName || 'another agent'}`, { icon: '📞' });
             }
           } else if (data.type === 'call_ended') {
             // Customer hung up / rang out / declined — dismiss popup and tear down any live session
