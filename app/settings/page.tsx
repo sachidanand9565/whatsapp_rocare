@@ -1540,6 +1540,27 @@ Response:
   "total_messages": 24
 }`}</pre>
               </div>
+
+              {/* Call recordings for CRM */}
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-600 space-y-2">
+                <p className="font-semibold text-gray-700">Get call recordings by phone (CRM):</p>
+                <pre className="bg-gray-900 text-green-400 rounded p-2 overflow-x-auto leading-relaxed whitespace-pre-wrap">{`GET ${typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.com'}/api/external/call-recordings?phone=919876543210
+Headers:
+  X-API-Key: ${showApiKey ? apiKey : '•'.repeat(24)}
+
+Response:
+{
+  "phone": "919876543210", "contact_name": "Rahul", "total": 2,
+  "calls": [ { "call_id": "wacid...", "direction": "inbound",
+    "status": "completed", "agent": "Priya",
+    "started_at": "2026-08-21 14:03:11", "duration_sec": 184,
+    "recording": { "url": "https://s3...", "seconds": 180 } } ]
+}
+
+Optional: &only_recorded=0 (include calls without recording),
+&limit=50, &expires_in=3600 (recording link lifetime, sec).
+Recording URLs expire — fetch fresh ones on each CRM view.`}</pre>
+              </div>
             </>) : (
               <div className="flex flex-col items-center gap-3 py-4">
                 <p className="text-sm text-gray-400 text-center">No API key yet.</p>
