@@ -18,6 +18,7 @@ import { apiSuccess, apiError, normalizePhone } from '@/lib/utils';
 import { callAction, startBusinessCall } from '@/lib/whatsapp';
 import { logCallStart, logCallAnswered, logCallRejected } from '@/lib/callLogs';
 import { emitSSE } from '@/lib/sse';
+import { clearRinging } from '@/lib/activeCalls';
 import { RowDataPacket } from 'mysql2';
 
 const ACTIONS = ['reject', 'terminate', 'pre_accept', 'accept', 'connect'] as const;
@@ -99,6 +100,9 @@ export async function POST(req: NextRequest) {
     //    accept repeats it as a safety net — the client handler is idempotent.
     //  - reject ends the call for everyone; broadcast immediately instead of
     //    waiting for Meta's terminate webhook.
+    if (action === 'pre_accept' || action === 'accept' || action === 'reject') {
+      clearRinging(payload.workspaceId, body.call_id);
+    }
     if (action === 'pre_accept' || action === 'accept') {
       const u = await query<RowDataPacket[]>(
         'SELECT name FROM users WHERE id = ? LIMIT 1', [payload.userId]

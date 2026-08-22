@@ -181,6 +181,41 @@ export async function ensurePushSubscription(): Promise<void> {
   await apiFetch('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON() }) });
 }
 
+/** Show the incoming-call notification LOCALLY (no server round-trip).
+ *  Android pages can't use `new Notification()` — only the service worker
+ *  can display one — so prefer the SW registration; fall back on desktop.
+ *  Same tag as the server push → the OS shows ONE notification, not two. */
+function showCallNotification(callId: string, body: string) {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const opts = {
+    body, tag: `call-${callId}`, renotify: true,
+    vibrate: [200, 100, 200, 100, 200],
+    requireInteraction: true,           // stay visible for the whole ring
+    data: { url: '/inbox' },
+  } as NotificationOptions;
+  const viaSW = 'serviceWorker' in navigator
+    ? navigator.serviceWorker.getRegistration().then((reg) => {
+        if (!reg) throw new Error('no sw');
+        return reg.showNotification('📞 Incoming WhatsApp call', opts);
+      })
+    : Promise.reject(new Error('no sw support'));
+  viaSW.catch(() => {
+    try {
+      const n = new Notification('📞 Incoming WhatsApp call', opts);
+      n.onclick = () => { window.focus(); n.close(); };
+    } catch { /* Android page context — SW path was the only option */ }
+  });
+}
+
+/** Close call notifications (ours or the server-pushed one — same SW registration). */
+function closeCallNotification(callId?: string) {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.getRegistration()
+    .then((reg) => reg?.getNotifications(callId ? { tag: `call-${callId}` } : undefined))
+    .then((ns) => ns?.forEach((n) => { if ((n.tag || '').startsWith('call-')) n.close(); }))
+    .catch(() => { /* ignore */ });
+}
+
 export default function CallManager() {
   const pathname = usePathname();
   const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
@@ -332,17 +367,9 @@ export default function CallManager() {
               startedAt: Date.now(),
               sdp:       data.sdp,
             });
-            try {
-              if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-                // Same tag as the server push for this call → OS shows ONE
-                // notification, not two, when both paths fire.
-                const n = new Notification('📞 Incoming WhatsApp call', {
-                  body: data.callerName || data.callerPhone || '',
-                  tag:  `call-${data.callId}`,
-                });
-                n.onclick = () => { window.focus(); n.close(); };
-              }
-            } catch { /* notifications unsupported */ }
+            // Local notification — instant even when the server push is being
+            // throttled by the phone's battery saver (tab alive = we can show it)
+            showCallNotification(data.callId, `${data.callerName || data.callerPhone || ''} is calling — tap to answer`);
           } else if (data.type === 'call_answer' && data.callId && data.sdp) {
             // Outbound call: customer picked up — finish WebRTC with their answer
             const ac = activeCallRef.current;
@@ -353,6 +380,7 @@ export default function CallManager() {
             }
           } else if (data.type === 'call_taken' && data.callId) {
             // Another agent answered — stop ringing on this panel
+            closeCallNotification(data.callId);
             const cur = incomingCallRef.current;
             if (cur && cur.callId === data.callId) {
               setIncomingCall(null);
@@ -360,6 +388,7 @@ export default function CallManager() {
             }
           } else if (data.type === 'call_ended') {
             // Customer hung up / rang out / declined — dismiss popup and tear down any live session
+            closeCallNotification(data.callId);
             setIncomingCall(prev => (prev && (!data.callId || prev.callId === data.callId)) ? null : prev);
             const ac = activeCallRef.current;
             if (ac && (!data.callId || ac.callId === data.callId)) endActiveCall(false);
@@ -378,8 +407,35 @@ export default function CallManager() {
     }
     connectRef.current = connect;
     connect();
+    checkRingingRef.current();   // fresh panel: pick up a ring already in progress
     // No per-navigation cleanup — the connection must outlive route changes.
   }, [pathname]);
+
+  // A panel opened AFTER the ring started (push-notification tap, fresh tab)
+  // missed the SSE event — ask the server if a call is ringing right now.
+  async function checkRinging() {
+    if (activeCallRef.current || incomingCallRef.current) return;
+    if (!localStorage.getItem('token')) return;
+    try {
+      const r = await apiFetch('/api/calling/ringing');
+      const ring = r.data?.ringing as {
+        call_id: string; contact_id: number | null; caller_name: string;
+        caller_phone: string; sdp: string | null; started_at: number;
+      } | null;
+      if (ring && !activeCallRef.current && !incomingCallRef.current) {
+        setIncomingCall({
+          callId:    ring.call_id,
+          contactId: ring.contact_id ?? undefined,
+          name:      ring.caller_name || '',
+          phone:     ring.caller_phone || '',
+          startedAt: ring.started_at || Date.now(),
+          sdp:       ring.sdp || undefined,
+        });
+      }
+    } catch { /* transient */ }
+  }
+  const checkRingingRef = useRef(checkRinging);
+  checkRingingRef.current = checkRinging;
 
   // Mobile browsers kill background SSE connections. The moment the tab is
   // visible again, reconnect immediately instead of waiting for the retry
@@ -392,9 +448,15 @@ export default function CallManager() {
         esRef.current = null;
         connectRef.current?.();
       }
+      // Even if SSE survived, the ring may have arrived while suspended
+      checkRingingRef.current();
     }
     document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
+    window.addEventListener('pageshow', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pageshow', onVisible);
+    };
   }, []);
 
   useEffect(() => () => {
@@ -416,6 +478,7 @@ export default function CallManager() {
     } finally {
       setCallBusy(false);
       setIncomingCall(null);
+      closeCallNotification();
     }
   }
 
@@ -445,6 +508,7 @@ export default function CallManager() {
       const sdpAnswer = await session.answerOffer(call.sdp);
       lastSdpRef.current = sdpAnswer;
       setIncomingCall(null);
+      closeCallNotification(call.callId);
       setActiveCall({
         callId: call.callId, contactId: call.contactId, name: call.name, phone: call.phone,
         direction: 'inbound', phase: 'connecting', startedAt: Date.now(),

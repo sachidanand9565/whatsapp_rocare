@@ -9,6 +9,7 @@ import { normalizePhone, utcNow, unixToUtc } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { emitSSE } from '@/lib/sse';
 import { sendPushToWorkspace } from '@/lib/push';
+import { setRinging, clearRinging } from '@/lib/activeCalls';
 import { enqueueFlowJob } from '@/lib/queue';
 import { logCallStart, logCallEnded } from '@/lib/callLogs';
 
@@ -546,6 +547,11 @@ export async function POST(req: NextRequest) {
       // Inbound: ringing — push to open inbox tabs with the caller's SDP offer so
       // the softphone can answer (pre_accept/accept via /api/calling/action)
       const callerName = (contactRow[0].name as string) || call.profileName || phone;
+      // Remember the ring so panels opened AFTER this moment (push-notification
+      // tap) can still show the popup — served by GET /api/calling/ringing.
+      setRinging(workspaceId, {
+        callId: call.call_id, contactId, callerName, callerPhone: phone, sdp: call.sdp,
+      });
       emitSSE({
         type: 'incoming_call', workspaceId, contactId,
         callId: call.call_id, callerPhone: phone,
@@ -564,6 +570,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (call.event === 'terminate') {
+      clearRinging(workspaceId, call.call_id);
       const answered = call.status === 'COMPLETED' && (call.duration || 0) > 0;
       const callContent = JSON.stringify({
         __type:    'call',
