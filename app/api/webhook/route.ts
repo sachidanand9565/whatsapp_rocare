@@ -8,6 +8,7 @@ import { parseWebhookBody, markAsRead, sendTemplateMessage, TemplateStatusUpdate
 import { normalizePhone, utcNow, unixToUtc } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { emitSSE } from '@/lib/sse';
+import { sendPushToWorkspace } from '@/lib/push';
 import { enqueueFlowJob } from '@/lib/queue';
 import { logCallStart, logCallEnded } from '@/lib/callLogs';
 
@@ -544,11 +545,20 @@ export async function POST(req: NextRequest) {
       }
       // Inbound: ringing — push to open inbox tabs with the caller's SDP offer so
       // the softphone can answer (pre_accept/accept via /api/calling/action)
+      const callerName = (contactRow[0].name as string) || call.profileName || phone;
       emitSSE({
         type: 'incoming_call', workspaceId, contactId,
         callId: call.call_id, callerPhone: phone,
-        callerName: (contactRow[0].name as string) || call.profileName || phone,
+        callerName,
         sdp: call.sdp, callDirection: 'inbound',
+      });
+      // Web Push: ring devices whose panel tab is closed/backgrounded (mobile).
+      // Fire-and-forget — must never delay the webhook ACK.
+      void sendPushToWorkspace(workspaceId, {
+        title: '📞 Incoming WhatsApp call',
+        body:  `${callerName} (+${phone}) is calling — open the panel to answer`,
+        tag:   `call-${call.call_id}`,
+        url:   '/inbox',
       });
       continue;
     }

@@ -6,10 +6,11 @@ import {
   Webhook, RefreshCw, Plus, Trash2, ToggleLeft, ToggleRight,
   Facebook, ChevronRight, X, Phone, Loader2, Key, RotateCcw, Zap,
   MessageSquare, Image, FileText, Music, MapPin, MousePointerClick, PauseCircle,
-  Database, Globe, User, Lock, Pencil, PhoneCall, Clock,
+  Database, Globe, User, Lock, Pencil, PhoneCall, Clock, Bell,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { callHoursProfileLine } from '@/lib/call-hours';
+import { ensurePushSubscription } from '@/app/components/CallManager';
 
 // ── FB SDK type shim ──────────────────────────────────────────
 declare global {
@@ -360,6 +361,32 @@ export default function SettingsPage() {
   const [callHours, setCallHours]           = useState<CallHours>(DEFAULT_CALL_HOURS);
   const [callHoursDirty, setCallHoursDirty] = useState(false);
   const [hoursOnProfile, setHoursOnProfile] = useState(false);
+  // Device push notifications (ring on mobile / closed tab)
+  const [pushPerm, setPushPerm] = useState<'unsupported' | 'default' | 'granted' | 'denied'>('default');
+  const [pushBusy, setPushBusy] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || typeof Notification === 'undefined') {
+      setPushPerm('unsupported');
+    } else {
+      setPushPerm(Notification.permission as 'default' | 'granted' | 'denied');
+    }
+  }, []);
+  async function enableDevicePush() {
+    setPushBusy(true);
+    try {
+      const perm = await Notification.requestPermission();
+      setPushPerm(perm as 'granted' | 'denied' | 'default');
+      if (perm !== 'granted') {
+        toast.error('Notifications blocked — allow them in the browser site settings');
+        return;
+      }
+      await ensurePushSubscription();
+      toast.success('This device will now ring for incoming WhatsApp calls');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not enable notifications', { duration: 7000 });
+    } finally { setPushBusy(false); }
+  }
   const [newHoliday, setNewHoliday]         = useState('');
   const TIMEZONES: string[] = (() => {
     try {
@@ -1979,6 +2006,40 @@ Recording URLs expire — fetch fresh ones on each CRM view.`}</pre>
                 <p className="text-[11px] text-gray-400">
                   Tip: use a template without body variables (e.g. "We missed your call — reply here and our team will get back to you").
                 </p>
+              </div>
+
+              {/* Device push notifications (mobile) */}
+              <div className="card space-y-3">
+                <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+                  <Bell size={18} className="text-whatsapp-teal" />
+                  <div>
+                    <h3 className="font-semibold text-gray-900">Call alerts on this device</h3>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Get a system notification when a customer calls — works even if this tab is in the background
+                      or closed (mobile browsers included). Tap the notification to open the panel and answer.
+                    </p>
+                  </div>
+                </div>
+                {pushPerm === 'unsupported' ? (
+                  <p className="text-xs text-amber-600">This browser doesn't support push notifications.</p>
+                ) : pushPerm === 'denied' ? (
+                  <p className="text-xs text-amber-600">
+                    Notifications are blocked for this site — enable them from the browser's site settings (lock icon in the address bar), then retry.
+                  </p>
+                ) : (
+                  <div className="flex items-center justify-between gap-4">
+                    <p className="text-xs text-gray-500 flex-1">
+                      {pushPerm === 'granted'
+                        ? 'Enabled on this device. Each agent enables it once per device/browser they use.'
+                        : 'Enable once per device — every agent does this on the phone/browser they answer calls from.'}
+                    </p>
+                    <button onClick={enableDevicePush} disabled={pushBusy}
+                      className="btn-primary flex items-center gap-1.5 text-sm flex-shrink-0">
+                      {pushBusy ? <Loader2 size={14} className="animate-spin" /> : <Bell size={14} />}
+                      {pushPerm === 'granted' ? 'Re-sync this device' : 'Enable on this device'}
+                    </button>
+                  </div>
+                )}
               </div>
             </>);
           })()}

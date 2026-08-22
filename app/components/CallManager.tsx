@@ -82,7 +82,7 @@ function IncomingCallPopup({ call, onDecline, onAnswer, onOpenChat, busy }: {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-start justify-center pt-16 pointer-events-none">
-      <div className="pointer-events-auto w-[340px] rounded-2xl shadow-2xl border border-emerald-700/40 overflow-hidden animate-[pulse_2s_ease-in-out_infinite]"
+      <div className="pointer-events-auto w-[340px] max-w-[calc(100vw-24px)] rounded-2xl shadow-2xl border border-emerald-700/40 overflow-hidden animate-[pulse_2s_ease-in-out_infinite]"
         style={{ background: 'linear-gradient(160deg,#064e3b 0%,#065f46 60%,#047857 100%)' }}>
         <div className="px-5 pt-5 pb-4 text-white">
           <p className="text-[11px] uppercase tracking-widest text-emerald-200 flex items-center gap-1.5">
@@ -160,6 +160,24 @@ function ActiveCallBar({ call, muted, recording, onToggleMute, onHangup }: {
   );
 }
 
+/** Register the SW and sync this browser's push subscription with the server.
+ *  Requires Notification.permission === 'granted'. Shared with Settings → Calling. */
+export async function ensurePushSubscription(): Promise<void> {
+  const reg = await navigator.serviceWorker.register('/sw.js');
+  const keyRes = await apiFetch('/api/push/subscribe');
+  const publicKey = keyRes.data?.public_key as string;
+  if (!publicKey) throw new Error('Push not set up on the server');
+  // base64url → Uint8Array (applicationServerKey format)
+  const pad = '='.repeat((4 - (publicKey.length % 4)) % 4);
+  const raw = atob((publicKey + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  const appKey = new Uint8Array([...raw].map((c) => c.charCodeAt(0)));
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey });
+  }
+  await apiFetch('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON() }) });
+}
+
 export default function CallManager() {
   const pathname = usePathname();
   const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
@@ -180,6 +198,47 @@ export default function CallManager() {
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('wa:call-state', { detail: { active: !!activeCall } }));
   }, [activeCall]);
+
+  // ── Web Push: if this device already granted notifications, keep its
+  // subscription registered so incoming calls ring even with the tab closed.
+  // (First-time enabling is a button in Settings → Calling — permission
+  // prompts need a user gesture, especially on mobile.)
+  const pushSyncedRef = useRef(false);
+  useEffect(() => {
+    if (pushSyncedRef.current) return;
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    if (!localStorage.getItem('token')) return;
+    pushSyncedRef.current = true;
+    ensurePushSubscription().catch(() => { pushSyncedRef.current = false; });
+  }, [pathname]);
+
+  // ── Wake Lock: keep the phone screen on during a live call so mobile
+  // browsers don't throttle the WebRTC audio.
+  const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
+  useEffect(() => {
+    const live = activeCall && activeCall.phase !== 'ending';
+    async function acquire() {
+      try {
+        const nav = navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } };
+        if (!nav.wakeLock) return;
+        wakeLockRef.current = await nav.wakeLock.request('screen');
+      } catch { /* unsupported / low battery — fine */ }
+    }
+    function onVisible() {
+      // The lock is auto-released when the tab hides; re-grab it on return
+      if (document.visibilityState === 'visible' && activeCallRef.current) acquire();
+    }
+    if (live) {
+      acquire();
+      document.addEventListener('visibilitychange', onVisible);
+    }
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      wakeLockRef.current?.release().catch(() => {});
+      wakeLockRef.current = null;
+    };
+  }, [activeCall?.phase === 'active' || activeCall?.phase === 'connecting' || activeCall?.phase === 'ringing']);
 
   // ── SSE: call events only (messages are handled by the pages) ──
   // Connect once a token exists; re-check on every navigation (e.g. right
