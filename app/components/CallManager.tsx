@@ -246,9 +246,14 @@ export default function CallManager() {
   const esRef        = useRef<EventSource | null>(null);
   const retryRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const destroyedRef = useRef(false);
+  const connectRef   = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (esRef.current) return;
+    // Strict-mode dev remounts run cleanup then re-run this effect — reset the
+    // destroyed flag or the connection would never come back (no popup, no ring).
+    destroyedRef.current = false;
+    if (esRef.current && esRef.current.readyState !== EventSource.CLOSED) return;
+    esRef.current = null;
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
     if (!token) return;
 
@@ -330,14 +335,32 @@ export default function CallManager() {
         }
       };
     }
+    connectRef.current = connect;
     connect();
     // No per-navigation cleanup — the connection must outlive route changes.
   }, [pathname]);
+
+  // Mobile browsers kill background SSE connections. The moment the tab is
+  // visible again, reconnect immediately instead of waiting for the retry
+  // timer — so the ringing popup appears as soon as the agent opens the browser.
+  useEffect(() => {
+    function onVisible() {
+      if (document.visibilityState !== 'visible') return;
+      const es = esRef.current;
+      if (!es || es.readyState === EventSource.CLOSED) {
+        esRef.current = null;
+        connectRef.current?.();
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
 
   useEffect(() => () => {
     destroyedRef.current = true;
     if (retryRef.current) clearTimeout(retryRef.current);
     esRef.current?.close();
+    esRef.current = null;
     callSessionRef.current?.close();
   }, []);
 
