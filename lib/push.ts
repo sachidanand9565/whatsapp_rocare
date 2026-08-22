@@ -71,17 +71,21 @@ export async function deleteSubscription(endpoint: string) {
  */
 export async function sendPushToWorkspace(
   workspaceId: number,
-  payload: { title: string; body?: string; tag?: string; url?: string }
-): Promise<void> {
-  if (tableMissing()) return;
+  payload: { title: string; body?: string; tag?: string; url?: string },
+  opts?: { userId?: number }
+): Promise<{ devices: number }> {
+  if (tableMissing()) return { devices: 0 };
   try {
     const vapid = await getVapidKeys();
-    if (!vapid) return;
+    if (!vapid) return { devices: 0 };
     const subs = await query<RowDataPacket[]>(
-      'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE workspace_id = ?',
-      [workspaceId]
+      `SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE workspace_id = ?${opts?.userId ? ' AND user_id = ?' : ''}`,
+      opts?.userId ? [workspaceId, opts.userId] : [workspaceId]
     );
-    if (subs.length === 0) return;
+    if (subs.length === 0) {
+      console.warn(`[push] no subscribed devices for workspace ${workspaceId} — nothing sent`);
+      return { devices: 0 };
+    }
 
     const json = JSON.stringify(payload);
     await Promise.all(subs.map(async (s) => {
@@ -104,7 +108,9 @@ export async function sendPushToWorkspace(
         else console.warn('[push] send failed:', code || (e as Error).message);
       }
     }));
+    return { devices: subs.length };
   } catch (e) {
     if (!noteMissing(e)) console.warn('[push]', (e as Error).message);
+    return { devices: 0 };
   }
 }

@@ -372,6 +372,17 @@ export default function SettingsPage() {
       setPushPerm(Notification.permission as 'default' | 'granted' | 'denied');
     }
   }, []);
+  async function sendTestPush() {
+    setPushBusy(true);
+    try {
+      const r = await apiFetch('/api/push/test', { method: 'POST', body: JSON.stringify({}) });
+      const n = Number(r.data?.devices || 0);
+      if (n === 0) toast.error('No subscribed device found — click "Enable on this device" first');
+      else toast.success(`Test sent to ${n} device${n > 1 ? 's' : ''} — check your notification tray. Nothing shown? Check Windows/phone notification settings for your browser.`, { duration: 9000 });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Test failed');
+    } finally { setPushBusy(false); }
+  }
   async function enableDevicePush() {
     setPushBusy(true);
     try {
@@ -2033,11 +2044,18 @@ Recording URLs expire — fetch fresh ones on each CRM view.`}</pre>
                         ? 'Enabled on this device. Each agent enables it once per device/browser they use.'
                         : 'Enable once per device — every agent does this on the phone/browser they answer calls from.'}
                     </p>
-                    <button onClick={enableDevicePush} disabled={pushBusy}
-                      className="btn-primary flex items-center gap-1.5 text-sm flex-shrink-0">
-                      {pushBusy ? <Loader2 size={14} className="animate-spin" /> : <Bell size={14} />}
-                      {pushPerm === 'granted' ? 'Re-sync this device' : 'Enable on this device'}
-                    </button>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {pushPerm === 'granted' && (
+                        <button onClick={sendTestPush} disabled={pushBusy} className="btn-secondary text-sm">
+                          Send test
+                        </button>
+                      )}
+                      <button onClick={enableDevicePush} disabled={pushBusy}
+                        className="btn-primary flex items-center gap-1.5 text-sm">
+                        {pushBusy ? <Loader2 size={14} className="animate-spin" /> : <Bell size={14} />}
+                        {pushPerm === 'granted' ? 'Re-sync this device' : 'Enable on this device'}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

@@ -13,7 +13,6 @@ self.addEventListener('push', (event) => {
     body:  data.body || '',
     tag:   data.tag || undefined,          // same tag → re-ring replaces, no pile-up
     renotify: !!data.tag,
-    icon:  '/favicon.ico',
     data:  { url: data.url || '/inbox' },
     vibrate: [200, 100, 200, 100, 200],    // ring-ish buzz on Android
   }));

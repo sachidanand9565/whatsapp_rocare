@@ -288,7 +288,13 @@ export default function CallManager() {
             });
             try {
               if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-                new Notification('Incoming WhatsApp call', { body: data.callerName || data.callerPhone || '' });
+                // Same tag as the server push for this call → OS shows ONE
+                // notification, not two, when both paths fire.
+                const n = new Notification('📞 Incoming WhatsApp call', {
+                  body: data.callerName || data.callerPhone || '',
+                  tag:  `call-${data.callId}`,
+                });
+                n.onclick = () => { window.focus(); n.close(); };
               }
             } catch { /* notifications unsupported */ }
           } else if (data.type === 'call_answer' && data.callId && data.sdp) {
