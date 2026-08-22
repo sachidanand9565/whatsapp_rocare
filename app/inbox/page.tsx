@@ -3,10 +3,9 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { apiFetch } from '@/hooks/useApi';
 import MediaLibrary, { type MediaItem as MLItem } from '@/app/components/MediaLibrary';
 import { validateMediaFile } from '@/lib/mediaLimits';
-import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter, BellOff, Bell, ArrowLeft, Info, PhoneCall, PhoneMissed, Mic, MicOff, PhoneOutgoing } from 'lucide-react';
+import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter, BellOff, Bell, ArrowLeft, Info, PhoneCall, PhoneMissed, PhoneOutgoing } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Contact, Message } from '@/types';
-import { WhatsAppCallSession } from '@/lib/webrtcCall';
 
 // ── Template bubble types ─────────────────────────────────────
 interface TemplateContent {
@@ -692,167 +691,19 @@ function renderTplPreview(text: string): React.ReactNode {
 }
 
 // ── Main Inbox Page ───────────────────────────────────────────
-// ── WhatsApp calling (softphone) ──────────────────────────────
-interface IncomingCall { callId: string; contactId?: number; name: string; phone: string; startedAt: number; sdp?: string }
-// Live call state — one at a time
-interface ActiveCall {
-  callId:    string;
-  contactId?: number;
-  name:      string;
-  phone:     string;
-  direction: 'inbound' | 'outbound';
-  phase:     'connecting' | 'ringing' | 'active' | 'ending';
-  startedAt: number;        // when the call became active (for the timer)
-}
-
-// Ringtone via Web Audio (no asset needed): classic double-ring, repeats every 3s.
-// Browsers block audio until the user has interacted with the page once —
-// we still try; a muted ring is better than a crash.
-function startRingtone(): () => void {
-  let ctx: AudioContext | null = null;
-  let timer: ReturnType<typeof setInterval> | null = null;
-  try {
-    const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    ctx = new AC();
-    const beep = (at: number, freq: number, dur: number) => {
-      if (!ctx) return;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine'; osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0, at);
-      gain.gain.linearRampToValueAtTime(0.25, at + 0.02);
-      gain.gain.setValueAtTime(0.25, at + dur - 0.04);
-      gain.gain.linearRampToValueAtTime(0, at + dur);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(at); osc.stop(at + dur);
-    };
-    const ring = () => {
-      if (!ctx) return;
-      const t = ctx.currentTime;
-      beep(t, 880, 0.35); beep(t + 0.45, 880, 0.35);       // ring-ring
-      beep(t + 0.0, 1320, 0.35); beep(t + 0.45, 1320, 0.35); // harmonic
-    };
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-    ring();
-    timer = setInterval(ring, 3000);
-  } catch { /* audio unsupported */ }
-  return () => {
-    if (timer) clearInterval(timer);
-    try { ctx?.close(); } catch { /* ignore */ }
-  };
-}
-
-function IncomingCallPopup({ call, onDecline, onAnswer, onOpenChat, busy }: {
-  call: IncomingCall; onDecline: () => void; onAnswer: () => void; onOpenChat: () => void; busy: boolean;
-}) {
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    const stop = startRingtone();
-    const t = setInterval(() => setElapsed(Math.floor((Date.now() - call.startedAt) / 1000)), 1000);
-    return () => { stop(); clearInterval(t); };
-  }, [call.callId, call.startedAt]);
-
-  const initials = (call.name || call.phone || '?').replace(/[^\p{L}\p{N} ]/gu, '').trim().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase() || '#';
-
-  return (
-    <div className="fixed inset-0 z-[100] flex items-start justify-center pt-16 pointer-events-none">
-      <div className="pointer-events-auto w-[340px] rounded-2xl shadow-2xl border border-emerald-700/40 overflow-hidden animate-[pulse_2s_ease-in-out_infinite]"
-        style={{ background: 'linear-gradient(160deg,#064e3b 0%,#065f46 60%,#047857 100%)' }}>
-        <div className="px-5 pt-5 pb-4 text-white">
-          <p className="text-[11px] uppercase tracking-widest text-emerald-200 flex items-center gap-1.5">
-            <PhoneCall size={12} className="animate-bounce" /> Incoming WhatsApp call
-          </p>
-          <div className="flex items-center gap-3 mt-3">
-            <div className="w-14 h-14 rounded-full bg-white/15 flex items-center justify-center text-xl font-bold ring-4 ring-white/10">
-              {initials}
-            </div>
-            <div className="min-w-0">
-              <p className="font-semibold text-lg leading-tight truncate">{call.name || call.phone}</p>
-              <p className="text-emerald-200 text-sm truncate">+{call.phone}</p>
-              <p className="text-emerald-300/80 text-[11px] mt-0.5">Ringing… {elapsed}s</p>
-            </div>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-2 px-4 pb-4">
-          <button onClick={onDecline} disabled={busy}
-            className="flex items-center justify-center gap-2 rounded-xl bg-red-500 hover:bg-red-600 disabled:opacity-60 text-white font-semibold py-2.5 transition-colors">
-            <PhoneMissed size={16} /> Decline
-          </button>
-          <button onClick={onAnswer} disabled={busy || !call.sdp}
-            title={call.sdp ? 'Answer in browser' : 'No media offer received for this call'}
-            className="flex items-center justify-center gap-2 rounded-xl bg-emerald-400 hover:bg-emerald-300 disabled:opacity-60 disabled:cursor-not-allowed text-emerald-950 font-semibold py-2.5 transition-colors">
-            {busy ? <Loader2 size={16} className="animate-spin" /> : <PhoneCall size={16} />} Answer
-          </button>
-        </div>
-        <button onClick={onOpenChat}
-          className="w-full text-center text-[11px] text-emerald-200 hover:text-white bg-black/15 py-2 transition-colors">
-          Open chat →
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// Floating in-call bar: caller, live timer, mute, hang up
-function ActiveCallBar({ call, muted, recording, onToggleMute, onHangup }: {
-  call: ActiveCall; muted: boolean; recording: boolean; onToggleMute: () => void; onHangup: () => void;
-}) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
-  const secs = call.phase === 'active' ? Math.max(0, Math.floor((now - call.startedAt) / 1000)) : 0;
-  const mm = String(Math.floor(secs / 60)).padStart(2, '0'), ss = String(secs % 60).padStart(2, '0');
-  const label = call.phase === 'connecting' ? 'Connecting…'
-    : call.phase === 'ringing' ? 'Ringing…'
-    : call.phase === 'ending' ? 'Ending…'
-    : `${mm}:${ss}`;
-  return (
-    <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[100] pointer-events-none">
-      <div className="pointer-events-auto flex items-center gap-3 rounded-full shadow-2xl border border-emerald-700/40 pl-4 pr-2 py-2 text-white"
-        style={{ background: 'linear-gradient(90deg,#064e3b,#065f46)' }}>
-        <span className={`w-2.5 h-2.5 rounded-full ${call.phase === 'active' ? 'bg-emerald-300 animate-pulse' : 'bg-amber-300 animate-pulse'}`} />
-        <div className="min-w-0 max-w-[220px]">
-          <p className="text-sm font-semibold truncate leading-tight">{call.name || call.phone}</p>
-          <p className="text-[11px] text-emerald-200 leading-tight flex items-center gap-1.5">
-            {call.direction === 'outbound' ? 'Outgoing' : 'Incoming'} · {label}
-            {recording && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-200" title="This call is being recorded">
-                <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" /> REC
-              </span>
-            )}
-          </p>
-        </div>
-        <button onClick={onToggleMute} title={muted ? 'Unmute' : 'Mute'}
-          className={`ml-2 w-9 h-9 rounded-full flex items-center justify-center transition-colors ${muted ? 'bg-amber-400 text-emerald-950' : 'bg-white/15 hover:bg-white/25'}`}>
-          {muted ? <MicOff size={15} /> : <Mic size={15} />}
-        </button>
-        <button onClick={onHangup} title="Hang up"
-          className="w-9 h-9 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center transition-colors">
-          <PhoneMissed size={15} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
+// (Softphone UI + WebRTC session moved to app/components/CallManager.tsx —
+//  mounted in the root layout so calls survive navigating away from the inbox.)
 export default function InboxPage() {
   const [contacts, setContacts]     = useState<Contact[]>([]);
   const [selected, setSelected]     = useState<Contact | null>(null);
-  const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
-  const [callBusy, setCallBusy]     = useState(false);
-  const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
-  const [callMuted, setCallMuted]   = useState(false);
-  const callSessionRef = useRef<WhatsAppCallSession | null>(null);
-  const activeCallRef  = useRef<ActiveCall | null>(null);
-  const incomingCallRef = useRef<IncomingCall | null>(null);
-  const lastSdpRef     = useRef<string>('');   // our SDP answer, re-sent with 'accept'
-  const recordCallsRef = useRef(false);        // Settings → Calling → Record calls
+  // Global CallManager (layout) owns the softphone; we only mirror whether a
+  // call is live so the chat-header Call button can disable itself.
+  const [onCall, setOnCall] = useState(false);
   useEffect(() => {
-    apiFetch('/api/calling/settings')
-      .then((r) => { recordCallsRef.current = !!r.data?.record_calls && !!r.data?.recording_storage_ready; })
-      .catch(() => {});
+    const h = (e: Event) => setOnCall(!!(e as CustomEvent).detail?.active);
+    window.addEventListener('wa:call-state', h);
+    return () => window.removeEventListener('wa:call-state', h);
   }, []);
-  useEffect(() => { activeCallRef.current = activeCall; }, [activeCall]);
-  useEffect(() => { incomingCallRef.current = incomingCall; }, [incomingCall]);
   const [showProfileMobile, setShowProfileMobile] = useState(false);
   const [messages, setMessages]     = useState<Message[]>([]);
   const [contactsLoading, setContactsLoading] = useState(true);
@@ -1200,44 +1051,9 @@ export default function InboxPage() {
             agentName?: string;
           };
 
-          if (data.type === 'incoming_call' && data.callId) {
-            // Already on a call → don't pop a second one (Meta will ring it out as missed)
-            if (activeCallRef.current) return;
-            // WhatsApp call ringing — show the call popup (with ringtone) + caller's SDP offer
-            setIncomingCall({
-              callId:    data.callId,
-              contactId: data.contactId,
-              name:      data.callerName || '',
-              phone:     data.callerPhone || '',
-              startedAt: Date.now(),
-              sdp:       data.sdp,
-            });
-            try {
-              if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-                new Notification('Incoming WhatsApp call', { body: data.callerName || data.callerPhone || '' });
-              }
-            } catch { /* notifications unsupported */ }
-          } else if (data.type === 'call_answer' && data.callId && data.sdp) {
-            // Outbound call: customer picked up — finish WebRTC with their answer
-            const ac = activeCallRef.current;
-            if (ac && ac.callId === data.callId && callSessionRef.current) {
-              callSessionRef.current.applyAnswer(data.sdp)
-                .then(() => setActiveCall(prev => prev ? { ...prev, phase: 'connecting' } : prev))
-                .catch((err) => { toast.error('Could not connect audio: ' + (err?.message || err)); endActiveCall(true); });
-            }
-          } else if (data.type === 'call_taken' && data.callId) {
-            // Another agent answered — stop ringing on this panel
-            const cur = incomingCallRef.current;
-            if (cur && cur.callId === data.callId) {
-              setIncomingCall(null);
-              toast(`Call answered by ${data.agentName || 'another agent'}`, { icon: '📞' });
-            }
-          } else if (data.type === 'call_ended') {
-            // Customer hung up / rang out / declined — dismiss popup and tear down any live session
-            setIncomingCall(prev => (prev && (!data.callId || prev.callId === data.callId)) ? null : prev);
-            const ac = activeCallRef.current;
-            if (ac && (!data.callId || ac.callId === data.callId)) endActiveCall(false);
-          } else if (data.type === 'new_message') {
+          // Call events (incoming_call / call_answer / call_taken / call_ended)
+          // are handled by the global CallManager in the layout.
+          if (data.type === 'new_message') {
             if (data.contact) {
               applyContactUpdate(data.contact, !!data.inInbox, !!data.inIntervened);
             }
@@ -1674,159 +1490,21 @@ export default function InboxPage() {
   const templateMsgCount = messages.filter((m) => m.type === 'template' && m.direction === 'outbound').length;
   const sessionMsgCount  = messages.filter((m) => m.direction === 'outbound' && m.type !== 'template').length;
 
-  // ── Softphone: answer / call / hang up ─────────────────────
-  async function declineIncomingCall() {
-    if (!incomingCall) return;
-    setCallBusy(true);
-    try {
-      await apiFetch('/api/calling/action', { method: 'POST', body: JSON.stringify({ call_id: incomingCall.callId, action: 'reject' }) });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not decline');
-    } finally {
-      setCallBusy(false);
-      setIncomingCall(null);
-    }
-  }
-
-  // Answer: mic → SDP answer (ICE complete) → pre_accept → (WebRTC connected) → accept
-  async function answerIncomingCall() {
-    if (!incomingCall?.sdp) return;
-    const call = incomingCall as IncomingCall & { sdp: string };
-    setCallBusy(true);
-    const session = new WhatsAppCallSession({
-      onConnected: () => {
-        // Media path is up → tell Meta to start the call
-        apiFetch('/api/calling/action', {
-          method: 'POST',
-          body: JSON.stringify({ call_id: call.callId, action: 'accept', sdp: lastSdpRef.current }),
-        }).then(() => {
-          setActiveCall(prev => prev ? { ...prev, phase: 'active', startedAt: Date.now() } : prev);
-          if (recordCallsRef.current) callSessionRef.current?.startRecording();
-        }).catch((err) => { toast.error('Accept failed: ' + (err?.message || err)); endActiveCall(true); });
-      },
-      onDisconnected: (reason) => {
-        if (reason === 'failed') { toast.error('Call connection failed'); endActiveCall(true); }
-        // 'disconnected' can be transient — the terminate webhook will clean up
-      },
-    });
-    callSessionRef.current = session;
-    try {
-      const sdpAnswer = await session.answerOffer(call.sdp);
-      lastSdpRef.current = sdpAnswer;
-      setIncomingCall(null);
-      setActiveCall({
-        callId: call.callId, contactId: call.contactId, name: call.name, phone: call.phone,
-        direction: 'inbound', phase: 'connecting', startedAt: Date.now(),
-      });
-      setCallMuted(false);
-      await apiFetch('/api/calling/action', {
-        method: 'POST',
-        body: JSON.stringify({ call_id: call.callId, action: 'pre_accept', sdp: sdpAnswer }),
-      });
-      // 'accept' fires from onConnected once ICE/DTLS is up
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(/NotAllowed|Permission|denied/i.test(msg) ? 'Microphone permission denied — allow mic access to answer calls' : `Could not answer: ${msg}`);
-      session.close();
-      callSessionRef.current = null;
-      setActiveCall(null);
-      setIncomingCall(null);
-    } finally {
-      setCallBusy(false);
-    }
-  }
-
-  // Outbound: mic → SDP offer (ICE complete) → action=connect → wait for call_answer SSE
-  async function startOutboundCall(contact: Contact) {
-    if (activeCallRef.current) { toast.error('Already on a call'); return; }
-    const session = new WhatsAppCallSession({
-      onConnected: () => {
-        setActiveCall(prev => prev ? { ...prev, phase: 'active', startedAt: Date.now() } : prev);
-        if (recordCallsRef.current) callSessionRef.current?.startRecording();
-      },
-      onDisconnected: (reason) => { if (reason === 'failed') { toast.error('Call connection failed'); endActiveCall(true); } },
-    });
-    callSessionRef.current = session;
-    setActiveCall({
-      callId: '', contactId: contact.id, name: contact.name || contact.phone, phone: contact.phone,
-      direction: 'outbound', phase: 'ringing', startedAt: Date.now(),
-    });
-    setCallMuted(false);
-    try {
-      const sdpOffer = await session.createOffer();
-      const r = await apiFetch('/api/calling/action', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'connect', to: contact.phone, sdp: sdpOffer }),
-      });
-      const callId = r.data?.call_id as string;
-      if (!callId) throw new Error('No call id from Meta');
-      setActiveCall(prev => prev ? { ...prev, callId } : prev);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(/NotAllowed|Permission denied/i.test(msg) ? 'Microphone permission denied' : msg, { duration: 7000 });
-      session.close();
-      callSessionRef.current = null;
-      setActiveCall(null);
-    }
-  }
-
-  // Hang up / clean up. sendTerminate=true tells Meta to end it (agent pressed hang up
-  // or a local failure); false when Meta already told us the call ended.
-  function endActiveCall(sendTerminate: boolean) {
-    const ac = activeCallRef.current;
-    if (ac && sendTerminate && ac.callId) {
-      setActiveCall(prev => prev ? { ...prev, phase: 'ending' } : prev);
-      apiFetch('/api/calling/action', { method: 'POST', body: JSON.stringify({ call_id: ac.callId, action: 'terminate' }) })
-        .catch(() => {});
-    }
-    const session = callSessionRef.current;
-    callSessionRef.current = null;
-    setActiveCall(null);
-    setCallMuted(false);
-    if (!session) return;
-    // Finish the recording (if any) and upload it in the background, then close
-    const callId = ac?.callId || '';
-    session.stopRecording()
-      .then((rec) => {
-        if (!rec || !callId) return;
-        const fd = new FormData();
-        fd.append('call_id', callId);
-        fd.append('seconds', String(rec.seconds));
-        fd.append('file', rec.blob, `call_${callId}.webm`);
-        // raw fetch: apiFetch forces a JSON content-type which breaks multipart
-        const token = localStorage.getItem('token');
-        return fetch('/api/calling/recording', {
-          method: 'POST', body: fd,
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        })
-          .then(async (res) => {
-            if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `HTTP ${res.status}`); }
-            toast.success('Call recording saved', { duration: 2500 });
-          })
-          .catch((err) => toast.error('Recording upload failed: ' + (err?.message || err), { duration: 6000 }));
-      })
-      .catch(() => {})
-      .finally(() => session.close());
-  }
-  function toggleCallMute() {
-    const next = !callMuted;
-    callSessionRef.current?.setMuted(next);
-    setCallMuted(next);
-  }
-
-  function openIncomingCallChat() {
-    if (!incomingCall) return;
-    const c = [...contacts, ...intervenedContacts].find((x) => x.id === incomingCall.contactId || x.phone === incomingCall.phone);
-    if (c) selectContact(c);
-    else toast('Contact will appear in the list in a moment', { icon: '📞' });
-  }
+  // Softphone lives in the global CallManager. When its popup's "Open chat"
+  // is clicked while the inbox is mounted, select that contact in place.
   useEffect(() => {
-    if (!incomingCall) return;
-    const t = setTimeout(() => setIncomingCall(null), 90_000);
-    return () => clearTimeout(t);
-  }, [incomingCall]);
-  // Tear down mic/peer connection if the agent navigates away mid-call
-  useEffect(() => () => { callSessionRef.current?.close(); }, []);
+    function onOpenChat(e: Event) {
+      const d = (e as CustomEvent).detail as { contactId?: number; phone?: string } | undefined;
+      if (!d) return;
+      const c = [...contacts, ...intervenedContacts].find((x) => x.id === d.contactId || x.phone === d.phone);
+      if (c) selectContact(c);
+      else toast('Contact will appear in the list in a moment', { icon: '📞' });
+    }
+    window.addEventListener('wa:open-chat', onOpenChat);
+    return () => window.removeEventListener('wa:open-chat', onOpenChat);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contacts, intervenedContacts]);
+
   // Deep link: /inbox?contact=ID (from Calls page "Chat", notifications, etc.)
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1850,15 +1528,6 @@ export default function InboxPage() {
 
   return (
     <div className="h-[calc(100vh-5rem)] flex border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
-      {incomingCall && !activeCall && (
-        <IncomingCallPopup call={incomingCall} busy={callBusy}
-          onDecline={declineIncomingCall} onAnswer={answerIncomingCall} onOpenChat={openIncomingCallChat} />
-      )}
-      {activeCall && (
-        <ActiveCallBar call={activeCall} muted={callMuted}
-          recording={activeCall.phase === 'active' && recordCallsRef.current}
-          onToggleMute={toggleCallMute} onHangup={() => endActiveCall(true)} />
-      )}
 
       {/* ── Left: Contact List ──────────────────────────────── */}
       <div className={`${selected ? 'hidden lg:flex' : 'flex'} w-full lg:w-72 border-r border-gray-200 flex-col flex-shrink-0`}>
@@ -2204,8 +1873,8 @@ export default function InboxPage() {
             {/* WhatsApp voice call menu (Business Calling API) — needs calling
                 enabled in Settings → Calling; outbound calls need the customer's permission */}
             <div className="relative flex-shrink-0" ref={callMenuRef}>
-              <button onClick={openCallMenu} disabled={!!activeCall}
-                title={activeCall ? 'Already on a call' : 'WhatsApp call options'}
+              <button onClick={openCallMenu} disabled={onCall}
+                title={onCall ? 'Already on a call' : 'WhatsApp call options'}
                 className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40 border ${
                   showCallMenu ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-white border-gray-200 text-gray-700 hover:border-emerald-300 hover:text-emerald-700'
                 }`}>
@@ -2241,7 +1910,12 @@ export default function InboxPage() {
                     </div>
 
                     {/* Actions */}
-                    <button onClick={() => { setShowCallMenu(false); startOutboundCall(selected); }}
+                    <button onClick={() => {
+                      setShowCallMenu(false);
+                      window.dispatchEvent(new CustomEvent('wa:start-call', {
+                        detail: { contactId: selected.id, name: selected.name || selected.phone, phone: selected.phone },
+                      }));
+                    }}
                       disabled={!granted || callPermLoading}
                       className="w-full text-left px-3.5 py-2.5 hover:bg-gray-50 disabled:opacity-45 disabled:cursor-not-allowed flex items-center gap-3 border-b border-gray-50">
                       <span className="w-9 h-9 rounded-lg bg-emerald-600 text-white flex items-center justify-center flex-shrink-0"><PhoneOutgoing size={16} /></span>
