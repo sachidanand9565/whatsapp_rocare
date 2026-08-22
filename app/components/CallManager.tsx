@@ -163,7 +163,10 @@ function ActiveCallBar({ call, muted, recording, onToggleMute, onHangup }: {
 /** Register the SW and sync this browser's push subscription with the server.
  *  Requires Notification.permission === 'granted'. Shared with Settings → Calling. */
 export async function ensurePushSubscription(): Promise<void> {
-  const reg = await navigator.serviceWorker.register('/sw.js');
+  await navigator.serviceWorker.register('/sw.js');
+  // First-ever registration: the SW may still be installing — pushManager
+  // .subscribe() needs an ACTIVE worker or it throws (common on mobile).
+  const reg = await navigator.serviceWorker.ready;
   const keyRes = await apiFetch('/api/push/subscribe');
   const publicKey = keyRes.data?.public_key as string;
   if (!publicKey) throw new Error('Push not set up on the server');
@@ -204,6 +207,44 @@ export default function CallManager() {
   // (First-time enabling is a button in Settings → Calling — permission
   // prompts need a user gesture, especially on mobile.)
   const pushSyncedRef = useRef(false);
+  // Mobile nudge: agents on phones rarely open Settings — surface an
+  // "enable call alerts" banner right where they are.
+  const [pushBanner, setPushBanner] = useState<'enable' | 'ios-a2hs' | null>(null);
+  const [bannerBusy, setBannerBusy] = useState(false);
+  useEffect(() => {
+    // Decide whether to nudge this device (mobile-first, but harmless on desktop)
+    try {
+      if (!localStorage.getItem('token')) { setPushBanner(null); return; }
+      if (Number(localStorage.getItem('pushBannerDismissed') || 0) > Date.now() - 7 * 86400_000) return;
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      const standalone = window.matchMedia('(display-mode: standalone)').matches
+        || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+      if (isIOS && !standalone && !('PushManager' in window)) {
+        setPushBanner('ios-a2hs');           // Safari tab can't push — needs Add to Home Screen
+      } else if ('serviceWorker' in navigator && 'PushManager' in window
+                 && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+        setPushBanner('enable');
+      }
+    } catch { /* private mode etc. */ }
+  }, [pathname]);
+
+  function dismissPushBanner() {
+    setPushBanner(null);
+    try { localStorage.setItem('pushBannerDismissed', String(Date.now())); } catch { /* ignore */ }
+  }
+  async function enablePushFromBanner() {
+    setBannerBusy(true);
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { toast.error('Notifications blocked — allow them in browser settings'); dismissPushBanner(); return; }
+      await ensurePushSubscription();
+      toast.success('This device will now ring for incoming calls 🎉');
+      setPushBanner(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not enable', { duration: 7000 });
+    } finally { setBannerBusy(false); }
+  }
+
   useEffect(() => {
     if (pushSyncedRef.current) return;
     if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
@@ -535,6 +576,29 @@ export default function CallManager() {
   }, [incomingCall]);
 
   return (<>
+    {pushBanner && (
+      <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[95] w-[min(560px,calc(100vw-16px))]">
+        <div className="flex items-center gap-3 rounded-2xl shadow-2xl border border-emerald-700/40 px-4 py-3 text-white"
+          style={{ background: 'linear-gradient(90deg,#064e3b,#065f46)' }}>
+          <span className="text-xl flex-shrink-0">🔔</span>
+          {pushBanner === 'enable' ? (<>
+            <p className="text-xs flex-1 leading-snug">
+              Get <b>call alerts on this device</b> — rings even when the browser is closed or the phone is locked.
+            </p>
+            <button onClick={enablePushFromBanner} disabled={bannerBusy}
+              className="flex-shrink-0 rounded-xl bg-emerald-400 hover:bg-emerald-300 disabled:opacity-60 text-emerald-950 text-xs font-bold px-3 py-2 transition-colors">
+              {bannerBusy ? <Loader2 size={14} className="animate-spin" /> : 'Enable'}
+            </button>
+          </>) : (<>
+            <p className="text-xs flex-1 leading-snug">
+              iPhone par call alerts ke liye: <b>Share&nbsp;→ Add to Home Screen</b>, phir wahan se panel kholo.
+            </p>
+          </>)}
+          <button onClick={dismissPushBanner} title="Dismiss"
+            className="flex-shrink-0 text-emerald-200 hover:text-white text-lg leading-none px-1">×</button>
+        </div>
+      </div>
+    )}
     {incomingCall && !activeCall && (
       <IncomingCallPopup call={incomingCall} busy={callBusy}
         onDecline={declineIncomingCall} onAnswer={answerIncomingCall} onOpenChat={openIncomingCallChat} />
