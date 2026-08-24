@@ -134,6 +134,22 @@ export async function GET(req: NextRequest) {
       params.push(sentFrom, sentTo);
     }
 
+    // Button-reply filter — contact's LATEST inbound button tap matches this text
+    // (e.g. template buttons "Interested" / "Not Interested"). Latest wins, so a
+    // contact who tapped Not Interested then Interested counts as Interested.
+    const buttonReply = sp.get('buttonReply') || '';
+    if (buttonReply) {
+      // NOTE: the type ENUM predates 'button', so MySQL stored those rows with
+      // type='' — match both until migration-button-type.sql backfills them.
+      const sub = `(SELECT bm.content FROM messages bm
+        WHERE bm.contact_id = %C% AND bm.direction = 'inbound'
+          AND (bm.type = 'button' OR (bm.type = '' AND bm.content NOT LIKE '⚠%'))
+        ORDER BY bm.id DESC LIMIT 1) = ?`;
+      sql      += ' AND ' + sub.replace('%C%', 'c.id');
+      countSql += ' AND ' + sub.replace('%C%', 'id');
+      params.push(buttonReply);
+    }
+
     const campaignId = sp.get('campaignId') || '';
     if (campaignId) {
       const cid = Number(campaignId);

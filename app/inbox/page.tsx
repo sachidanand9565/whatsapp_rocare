@@ -3,7 +3,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { apiFetch } from '@/hooks/useApi';
 import MediaLibrary, { type MediaItem as MLItem } from '@/app/components/MediaLibrary';
 import { validateMediaFile } from '@/lib/mediaLimits';
-import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter, BellOff, Bell, ArrowLeft, Info, PhoneCall, PhoneMissed, PhoneOutgoing } from 'lucide-react';
+import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter, BellOff, Bell, ArrowLeft, Info, PhoneCall, PhoneMissed, PhoneOutgoing, MousePointerClick, CheckCheck } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Contact, Message } from '@/types';
 
@@ -871,6 +871,14 @@ export default function InboxPage() {
   const [campaigns, setCampaigns]                   = useState<{ id: number; name: string }[]>([]);
   const [showCampaignDrop, setShowCampaignDrop]     = useState(false);
   const campaignDropRef                              = useRef<HTMLDivElement>(null);
+  // Button-reply filter (template buttons: Interested / Not Interested …)
+  const [replyFilter, setReplyFilter]               = useState<string | null>(null);
+  const [replyOptions, setReplyOptions]             = useState<{ reply: string; contacts: number }[]>([]);
+  const [showReplyDrop, setShowReplyDrop]           = useState(false);
+  const [bulkResolving, setBulkResolving]           = useState(false);
+  const replyDropRef                                 = useRef<HTMLDivElement>(null);
+  const replyFilterRef                               = useRef<string | null>(null);
+  useEffect(() => { replyFilterRef.current = replyFilter; }, [replyFilter]);
 
   // Separate contacts list for admin/manager intervened tab (includes all agents' transferred chats)
   const [intervenedContacts, setIntervenedContacts] = useState<Contact[]>([]);
@@ -885,9 +893,10 @@ export default function InboxPage() {
 
   const loadContacts = useCallback((campaignId?: number, silent = false) => {
     if (!silent) setContactsLoading(true);
-    const qs = campaignId
+    let qs = campaignId
       ? `limit=500&chatStatus=inbox&campaignId=${campaignId}`
       : `limit=500&chatStatus=inbox`;
+    if (replyFilterRef.current) qs += `&buttonReply=${encodeURIComponent(replyFilterRef.current)}`;
     apiFetch(`/api/contacts?${qs}`).then((r) => {
       const list: Contact[] = r.data?.data || [];
       setContacts(list);
@@ -962,6 +971,9 @@ export default function InboxPage() {
       if (campaignDropRef.current && !campaignDropRef.current.contains(e.target as Node)) {
         setShowCampaignDrop(false);
       }
+      if (replyDropRef.current && !replyDropRef.current.contains(e.target as Node)) {
+        setShowReplyDrop(false);
+      }
     }
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -969,6 +981,37 @@ export default function InboxPage() {
 
   const campaignFilterRef = useRef<number | undefined>(undefined);
   useEffect(() => { campaignFilterRef.current = campaignFilter ?? undefined; }, [campaignFilter]);
+
+  function openReplyDrop() {
+    setShowReplyDrop((p) => !p);
+    // Refresh options each open — cheap, and counts stay honest
+    apiFetch('/api/contacts/button-replies')
+      .then((r) => setReplyOptions(r.data?.replies || []))
+      .catch(() => {});
+  }
+  function applyReplyFilter(reply: string | null) {
+    setReplyFilter(reply);
+    replyFilterRef.current = reply;
+    setShowReplyDrop(false);
+    loadContacts(campaignFilterRef.current, false);
+  }
+  async function bulkResolveFiltered() {
+    if (!replyFilter) return;
+    const scope = campaignFilterRef.current ? ' in this campaign' : '';
+    if (!window.confirm(`Resolve ALL chats whose latest reply is "${replyFilter}"${scope}? This includes matching chats beyond the list below.`)) return;
+    setBulkResolving(true);
+    try {
+      const r = await apiFetch('/api/contacts/bulk-resolve', {
+        method: 'POST',
+        body: JSON.stringify({ button_reply: replyFilter, campaign_id: campaignFilterRef.current || undefined }),
+      });
+      toast.success(`${r.data?.resolved ?? 0} chats resolved`);
+      loadContacts(campaignFilterRef.current, false);
+      loadIntervenedContacts();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Bulk resolve failed');
+    } finally { setBulkResolving(false); }
+  }
 
   useEffect(() => {
     loadContacts();
@@ -986,7 +1029,8 @@ export default function InboxPage() {
     searchDebounceRef.current = setTimeout(() => {
       setSearchLoading(true);
       const enc = encodeURIComponent(search.trim());
-      const cqs = campaignFilter ? `&campaignId=${campaignFilter}` : '';
+      const cqs = (campaignFilter ? `&campaignId=${campaignFilter}` : '')
+        + (replyFilter ? `&buttonReply=${encodeURIComponent(replyFilter)}` : '');
       Promise.all([
         apiFetch(`/api/contacts?limit=500&chatStatus=inbox&search=${enc}${cqs}`),
         apiFetch(`/api/contacts?limit=500&chatStatus=intervened&search=${enc}`),
@@ -998,7 +1042,7 @@ export default function InboxPage() {
       }).finally(() => setSearchLoading(false));
     }, 400);
     return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
-  }, [search, campaignFilter]);
+  }, [search, campaignFilter, replyFilter]);
 
   // Tracks the highest message id loaded for the current chat (for incremental SSE fetch)
   const lastMsgIdRef = useRef<number>(0);
@@ -1598,6 +1642,45 @@ export default function InboxPage() {
                 </div>
               )}
             </div>
+
+            {/* Button-reply filter (template buttons: Interested / Not Interested …) */}
+            <div className="relative" ref={replyDropRef}>
+              <button
+                onClick={openReplyDrop}
+                title="Filter by button reply"
+                className={`flex items-center justify-center w-9 h-9 rounded-lg border transition-colors flex-shrink-0
+                  ${replyFilter
+                    ? 'bg-whatsapp-green border-whatsapp-green text-white'
+                    : 'bg-white border-gray-300 text-gray-500 hover:border-whatsapp-green hover:text-whatsapp-green'}`}>
+                <MousePointerClick size={15} />
+              </button>
+
+              {showReplyDrop && (
+                <div className="absolute right-0 top-11 w-64 bg-white border border-gray-200 rounded-xl shadow-lg z-30 overflow-hidden">
+                  <div className="px-3 py-2 border-b border-gray-100">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Filter by Button Reply</p>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    <button onClick={() => applyReplyFilter(null)}
+                      className={`w-full text-left px-4 py-2.5 text-sm transition-colors flex items-center gap-2
+                        ${!replyFilter ? 'bg-green-50 text-whatsapp-green font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}>
+                      <X size={13} className="opacity-60" /> All replies
+                    </button>
+                    {replyOptions.length === 0 && (
+                      <p className="text-xs text-gray-400 text-center py-4">No button replies yet</p>
+                    )}
+                    {replyOptions.map((o) => (
+                      <button key={o.reply} onClick={() => applyReplyFilter(o.reply)}
+                        className={`w-full text-left px-4 py-2.5 text-sm transition-colors flex items-center justify-between gap-2
+                          ${replyFilter === o.reply ? 'bg-green-50 text-whatsapp-green font-semibold' : 'text-gray-700 hover:bg-gray-50'}`}>
+                        <span className="truncate">{o.reply}</span>
+                        <span className="text-xs text-gray-400 flex-shrink-0">{o.contacts}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Active filter badge */}
@@ -1612,6 +1695,24 @@ export default function InboxPage() {
                 setCampaignContactIds(null);
                 loadContacts();
               }} className="text-green-600 hover:text-red-500 flex-shrink-0">
+                <X size={12} />
+              </button>
+            </div>
+          )}
+
+          {/* Active button-reply filter: badge + one-click bulk resolve */}
+          {replyFilter && (
+            <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1">
+              <MousePointerClick size={11} className="text-whatsapp-green flex-shrink-0" />
+              <span className="text-xs text-emerald-800 font-medium truncate flex-1">
+                Replied: {replyFilter}
+              </span>
+              <button onClick={bulkResolveFiltered} disabled={bulkResolving}
+                title={`Resolve every chat whose latest reply is "${replyFilter}"`}
+                className="flex items-center gap-1 text-[11px] font-semibold text-white bg-whatsapp-green hover:bg-emerald-700 disabled:opacity-60 rounded px-2 py-0.5 flex-shrink-0 transition-colors">
+                {bulkResolving ? <Loader2 size={11} className="animate-spin" /> : <CheckCheck size={11} />} Resolve all
+              </button>
+              <button onClick={() => applyReplyFilter(null)} className="text-emerald-600 hover:text-red-500 flex-shrink-0">
                 <X size={12} />
               </button>
             </div>
