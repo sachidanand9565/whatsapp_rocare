@@ -875,6 +875,7 @@ export default function InboxPage() {
   const [replyFilter, setReplyFilter]               = useState<string | null>(null);
   const [replyOptions, setReplyOptions]             = useState<{ reply: string; contacts: number }[]>([]);
   const [showReplyDrop, setShowReplyDrop]           = useState(false);
+  const [replyOptionsLoading, setReplyOptionsLoading] = useState(false);
   const [bulkResolving, setBulkResolving]           = useState(false);
   const replyDropRef                                 = useRef<HTMLDivElement>(null);
   const replyFilterRef                               = useRef<string | null>(null);
@@ -985,9 +986,11 @@ export default function InboxPage() {
   function openReplyDrop() {
     setShowReplyDrop((p) => !p);
     // Refresh options each open — cheap, and counts stay honest
+    setReplyOptionsLoading(true);
     apiFetch('/api/contacts/button-replies')
       .then((r) => setReplyOptions(r.data?.replies || []))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setReplyOptionsLoading(false));
   }
   function applyReplyFilter(reply: string | null) {
     setReplyFilter(reply);
@@ -1666,7 +1669,12 @@ export default function InboxPage() {
                         ${!replyFilter ? 'bg-green-50 text-whatsapp-green font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}>
                       <X size={13} className="opacity-60" /> All replies
                     </button>
-                    {replyOptions.length === 0 && (
+                    {replyOptionsLoading && replyOptions.length === 0 && (
+                      <div className="flex items-center justify-center gap-2 py-4 text-xs text-gray-400">
+                        <Loader2 size={14} className="animate-spin" /> Loading replies…
+                      </div>
+                    )}
+                    {!replyOptionsLoading && replyOptions.length === 0 && (
                       <p className="text-xs text-gray-400 text-center py-4">No button replies yet</p>
                     )}
                     {replyOptions.map((o) => (
