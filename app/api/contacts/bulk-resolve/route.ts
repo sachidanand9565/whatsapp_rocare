@@ -1,9 +1,12 @@
 /**
- * POST /api/contacts/bulk-resolve  (admin only)
+ * POST /api/contacts/bulk-resolve
  * Resolve EVERY chat whose latest button reply matches — e.g. all
  * "Not Interested" taps in one go. Optionally scoped to one campaign.
  * Body: { button_reply: "Not Interested", campaign_id?: 12 }
  * → { resolved: n }
+ *
+ * Roles: admin & manager → whole workspace. agent → only the chats they can
+ * see in their inbox (same visibility rule as GET /api/contacts).
  */
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
@@ -14,7 +17,6 @@ import { RowDataPacket } from 'mysql2';
 export async function POST(req: NextRequest) {
   try {
     const payload = await requireAuth(req);
-    if (payload.role !== 'admin') return apiError('Admin only', 403);
 
     const body = await req.json() as { button_reply?: string; campaign_id?: number };
     const buttonReply = String(body.button_reply || '').trim();
@@ -32,6 +34,27 @@ export async function POST(req: NextRequest) {
                AND (bm.type = 'button' OR (bm.type = '' AND bm.content NOT LIKE '⚠%'))
              ORDER BY bm.id DESC LIMIT 1) = ?`;
     const params: unknown[] = [payload.workspaceId, buttonReply];
+
+    // Agents: mirror the inbox visibility rule so they can only resolve what
+    // they can see — their assigned chats, plus the unassigned pool limited to
+    // their campaigns (or everything unassigned if they have no campaigns).
+    if (payload.role === 'agent') {
+      const uid = Number(payload.userId);
+      sql += ` AND (
+        c.assigned_agent_id = ${uid}
+        OR (
+          c.assigned_agent_id IS NULL
+          AND (
+            NOT EXISTS (SELECT 1 FROM campaign_assignments WHERE agent_id = ${uid} LIMIT 1)
+            OR c.id IN (
+              SELECT cc.contact_id FROM campaign_contacts cc
+              JOIN campaign_assignments ca ON ca.campaign_id = cc.campaign_id
+              WHERE ca.agent_id = ${uid}
+            )
+          )
+        )
+      )`;
+    }
     if (campaignId) {
       sql += ` AND c.id IN (
         SELECT contact_id FROM campaign_contacts WHERE campaign_id = ?
@@ -45,7 +68,7 @@ export async function POST(req: NextRequest) {
 
     // Audit trail in server logs — bulk actions should be traceable
     const u = await query<RowDataPacket[]>('SELECT email FROM users WHERE id = ? LIMIT 1', [payload.userId]).catch(() => []);
-    console.log(`[bulk-resolve] ${resolved} chats resolved (reply="${buttonReply}"${campaignId ? `, campaign=${campaignId}` : ''}) by ${(u as RowDataPacket[])[0]?.email || payload.userId}`);
+    console.log(`[bulk-resolve] ${resolved} chats resolved (reply="${buttonReply}"${campaignId ? `, campaign=${campaignId}` : ''}) by ${(u as RowDataPacket[])[0]?.email || payload.userId} (${payload.role})`);
 
     return apiSuccess({ resolved });
   } catch (err) {
