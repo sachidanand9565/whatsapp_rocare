@@ -119,38 +119,56 @@ export async function POST(req: NextRequest) {
       await query(`INSERT IGNORE INTO campaign_contacts (campaign_id, contact_id) VALUES ${values}`);
     }
 
-    // Add contacts from CSV — upsert contact + add to campaign_contacts with per-row vars
+    // Add contacts from CSV — BULK upsert + link (chunked). The old per-row
+    // version ran 4 sequential queries per contact; a 500+ row CSV took minutes
+    // and the AWS gateway cut the request with a 504 before it finished.
     if (csv_contacts && csv_contacts.length > 0) {
       const { normalizePhone } = await import('@/lib/utils');
       const { execute: exec } = await import('@/lib/db');
+
+      // Normalize + dedupe (last occurrence of a phone wins)
+      const byPhone = new Map<string, { phone: string; name: string | null; vars: Record<string, string> }>();
       for (const row of csv_contacts) {
         const phone = normalizePhone(row.phone);
         if (!phone) continue;
-        // Upsert contact
+        byPhone.set(phone, { phone, name: row.name || null, vars: row.vars || {} });
+      }
+      const rows = Array.from(byPhone.values());
+
+      const CHUNK = 500;
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        const chunk = rows.slice(i, i + CHUNK);
+        // Bulk upsert contacts — fills the name only where it's still empty
         await exec(
-          'INSERT IGNORE INTO contacts (workspace_id, phone, name, source, opted_in) VALUES (?, ?, ?, ?, 1)',
-          [payload.workspaceId, phone, row.name || null, 'csv_import']
+          `INSERT INTO contacts (workspace_id, phone, name, source, opted_in)
+           VALUES ${chunk.map(() => '(?, ?, ?, ?, 1)').join(',')}
+           ON DUPLICATE KEY UPDATE name = IF(name IS NULL OR name = '', VALUES(name), name)`,
+          chunk.flatMap((r) => [payload.workspaceId, r.phone, r.name, 'csv_import'])
         );
-        if (row.name) {
+        // phone → id in ONE query for the whole chunk
+        const idRows = await query<RowDataPacket[]>(
+          `SELECT id, phone FROM contacts WHERE workspace_id = ? AND phone IN (${chunk.map(() => '?').join(',')})`,
+          [payload.workspaceId, ...chunk.map((r) => r.phone)]
+        );
+        const idByPhone = new Map(idRows.map((r) => [String(r.phone), Number(r.id)]));
+        // Bulk link to the campaign with per-row vars
+        // NOTE: no INSERT IGNORE — it would suppress ON DUPLICATE KEY UPDATE
+        const linkable = chunk.filter((r) => idByPhone.has(r.phone));
+        if (linkable.length > 0) {
           await exec(
-            "UPDATE contacts SET name = ? WHERE workspace_id = ? AND phone = ? AND (name IS NULL OR name = '')",
-            [row.name, payload.workspaceId, phone]
+            `INSERT INTO campaign_contacts (campaign_id, contact_id, variables)
+             VALUES ${linkable.map(() => '(?, ?, ?)').join(',')}
+             ON DUPLICATE KEY UPDATE variables = VALUES(variables)`,
+            linkable.flatMap((r) => [id, idByPhone.get(r.phone)!, JSON.stringify(r.vars)])
           );
         }
-        const contactRow = await query<RowDataPacket[]>(
-          'SELECT id FROM contacts WHERE workspace_id = ? AND phone = ? LIMIT 1',
-          [payload.workspaceId, phone]
-        );
-        if (contactRow.length === 0) continue;
-        const contactId = contactRow[0].id as number;
-        // Store per-contact vars as JSON in campaign_contacts
-        // NOTE: Do NOT use INSERT IGNORE here — it suppresses ON DUPLICATE KEY UPDATE
-        await exec(
-          `INSERT INTO campaign_contacts (campaign_id, contact_id, variables) VALUES (?, ?, ?)
-           ON DUPLICATE KEY UPDATE variables = VALUES(variables)`,
-          [id, contactId, JSON.stringify(row.vars || {})]
-        );
       }
+
+      // total_contacts was the raw CSV row count — correct it to what actually queued
+      await exec(
+        'UPDATE campaigns SET total_contacts = (SELECT COUNT(*) FROM campaign_contacts WHERE campaign_id = ?) WHERE id = ?',
+        [id, id]
+      ).catch(() => {});
     }
 
     return apiSuccess({ id }, 201);
