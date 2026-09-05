@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/hooks/useApi';
 import { encryptId } from '@/lib/idCrypt';
-import { Plus, Radio, Zap, GitBranch, ShoppingBag, ChevronRight, Trash2, UserPlus, X, Search, ChevronDown, Loader2 } from 'lucide-react';
+import { Plus, Radio, Zap, GitBranch, ShoppingBag, ChevronRight, Trash2, UserPlus, X, Search, ChevronDown, Loader2, Send } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Campaign, Template, Contact, User } from '@/types';
 
@@ -475,6 +475,28 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   const [templateVars, setTemplateVars]   = useState<Record<string, string>>({});
   const [headerMedia, setHeaderMedia]     = useState('');   // URL entered by user
   const [headerMediaMode, setHeaderMediaMode] = useState<'url' | 'upload'>('url');
+  // Pre-create test send — verify the template on your own number before launching
+  const [testPhone, setTestPhone]     = useState('');
+  const [testSending, setTestSending] = useState(false);
+  async function sendPreCreateTest() {
+    if (!form.template_id) { toast.error('Select a template first'); return; }
+    if (!testPhone.trim()) { toast.error('Enter a WhatsApp number for the test'); return; }
+    setTestSending(true);
+    try {
+      await apiFetch('/api/campaigns/test-template', {
+        method: 'POST',
+        body: JSON.stringify({
+          template_id:  Number(form.template_id),
+          phone:        testPhone.trim(),
+          vars:         templateVars,
+          header_media: headerMedia || undefined,
+        }),
+      });
+      toast.success(`Test sent to ${testPhone.trim()} — check WhatsApp`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Test failed', { duration: 8000 });
+    } finally { setTestSending(false); }
+  }
   const [uploadingHeader, setUploadingHeader] = useState(false);
   const headerFileRef                     = useRef<HTMLInputElement>(null);
   const [saving, setSaving]               = useState(false);
@@ -872,6 +894,30 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
                     placeholder={`Value for {{${n}}} — e.g. "Dear Customer" or {{contact_name}}`} className="input text-sm flex-1" />
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Send a test before creating (broadcast/drip) — same payload the
+              real send will use, so template/media problems surface now */}
+          {!isApi && form.template_id && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2">
+              <p className="text-sm font-semibold text-emerald-800 flex items-center gap-2">
+                <Send size={14} /> Send a test first
+              </p>
+              <p className="text-xs text-emerald-600">
+                Sends this template (with the values above) to one number so you can verify it before launching.
+              </p>
+              <div className="flex items-center gap-2">
+                <input value={testPhone} onChange={(e) => setTestPhone(e.target.value)}
+                  placeholder="e.g. 919876543210" className="input text-sm flex-1" />
+                <button type="button" onClick={sendPreCreateTest} disabled={testSending}
+                  className="btn-secondary text-sm flex items-center gap-1.5 flex-shrink-0 disabled:opacity-60">
+                  {testSending ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Send Test
+                </button>
+              </div>
+              <p className="text-[11px] text-emerald-600/80">
+                Note: {'{{contact_name}}'} / {'{{contact_phone}}'} placeholders resolve per contact — in the test they go as-is.
+              </p>
             </div>
           )}
 
