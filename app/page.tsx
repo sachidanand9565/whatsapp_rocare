@@ -1,24 +1,16 @@
 import Link from 'next/link';
+import LogoMark from './components/LogoMark';
 import {
-  MessageCircle, Send, Users, PhoneCall, Bot, Database, BarChart3, Code2,
+  Send, Users, PhoneCall, Bot, Database, BarChart3, Code2,
   BellRing, CheckCheck, ShieldCheck, Zap, ArrowRight, Check, Webhook, Mic,
 } from 'lucide-react';
 
 /**
  * Public landing page — Limbu AI provides the WhatsApp Business API platform
  * (campaigns, shared inbox, calling, chatbot, CRM, developer API).
- * Logo is a placeholder mark for now — swap the <LogoMark/> block when the
- * final logo arrives.
+ * Logo placeholder lives in app/components/LogoMark.tsx — swap it there
+ * when the final logo arrives (landing/login/signup all update).
  */
-
-function LogoMark({ size = 'md' }: { size?: 'md' | 'lg' }) {
-  return (
-    <span className={`inline-flex items-center justify-center rounded-xl bg-gradient-to-br from-whatsapp-green to-whatsapp-teal text-white shadow-md
-      ${size === 'lg' ? 'w-12 h-12' : 'w-9 h-9'}`}>
-      <MessageCircle size={size === 'lg' ? 26 : 20} strokeWidth={2.4} />
-    </span>
-  );
-}
 
 const FEATURES = [
   {
