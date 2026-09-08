@@ -11,6 +11,8 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'WhatsApp Panel';
   event.waitUntil(self.registration.showNotification(title, {
     body:  data.body || '',
+    icon:  '/icon-192.png',                // brand mark in the notification
+    badge: '/favicon-32.png',              // monochrome-ish status-bar badge (Android)
     tag:   data.tag || undefined,          // same tag → re-ring replaces, no pile-up
     renotify: !!data.tag,
     requireInteraction: true,              // stay up for the whole ring

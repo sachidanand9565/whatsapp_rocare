@@ -1,15 +1,29 @@
-import { MessageCircle } from 'lucide-react';
-
 /**
- * Brand mark placeholder — used on the landing, login and signup pages.
- * When the final logo arrives, swap the contents of this ONE component
- * (e.g. render an <Image src="/logo.png" …/>) and every page updates.
+ * Brand mark — the Limbu.ai badge.
+ * Source asset lives at public/logo.png (256px, trimmed square).
+ * Used on the landing, login and signup pages and in the dashboard sidebar,
+ * so changing the file or this component updates every surface at once.
+ *
+ * Plain <img> on purpose: next/image's optimizer needs `sharp` as a production
+ * dependency, which this project doesn't ship, and the asset is already
+ * served at the right size.
  */
-export default function LogoMark({ size = 'md' }: { size?: 'md' | 'lg' }) {
+export default function LogoMark({
+  size = 'md',
+  className = '',
+}: {
+  size?: 'sm' | 'md' | 'lg';
+  className?: string;
+}) {
+  const box = size === 'lg' ? 'w-12 h-12' : size === 'sm' ? 'w-8 h-8' : 'w-9 h-9';
   return (
-    <span className={`inline-flex items-center justify-center rounded-xl bg-gradient-to-br from-whatsapp-green to-whatsapp-teal text-white shadow-md
-      ${size === 'lg' ? 'w-12 h-12' : 'w-9 h-9'}`}>
-      <MessageCircle size={size === 'lg' ? 26 : 20} strokeWidth={2.4} />
-    </span>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/logo.png"
+      alt="Limbu.ai"
+      width={48}
+      height={48}
+      className={`${box} object-contain flex-shrink-0 ${className}`}
+    />
   );
 }

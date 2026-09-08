@@ -8,7 +8,7 @@ import {
 /**
  * Public landing page — Limbu AI provides the WhatsApp Business API platform
  * (campaigns, shared inbox, calling, chatbot, CRM, developer API).
- * Logo placeholder lives in app/components/LogoMark.tsx — swap it there
+ * Brand mark lives in app/components/LogoMark.tsx (renders public/logo.png)
  * when the final logo arrives (landing/login/signup all update).
  */
 

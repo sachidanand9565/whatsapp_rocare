@@ -8,6 +8,7 @@ import {
   History, CreditCard, UserCog, ChevronRight, Plus, Check, ShieldCheck, GitBranch, ShoppingCart, Building2, Target, PhoneCall,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import LogoMark from '../components/LogoMark';
 
 type Role = 'admin' | 'manager' | 'agent';
 
@@ -179,7 +180,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       `}>
         {/* Logo */}
         <div className="flex items-center justify-center py-4 border-b border-white/10">
-          <span className="text-xl">💬</span>
+          <Link href="/dashboard" title="Limbu.ai">
+            <LogoMark size="sm" />
+          </Link>
           <button className="absolute right-2 lg:hidden" onClick={() => setOpen(false)}>
             <X size={16} />
           </button>

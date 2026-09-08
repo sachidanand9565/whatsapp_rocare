@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { adminFetch } from '@/hooks/useAdminApi';
 import { LayoutDashboard, Building2, ShieldAlert, LogOut, Loader2 } from 'lucide-react';
+import LogoMark from '../components/LogoMark';
 
 const NAV = [
   { label: 'Overview',   href: '/admin',            icon: LayoutDashboard },
@@ -50,6 +51,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     <div className="min-h-screen flex bg-gray-50">
       <aside className="w-60 bg-gray-900 text-gray-300 flex flex-col flex-shrink-0">
         <div className="px-5 py-4 border-b border-gray-800">
+          <div className="flex items-center gap-2.5 mb-3">
+            <LogoMark size="sm" />
+            <span className="text-white font-bold tracking-tight">Limbu<span className="text-whatsapp-green">.ai</span></span>
+          </div>
           <p className="text-white font-bold flex items-center gap-2"><ShieldAlert size={16} className="text-red-400" /> Super Admin</p>
           <p className="text-[10px] text-gray-500 mt-0.5">Platform control panel</p>
         </div>
