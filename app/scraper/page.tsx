@@ -113,14 +113,36 @@ export default function ScraperPage() {
     return { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` };
   }
 
+  /**
+   * Safe JSON reader — a plain res.json() throws the opaque
+   * "Unexpected end of JSON input" whenever the body is empty
+   * (gateway timeout, n8n webhook with no response node, 502/504…).
+   * Read the text first so we can report what actually happened.
+   */
+  async function readJson(res: Response, label: string) {
+    const text = await res.text();
+    if (!text.trim()) {
+      throw new Error(
+        res.ok
+          ? `${label}: empty response from server (request may have timed out)`
+          : `${label}: server returned ${res.status} with no body`
+      );
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(`${label}: invalid response from server (status ${res.status})`);
+    }
+  }
+
   // ── Load sessions list ───────────────────────────────────────
   async function loadSessions() {
     setSessionsLoading(true);
     try {
       const res  = await fetch('/api/scraper', { headers: authHeaders() });
-      const data = await res.json();
+      const data = await readJson(res, 'Load lists');
       setSessions(data.data || []);
-    } catch { toast.error('Failed to load sessions'); }
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to load sessions'); }
     finally { setSessionsLoading(false); }
   }
 
@@ -138,8 +160,8 @@ export default function ScraperPage() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ city: city.trim(), category: category.trim(), limit }),
       });
-      if (!res.ok) throw new Error(`API error: ${res.status}`);
-      const data = await res.json();
+      if (!res.ok) throw new Error(`Scraper service error: ${res.status}`);
+      const data = await readJson(res, 'Scraper service');
       const list: ScrapedPlace[] = Array.isArray(data) ? data : data.data || data.results || [];
       if (list.length === 0) { toast.error('No results found'); setScraped(true); return; }
 
@@ -149,7 +171,8 @@ export default function ScraperPage() {
         headers: authHeaders(),
         body:    JSON.stringify({ city: city.trim(), category: category.trim(), places: list }),
       });
-      const saveData = await saveRes.json();
+      const saveData = await readJson(saveRes, 'Save list');
+      if (!saveRes.ok) throw new Error(saveData.error || 'Failed to save the scraped list');
 
       setResults(list);
       setScraped(true);
@@ -185,9 +208,9 @@ export default function ScraperPage() {
     setDetailLoading(true);
     try {
       const res  = await fetch(`/api/scraper/${session.id}`, { headers: authHeaders() });
-      const data = await res.json();
+      const data = await readJson(res, 'Load list');
       setActiveSession({ ...session, places: data.data?.places || [] });
-    } catch { toast.error('Failed to load data'); }
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to load data'); }
     finally { setDetailLoading(false); }
   }
 
@@ -205,11 +228,12 @@ export default function ScraperPage() {
   // ── Place edit/delete helpers ────────────────────────────────
   async function persistPlaces(newPlaces: ScrapedPlace[]) {
     if (!activeSession?.id) return;
-    await fetch(`/api/scraper/${activeSession.id}`, {
+    const res = await fetch(`/api/scraper/${activeSession.id}`, {
       method: 'PUT',
       headers: authHeaders(),
       body: JSON.stringify({ places: newPlaces }),
     });
+    if (!res.ok) { toast.error(`Failed to save changes (${res.status})`); return; }
     setActiveSession((prev) => prev ? { ...prev, places: newPlaces, total_count: newPlaces.length, phone_count: newPlaces.filter((p) => p.phone).length } : prev);
     setSessions((prev) => prev.map((s) => s.id === activeSession.id ? { ...s, total_count: newPlaces.length, phone_count: newPlaces.filter((p) => p.phone).length } : s));
   }
@@ -275,11 +299,11 @@ export default function ScraperPage() {
     setCampaignName(`${activeSession?.city} ${activeSession?.category} - ${new Date().toLocaleDateString('en-IN')}`);
     try {
       const res  = await fetch('/api/templates', { headers: authHeaders() });
-      const data = await res.json();
+      const data = await readJson(res, 'Load templates');
       const list: Template[] = (data.data || []).filter((t: Template) => t.status === 'APPROVED');
       setTemplates(list);
       if (list.length > 0) applyTemplate(list[0]);
-    } catch { toast.error('Failed to load templates'); }
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to load templates'); }
     finally { setTemplatesLoading(false); }
   }
 
@@ -341,13 +365,13 @@ export default function ScraperPage() {
           csv_contacts:  csvContacts,
         }),
       });
-      const data = await res.json();
+      const data = await readJson(res, 'Create campaign');
       if (!res.ok) { toast.error(data.error || 'Failed to create campaign'); return; }
       toast.success(`Campaign created! ${csvContacts.length} contacts added.`);
       setShowCampaign(false);
       router.push('/campaigns');
-    } catch {
-      toast.error('Error creating campaign');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error creating campaign');
     } finally {
       setSending(false);
     }
