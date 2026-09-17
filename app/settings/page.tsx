@@ -44,8 +44,8 @@ interface CRMIntegration {
 interface FailedWebhook {
   id:            number;
   name:          string;
-  campaign_id:   number;
-  campaign_name: string;
+  campaign_ids:  number[];
+  campaigns:     { id: number; name: string }[];
   api_url:       string;
   api_method:    'POST' | 'GET';
   api_headers:   string | null;
@@ -472,7 +472,8 @@ export default function SettingsPage() {
   // Failed message webhooks
   const [fwList, setFwList]           = useState<FailedWebhook[]>([]);
   const [fwCampaigns, setFwCampaigns] = useState<Campaign[]>([]);
-  const [fwForm, setFwForm]           = useState({ name: '', campaign_id: '', api_url: '', api_method: 'POST', api_headers: '' });
+  const [fwForm, setFwForm]           = useState({ name: '', campaign_ids: [] as number[], api_url: '', api_method: 'POST', api_headers: '' });
+  const [fwCampaignSearch, setFwCampaignSearch] = useState('');
   const [fwAdding, setFwAdding]       = useState(false);
   const [fwEditId, setFwEditId]       = useState<number | null>(null);
   const [showFwHeaders, setShowFwHeaders] = useState(false);
@@ -684,12 +685,13 @@ export default function SettingsPage() {
 
   async function addFw(e: React.FormEvent) {
     e.preventDefault();
-    if (!fwForm.name || !fwForm.campaign_id || !fwForm.api_url) return;
+    if (!fwForm.name || !fwForm.api_url) return;
+    if (fwForm.campaign_ids.length === 0) { toast.error('Select at least one campaign'); return; }
     setFwAdding(true);
     try {
       const body = JSON.stringify({
-        name:        fwForm.name,
-        campaign_id: Number(fwForm.campaign_id),
+        name:         fwForm.name,
+        campaign_ids: fwForm.campaign_ids,
         api_url:     fwForm.api_url,
         api_method:  fwForm.api_method,
         api_headers: fwForm.api_headers || null,
@@ -702,26 +704,39 @@ export default function SettingsPage() {
       toast.success(fwEditId ? 'Webhook updated!' : 'Failed message webhook added!');
       cancelFwEdit();
       loadFw();
-    } catch { toast.error(fwEditId ? 'Failed to update webhook' : 'Failed to add webhook'); }
+    } catch (err) {
+      toast.error(err instanceof Error && err.message ? err.message : fwEditId ? 'Failed to update webhook' : 'Failed to add webhook');
+    }
     finally   { setFwAdding(false); }
   }
 
   function startFwEdit(item: FailedWebhook) {
     setFwEditId(item.id);
     setFwForm({
-      name:        item.name,
-      campaign_id: String(item.campaign_id),
-      api_url:     item.api_url,
-      api_method:  item.api_method,
-      api_headers: item.api_headers || '',
+      name:         item.name,
+      campaign_ids: item.campaign_ids || [],
+      api_url:      item.api_url,
+      api_method:   item.api_method,
+      api_headers:  item.api_headers || '',
     });
+    setFwCampaignSearch('');
     setShowFwHeaders(!!item.api_headers);
   }
 
   function cancelFwEdit() {
     setFwEditId(null);
-    setFwForm({ name: '', campaign_id: '', api_url: '', api_method: 'POST', api_headers: '' });
+    setFwForm({ name: '', campaign_ids: [], api_url: '', api_method: 'POST', api_headers: '' });
+    setFwCampaignSearch('');
     setShowFwHeaders(false);
+  }
+
+  function toggleFwCampaign(id: number) {
+    setFwForm((f) => ({
+      ...f,
+      campaign_ids: f.campaign_ids.includes(id)
+        ? f.campaign_ids.filter((c) => c !== id)
+        : [...f.campaign_ids, id],
+    }));
   }
 
   async function toggleFw(item: FailedWebhook) {
@@ -2238,18 +2253,57 @@ Recording URLs expire — fetch fresh ones on each CRM view.`}</pre>
                 </div>
 
                 <div>
-                  <label className="form-label">Campaign *</label>
-                  <select value={fwForm.campaign_id}
-                    onChange={(e) => setFwForm({ ...fwForm, campaign_id: e.target.value })}
-                    className="input" required>
-                    <option value="">-- Select a campaign --</option>
-                    {fwCampaigns.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                  {fwCampaigns.length === 0 && (
+                  <div className="flex items-center justify-between">
+                    <label className="form-label">Campaigns *</label>
+                    <span className="text-xs text-gray-400">{fwForm.campaign_ids.length} selected</span>
+                  </div>
+                  {fwCampaigns.length === 0 ? (
                     <p className="text-xs text-gray-400 mt-1">No campaigns found. Create a campaign first.</p>
-                  )}
+                  ) : (() => {
+                    const q = fwCampaignSearch.trim().toLowerCase();
+                    const visible = q ? fwCampaigns.filter((c) => c.name.toLowerCase().includes(q)) : fwCampaigns;
+                    const allVisibleSelected = visible.length > 0 && visible.every((c) => fwForm.campaign_ids.includes(c.id));
+                    return (
+                      <div className="border border-gray-200 rounded-lg overflow-hidden">
+                        <div className="flex items-center gap-2 p-2 border-b border-gray-100 bg-gray-50">
+                          <input value={fwCampaignSearch}
+                            onChange={(e) => setFwCampaignSearch(e.target.value)}
+                            className="input py-1.5 text-xs flex-1 min-w-0" placeholder="Search campaigns..." />
+                          <button type="button"
+                            onClick={() => setFwForm((f) => ({
+                              ...f,
+                              campaign_ids: allVisibleSelected
+                                ? f.campaign_ids.filter((id) => !visible.some((c) => c.id === id))
+                                : Array.from(new Set([...f.campaign_ids, ...visible.map((c) => c.id)])),
+                            }))}
+                            disabled={visible.length === 0}
+                            className="text-xs text-whatsapp-teal font-medium whitespace-nowrap hover:underline disabled:opacity-40">
+                            {allVisibleSelected ? 'Unselect all' : 'Select all'}
+                          </button>
+                          {fwForm.campaign_ids.length > 0 && (
+                            <button type="button" onClick={() => setFwForm((f) => ({ ...f, campaign_ids: [] }))}
+                              className="text-xs text-gray-400 hover:text-red-500 whitespace-nowrap">Clear</button>
+                          )}
+                        </div>
+                        <div className="max-h-52 overflow-y-auto divide-y divide-gray-50">
+                          {visible.length === 0 && (
+                            <p className="text-xs text-gray-400 text-center py-4">No campaigns match &quot;{fwCampaignSearch}&quot;</p>
+                          )}
+                          {visible.map((c) => {
+                            const checked = fwForm.campaign_ids.includes(c.id);
+                            return (
+                              <label key={c.id}
+                                className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer text-sm transition-colors ${checked ? 'bg-green-50' : 'hover:bg-gray-50'}`}>
+                                <input type="checkbox" checked={checked} onChange={() => toggleFwCampaign(c.id)}
+                                  className="w-4 h-4 accent-whatsapp-teal flex-shrink-0" />
+                                <span className="truncate text-gray-700" title={c.name}>{c.name}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div>
@@ -2286,8 +2340,8 @@ Recording URLs expire — fetch fresh ones on each CRM view.`}</pre>
                   <p className="text-xs font-semibold text-gray-700 mb-1.5">Your API will receive this data:</p>
                   <pre className="bg-gray-900 text-green-400 rounded p-2 text-[10px] overflow-x-auto leading-relaxed whitespace-pre-wrap break-all">{`{
   "event":         "campaign_message_failed",
-  "campaign_id":   ${fwForm.campaign_id || 1},
-  "campaign_name": "${fwCampaigns.find((c) => String(c.id) === fwForm.campaign_id)?.name || 'Summer Sale'}",
+  "campaign_id":   ${fwForm.campaign_ids[0] || 1},
+  "campaign_name": "${fwCampaigns.find((c) => c.id === fwForm.campaign_ids[0])?.name || 'Summer Sale'}",
   "phone":         "919876543210",
   "contact_id":    42,
   "message_id":    101,
@@ -2295,6 +2349,11 @@ Recording URLs expire — fetch fresh ones on each CRM view.`}</pre>
   "workspace_id":  1,
   "failed_at":     "2024-01-15T10:30:00.000Z"
 }`}</pre>
+                  {fwForm.campaign_ids.length > 1 && (
+                    <p className="text-[11px] text-gray-500 mt-1.5">
+                      campaign_id / campaign_name will be the campaign whose message actually failed.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex gap-2">
@@ -2335,7 +2394,21 @@ Recording URLs expire — fetch fresh ones on each CRM view.`}</pre>
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-semibold text-gray-800">{item.name}</p>
                       <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">{item.api_method}</span>
-                      <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-medium">{item.campaign_name}</span>
+                    </div>
+                    <div className="flex items-center gap-1 flex-wrap mt-1.5">
+                      {(item.campaigns || []).slice(0, 3).map((c) => (
+                        <span key={c.id} title={c.name}
+                          className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-medium max-w-[180px] truncate">{c.name}</span>
+                      ))}
+                      {(item.campaigns || []).length > 3 && (
+                        <span title={item.campaigns.slice(3).map((c) => c.name).join('\n')}
+                          className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">
+                          +{item.campaigns.length - 3} more
+                        </span>
+                      )}
+                      {(item.campaigns || []).length === 0 && (
+                        <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">No campaign linked</span>
+                      )}
                     </div>
                     <p className="text-xs text-gray-400 truncate font-mono mt-1">{item.api_url}</p>
                   </div>

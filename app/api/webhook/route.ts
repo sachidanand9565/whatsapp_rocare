@@ -12,6 +12,7 @@ import { sendPushToWorkspace } from '@/lib/push';
 import { setRinging, clearRinging } from '@/lib/activeCalls';
 import { enqueueFlowJob } from '@/lib/queue';
 import { logCallStart, logCallEnded } from '@/lib/callLogs';
+import { linkTableExists } from '@/lib/failed-webhooks';
 
 // ---- GET: Verify webhook with Meta ----
 export async function GET(req: NextRequest) {
@@ -767,22 +768,34 @@ async function fireFailedWebhooks(
   contactId:   number,
   messageId:   number,
 ) {
+  // A webhook can be linked to many campaigns (failed_msg_webhook_campaigns);
+  // before that migration runs, only the single legacy campaign_id exists.
   const hooks = await query<RowDataPacket[]>(
-    `SELECT fw.api_url, fw.api_method, fw.api_headers, c.name AS campaign_name,
-            co.phone
-     FROM failed_msg_webhooks fw
-     JOIN campaigns c  ON c.id  = fw.campaign_id
-     JOIN contacts  co ON co.id = ?
-     WHERE fw.campaign_id = ? AND fw.workspace_id = ? AND fw.is_active = 1`,
-    [contactId, campaignId, workspaceId]
+    (await linkTableExists())
+      ? `SELECT fw.api_url, fw.api_method, fw.api_headers
+         FROM failed_msg_webhooks fw
+         JOIN failed_msg_webhook_campaigns x ON x.webhook_id = fw.id AND x.campaign_id = ?
+         WHERE fw.workspace_id = ? AND fw.is_active = 1`
+      : `SELECT fw.api_url, fw.api_method, fw.api_headers
+         FROM failed_msg_webhooks fw
+         WHERE fw.campaign_id = ? AND fw.workspace_id = ? AND fw.is_active = 1`,
+    [campaignId, workspaceId]
   );
   if (hooks.length === 0) return;
+
+  const info = await query<RowDataPacket[]>(
+    `SELECT c.name AS campaign_name, co.phone
+     FROM campaigns c
+     JOIN contacts co ON co.id = ?
+     WHERE c.id = ? LIMIT 1`,
+    [contactId, campaignId]
+  );
 
   const payload = JSON.stringify({
     event:         'campaign_message_failed',
     campaign_id:   campaignId,
-    campaign_name: hooks[0].campaign_name as string,
-    phone:         hooks[0].phone as string,
+    campaign_name: (info[0]?.campaign_name as string) || '',
+    phone:         (info[0]?.phone as string) || '',
     contact_id:    contactId,
     message_id:    messageId,
     status:        'failed',
