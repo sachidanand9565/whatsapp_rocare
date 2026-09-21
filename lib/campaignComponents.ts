@@ -5,6 +5,7 @@
  * send exercises EXACTLY the same payload logic as the real broadcast.
  */
 import { RowDataPacket } from 'mysql2';
+import { buildButtonComponents } from '@/lib/templateButtons';
 
 export function buildComponents(camp: RowDataPacket, contactPhone: string, contactName: string | null, rowVars: Record<string, string> = {}): object[] {
   const components: object[] = [];
@@ -50,6 +51,12 @@ export function buildComponents(camp: RowDataPacket, contactPhone: string, conta
   if (params.length > 0) {
     components.push({ type: 'body', parameters: params });
   }
+  // Button values from the bulk API (JSON arrays stored as internal row keys)
+  components.push(...buildButtonComponents(
+    camp.buttons,
+    parseJson<string[]>(merged._button_urls, []),
+    parseJson<string[]>(merged._button_payloads, []),
+  ));
   return components;
 }
 

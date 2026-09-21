@@ -12,6 +12,7 @@
  *   "templateParams":      ["John"],                  // positional vars
  *   "source":              "landing-page",             // optional
  *   "paramsFallbackValue": { "FirstName": "user" },
+ *   "buttonUrlParams":     ["LEAD123"],              // dynamic URL button {{1}} values (in button order)
  *   "media": {}, "buttons": [], "carouselCards": [], "location": {}, "attributes": {}
  * }
  */
@@ -20,6 +21,7 @@ import { requireAuth } from '@/lib/auth';
 import { query, execute, insert } from '@/lib/db';
 import { apiSuccess, apiError, normalizePhone, utcNow } from '@/lib/utils';
 import { sendTemplateMessage } from '@/lib/whatsapp';
+import { buildButtonComponents } from '@/lib/templateButtons';
 import { RowDataPacket } from 'mysql2';
 
 export async function POST(req: NextRequest) {
@@ -193,16 +195,8 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Button payloads — e.g. ["accept_123", "reject_123"]
-    const buttonPayloads = rawBody.buttonPayloads as string[] | undefined;
-    if (Array.isArray(buttonPayloads) && buttonPayloads.length > 0) {
-      buttonPayloads.forEach((pl, idx) => {
-        components.push({
-          type: 'button', sub_type: 'quick_reply', index: String(idx),
-          parameters: [{ type: 'payload', payload: pl }],
-        });
-      });
-    }
+    // Buttons — dynamic URL suffix e.g. ["LEAD123"], quick reply payloads e.g. ["accept_123", "reject_123"]
+    components.push(...buildButtonComponents(campaign.buttons, rawBody.buttonUrlParams, rawBody.buttonPayloads));
 
     // ── Send via Meta API ─────────────────────────────────────
     const result = await sendTemplateMessage(

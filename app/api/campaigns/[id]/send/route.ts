@@ -23,7 +23,8 @@
  *   "messages": [
  *     { "destination": "919876543210", "templateParams": ["John"] },
  *     { "destination": "919876543211", "templateParams": ["Priya"],
- *       "media": { "id": "123456789" } }                    // optional — per-message override (uploaded media id)
+ *       "media": { "id": "123456789" },                     // optional — per-message override (uploaded media id)
+ *       "buttonUrlParams": ["LEAD123"] }                     // optional — dynamic URL button {{1}} values
  *   ]
  * }
  * Media omitted → campaign's saved header media (or template default) is used.
@@ -35,6 +36,7 @@ import { requireAuth } from '@/lib/auth';
 import { query, execute, insert } from '@/lib/db';
 import { apiSuccess, apiError, normalizePhone, utcNow } from '@/lib/utils';
 import { sendTemplateMessage } from '@/lib/whatsapp';
+import { buildButtonComponents } from '@/lib/templateButtons';
 import { resolveCampaignId } from '@/lib/resolveCampaign';
 import { RowDataPacket } from 'mysql2';
 
@@ -50,6 +52,8 @@ interface BulkRow {
   variables?:      Record<string, string>;
   contactName?:    string;
   media?:          BulkMedia;   // per-message header media override
+  buttonUrlParams?: string[];   // dynamic URL {{1}} values
+  buttonPayloads?:  string[];   // quick reply payloads
 }
 
 /** "media_id:<id>" or a direct URL — the format buildComponents understands */
@@ -146,6 +150,7 @@ export async function POST(
       templateParams?:     string[];
       paramsFallbackValue?: Record<string, string>;
       buttonPayloads?:     string[];   // e.g. ["accept_123", "reject_123"]
+      buttonUrlParams?:    string[];   // dynamic URL {{1}} values, e.g. ["LEAD123"]
       // Legacy style
       phone?:              string;
       variables?:          Record<string, string>;
@@ -209,15 +214,8 @@ export async function POST(
         parameters: sortedKeys.map((k) => ({ type: 'text', text: variables[k] })),
       });
     }
-    // Button payloads — pass lead_id per button e.g. ["accept_123", "reject_123"]
-    if (Array.isArray(body.buttonPayloads) && body.buttonPayloads.length > 0) {
-      body.buttonPayloads.forEach((pl, idx) => {
-        components.push({
-          type: 'button', sub_type: 'quick_reply', index: String(idx),
-          parameters: [{ type: 'payload', payload: pl }],
-        });
-      });
-    }
+    // Buttons — dynamic URL suffix e.g. ["LEAD123"], quick reply payloads (lead_id per button) e.g. ["accept_123", "reject_123"]
+    components.push(...buildButtonComponents(campaign.buttons, body.buttonUrlParams, body.buttonPayloads));
 
     // ── Send via Meta API ────────────────────────────────────
     const result = await sendTemplateMessage(
@@ -319,6 +317,8 @@ async function queueBulk(campaignId: number, workspaceId: number, messages: Bulk
     // key — never leaks into body params (buildComponents filters non-numeric).
     const headerMedia = mediaToHeaderContent(m.media) || mediaToHeaderContent(defaultMedia);
     if (headerMedia) vars._header_media = headerMedia;
+    if (Array.isArray(m.buttonUrlParams) && m.buttonUrlParams.length > 0) vars._button_urls = JSON.stringify(m.buttonUrlParams);
+    if (Array.isArray(m.buttonPayloads)  && m.buttonPayloads.length > 0)  vars._button_payloads = JSON.stringify(m.buttonPayloads);
     const firstParam = m.templateParams?.[0];
     const autoName   = (firstParam && !firstParam.startsWith('$')) ? firstParam : null;
     rowsByPhone.set(phone, { phone, name: m.contactName || autoName || null, vars });

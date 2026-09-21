@@ -1685,6 +1685,16 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
   const [mediaUrl, setMediaUrl]           = useState('');
   const [mediaFileName, setMediaFileName] = useState('');
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  // Dynamic URL buttons (url ends with {{1}}) — Meta needs the suffix value on every send
+  const dynamicUrlButtons = (() => {
+    try {
+      const p = typeof campaign.buttons === 'string' ? JSON.parse(campaign.buttons || '[]') : (campaign.buttons || []);
+      return Array.isArray(p)
+        ? (p as { type?: string; text?: string; url?: string }[]).filter((b) => b.type === 'URL' && /\{\{\d+\}\}/.test(b.url || ''))
+        : [];
+    } catch { return []; }
+  })();
+  const [urlParams, setUrlParams] = useState<string[]>(() => dynamicUrlButtons.map(() => ''));
 
   async function uploadHeaderFile(file: File) {
     const ALLOWED: Record<string, number> = {
@@ -1728,6 +1738,10 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
   let parsedParams: string[] = [];
   try { parsedParams = JSON.parse(vars); } catch { /* shown in UI */ }
 
+  const urlParamsField = dynamicUrlButtons.length > 0
+    ? { buttonUrlParams: urlParams.map((v) => v.trim() || 'YOUR_URL_VALUE') }
+    : {};
+
   const bodyObj = {
     apiKey:              wsApiKey || 'YOUR_WORKSPACE_API_KEY',
     campaignName:        campaign.name,
@@ -1741,6 +1755,7 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
     location:            {},
     attributes:          {},
     paramsFallbackValue: buildFallback(parsedParams),
+    ...urlParamsField,
   };
 
   const curlCmd = `curl -X POST "${endpoint}" \\
@@ -1756,8 +1771,8 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
   const bulkBodyObj = {
     apiKey:   wsApiKey || 'YOUR_WORKSPACE_API_KEY',
     messages: [
-      { destination: phone || '919876543210', templateParams: parsedParams },
-      { destination: '919876543211',          templateParams: parsedParams },
+      { destination: phone || '919876543210', templateParams: parsedParams, ...urlParamsField },
+      { destination: '919876543211',          templateParams: parsedParams, ...urlParamsField },
     ],
   };
 
@@ -1770,6 +1785,7 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
     let templateParams: string[] = [];
     try { templateParams = JSON.parse(vars); } catch { toast.error('templateParams is not valid JSON array'); return; }
     if (!Array.isArray(templateParams)) { toast.error('templateParams must be a JSON array like ["John"]'); return; }
+    if (urlParams.some((v) => !v.trim())) { toast.error('Dynamic URL value required'); return; }
     setSending(true);
     try {
       await apiFetch('/api/campaigns/send', {
@@ -1780,6 +1796,7 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
           templateParams,
           paramsFallbackValue: buildFallback(templateParams),
           ...(Object.keys(mediaPayload).length > 0 ? { media: mediaPayload } : {}),
+          ...(urlParams.length > 0 ? { buttonUrlParams: urlParams.map((v) => v.trim()) } : {}),
         }),
       });
       toast.success(`Message sent to ${phone}!`);
@@ -1863,6 +1880,21 @@ function TestPanel({ campaign, onClose }: { campaign: CampaignDetail; onClose: (
               className="input font-mono text-xs resize-none w-full" rows={3}
               placeholder={'["John", "Order#123"]'} />
           </div>
+
+          {dynamicUrlButtons.map((b, i) => (
+            <div key={i}>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Dynamic URL — {b.text || `Button ${i + 1}`}{' '}
+                <span className="text-gray-400 font-normal text-xs">(value for {'{{1}}'})</span>
+              </label>
+              <input value={urlParams[i] || ''}
+                onChange={(e) => setUrlParams((prev) => prev.map((v, j) => (j === i ? e.target.value : v)))}
+                className="input font-mono text-sm w-full" placeholder="LEAD123" />
+              <p className="text-[10px] text-gray-400 mt-1 break-all">
+                {(b.url || '').replace(/\{\{\d+\}\}/, urlParams[i]?.trim() || '{{1}}')}
+              </p>
+            </div>
+          ))}
 
           <div>
             <div className="flex items-center justify-between mb-1">

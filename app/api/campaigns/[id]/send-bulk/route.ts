@@ -36,6 +36,8 @@ interface BulkRow {
   templateParams?: string[];
   variables?:      Record<string, string>;
   contactName?:    string;
+  buttonUrlParams?: string[];   // dynamic URL {{1}} values
+  buttonPayloads?:  string[];   // quick reply payloads
 }
 
 export async function POST(
@@ -118,6 +120,8 @@ export async function POST(
         vars = {};
         m.templateParams.forEach((v, i) => { vars[String(i + 1)] = v; });
       }
+      if (Array.isArray(m.buttonUrlParams) && m.buttonUrlParams.length > 0) vars._button_urls = JSON.stringify(m.buttonUrlParams);
+      if (Array.isArray(m.buttonPayloads)  && m.buttonPayloads.length > 0)  vars._button_payloads = JSON.stringify(m.buttonPayloads);
       const firstParam = m.templateParams?.[0];
       const autoName   = (firstParam && !firstParam.startsWith('$')) ? firstParam : null;
       rowsByPhone.set(phone, { phone, name: m.contactName || autoName || null, vars });
