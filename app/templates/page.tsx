@@ -4,7 +4,7 @@ import { apiFetch } from '@/hooks/useApi';
 import {
   Plus, CheckCircle, Clock, XCircle, X, PauseCircle,
   Image, FileText, Video, AlignLeft,
-  Link2, Phone, MessageSquare, Eye, Copy, Trash2,
+  Link2, Phone, MessageSquare, Eye, RefreshCw, Copy, Trash2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Template } from '@/types';
@@ -79,6 +79,7 @@ function extractVariables(text: string): string[] {
 export default function TemplatesPage() {
   const [templates, setTemplates]     = useState<Template[]>([]);
   const [loading, setLoading]         = useState(true);
+  const [syncing, setSyncing]         = useState(false);
   const [activeTab, setActiveTab]     = useState('ALL');
   const [showCreate, setShowCreate]   = useState(false);
   const [previewTpl, setPreviewTpl]   = useState<Template | null>(null);
@@ -90,6 +91,65 @@ export default function TemplatesPage() {
     apiFetch('/api/templates')
       .then((r) => setTemplates(r.data || []))
       .finally(() => setLoading(false));
+  }
+
+  async function silentSync() {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/templates/sync', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const changes = data.data?.changes || [];
+      if (data.data?.imported > 0) {
+        toast.success(`${data.data.imported} template(s) imported from Meta`, { duration: 5000 });
+      }
+      if (changes.length > 0 || data.data?.imported > 0) {
+        changes.forEach((c: { name: string; old_status: string; new_status: string }) => {
+          toast.success(`"${c.name}": ${c.old_status} → ${c.new_status}`, { duration: 5000 });
+        });
+        load();
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function syncFromMeta() {
+    setSyncing(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res   = await fetch('/api/templates/sync', {
+        method:  'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        toast.error(data.error || 'Sync failed');
+        return;
+      }
+
+      const { updated, changes, message } = data.data;
+
+      if (changes?.length > 0) {
+        // Show each change
+        changes.forEach((c: { name: string; old_status: string; new_status: string; old_category: string; new_category: string }) => {
+          const parts: string[] = [];
+          if (c.old_status   !== c.new_status)   parts.push(`Status: ${c.old_status} → ${c.new_status}`);
+          if (c.old_category !== c.new_category) parts.push(`Category: ${c.old_category} → ${c.new_category}`);
+          toast.success(`"${c.name}"\n${parts.join(' · ')}`, { duration: 5000 });
+        });
+      } else {
+        toast.success(message || 'Synced successfully');
+      }
+
+      load(); // Refresh list
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Sync error');
+    } finally {
+      setSyncing(false);
+    }
   }
 
   async function deleteTemplate(id: number, name: string) {
@@ -112,7 +172,7 @@ export default function TemplatesPage() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); silentSync(); }, []);
 
   // Filter by tab
   const filtered = useMemo(() =>
@@ -141,6 +201,15 @@ export default function TemplatesPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Sync button */}
+          <button
+            onClick={syncFromMeta}
+            disabled={syncing}
+            title="Sync status & category from Meta"
+            className="btn-secondary flex items-center gap-2 text-sm disabled:opacity-60">
+            <RefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
+            {syncing ? 'Syncing...' : 'Sync from Meta'}
+          </button>
           <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2 text-sm">
             <Plus size={16} /> New Template
           </button>
