@@ -103,7 +103,10 @@ export default function TemplatesPage() {
       if (!res.ok) return;
       const data = await res.json();
       const changes = data.data?.changes || [];
-      if (changes.length > 0) {
+      if (data.data?.imported > 0) {
+        toast.success(`${data.data.imported} template(s) imported from Meta`, { duration: 5000 });
+      }
+      if (changes.length > 0 || data.data?.imported > 0) {
         changes.forEach((c: { name: string; old_status: string; new_status: string }) => {
           toast.success(`"${c.name}": ${c.old_status} → ${c.new_status}`, { duration: 5000 });
         });

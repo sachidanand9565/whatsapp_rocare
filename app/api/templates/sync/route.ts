@@ -1,7 +1,8 @@
 /**
  * POST /api/templates/sync
  * Fetch latest status, category AND buttons/components from Meta
- * and update DB accordingly.
+ * and update DB accordingly. Templates that exist on Meta but not locally
+ * (created in Business Manager, or by another panel) are imported.
  */
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
@@ -75,6 +76,30 @@ function extractFooterText(components: MetaComponent[]): string {
   return components.find((c) => c.type === 'FOOTER')?.text || '';
 }
 
+// ── Meta values → our ENUM columns (an unmapped value fails the whole query) ──
+const STATUS_MAP: Record<string, string> = {
+  APPROVED: 'APPROVED', PENDING: 'PENDING', REJECTED: 'REJECTED', PAUSED: 'PAUSED',
+  DISABLED: 'PAUSED', PENDING_DELETION: 'PAUSED', DELETED: 'REJECTED',
+  IN_APPEAL: 'PENDING', LIMIT_EXCEEDED: 'PAUSED',
+};
+function safeStatus(status?: string): string {
+  return STATUS_MAP[(status || '').toUpperCase()] || 'PENDING';
+}
+function safeCategory(category?: string): string {
+  const c = (category || '').toUpperCase();
+  return ['UTILITY', 'MARKETING', 'AUTHENTICATION'].includes(c) ? c : 'UTILITY';
+}
+/** header_type column has no NONE/LOCATION — store TEXT for those. */
+function safeHeaderType(type?: string): string {
+  const t = (type || '').toUpperCase();
+  return ['TEXT', 'IMAGE', 'DOCUMENT', 'VIDEO'].includes(t) ? t : 'TEXT';
+}
+/** ["{{1}}","{{2}}"] — the placeholder list the templates table stores */
+function extractVariables(bodyText: string): string[] {
+  const found = bodyText.match(/\{\{(\d+)\}\}/g) || [];
+  return [...new Set(found)];
+}
+
 export async function POST(req: NextRequest) {
   try {
     const payload = await requireAuth(req);
@@ -117,6 +142,7 @@ export async function POST(req: NextRequest) {
 
     let synced  = 0;
     let updated = 0;
+    const matchedMetaIds = new Set<string>();
     const changes: {
       name: string;
       old_status: string; new_status: string;
@@ -125,25 +151,29 @@ export async function POST(req: NextRequest) {
     }[] = [];
 
     for (const local of localTemplates) {
-      // Match: meta_template_id first, then name+language
-      const meta = allMetaTemplates.find(
-        (m) =>
-          (local.meta_template_id && m.id === local.meta_template_id) ||
-          (m.name === local.name && m.language === local.language)
-      );
+      // Match: meta_template_id → name+language → name alone when it's unique
+      // on Meta (local rows often store "en" where Meta says "en_US"; without
+      // this the template would be re-imported as a duplicate).
+      const sameName = allMetaTemplates.filter((m) => m.name === local.name);
+      const meta =
+        allMetaTemplates.find((m) => local.meta_template_id && m.id === local.meta_template_id) ||
+        sameName.find((m) => m.language === local.language) ||
+        (sameName.length === 1 ? sameName[0] : undefined);
       if (!meta) continue;
 
+      matchedMetaIds.add(meta.id);
       synced++;
 
       const oldStatus   = (local.status   as string).toUpperCase();
       const oldCategory = (local.category as string).toUpperCase();
-      const newStatus   = meta.status.toUpperCase();
-      const newCategory = meta.category.toUpperCase();
+      const newStatus   = safeStatus(meta.status);
+      const newCategory = safeCategory(meta.category);
 
       // Extract buttons + content from Meta components
       const metaButtons    = extractButtons(meta.components);
       const metaBodyText   = extractBodyText(meta.components, newCategory);
       const metaHeader     = extractHeaderInfo(meta.components);
+      const metaHeaderType = metaHeader.type === 'NONE' ? 'NONE' : safeHeaderType(metaHeader.type);
       const metaFooter     = extractFooterText(meta.components);
 
       const statusChanged   = oldStatus   !== newStatus;
@@ -170,7 +200,7 @@ export async function POST(req: NextRequest) {
           // body_text
           metaBodyText, metaBodyText,
           // header_type
-          metaHeader.type, metaHeader.type,
+          metaHeaderType, metaHeaderType,
           // header_content
           metaHeader.content, metaHeader.content,
           // footer_text
@@ -192,14 +222,59 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ── Import templates that live on Meta but not in our DB ──
+    // (made in Business Manager, or before this workspace was connected)
+    const seenLocally = new Set(
+      localTemplates.map((t) => `${(t.name as string).toLowerCase()}|${((t.language as string) || 'en').toLowerCase()}`)
+    );
+    const imported: string[] = [];
+
+    for (const meta of allMetaTemplates) {
+      if (matchedMetaIds.has(meta.id)) continue;
+      const key = `${meta.name.toLowerCase()}|${(meta.language || 'en').toLowerCase()}`;
+      if (seenLocally.has(key)) continue;   // same name+language already imported in this run
+      seenLocally.add(key);
+
+      const category = safeCategory(meta.category);
+      const bodyText = extractBodyText(meta.components, category);
+      if (!bodyText) continue;              // body_text is NOT NULL — skip templates we can't render
+      const header   = extractHeaderInfo(meta.components);
+
+      await execute(
+        `INSERT INTO templates
+           (workspace_id, name, language, category, status, header_type, header_content,
+            body_text, footer_text, buttons, variables, meta_template_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          payload.workspaceId,
+          meta.name,
+          meta.language || 'en',
+          category,
+          safeStatus(meta.status),
+          safeHeaderType(header.type),
+          header.type === 'NONE' ? '' : header.content,
+          bodyText,
+          extractFooterText(meta.components),
+          JSON.stringify(extractButtons(meta.components)),
+          JSON.stringify(extractVariables(bodyText)),
+          meta.id,
+        ]
+      );
+      imported.push(meta.name);
+    }
+
+    const parts: string[] = [];
+    if (updated > 0)          parts.push(`${updated} template(s) synced from Meta`);
+    if (imported.length > 0)  parts.push(`${imported.length} new template(s) imported`);
+
     return apiSuccess({
       total_on_meta: allMetaTemplates.length,
       local_matched: synced,
       updated,
+      imported: imported.length,
+      imported_names: imported,
       changes,
-      message: updated > 0
-        ? `${updated} template(s) synced from Meta`
-        : 'All templates already up to date',
+      message: parts.length > 0 ? parts.join(' · ') : 'All templates already up to date',
     });
 
   } catch (err: unknown) {
