@@ -4,7 +4,7 @@ import { adminFetch } from '@/hooks/useAdminApi';
 import toast from 'react-hot-toast';
 import {
   Search, Loader2, Ban, CheckCircle, Trash2, ExternalLink, ChevronRight,
-  Building2, Users, UserPlus, Megaphone, MessageSquare, ArrowDownLeft,
+  Building2, Users, UserPlus, Megaphone, MessageSquare, ArrowDownLeft, RefreshCw,
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -37,6 +37,7 @@ export default function AdminWorkspaces() {
   const [detail, setDetail]       = useState<Detail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [busy, setBusy]           = useState(false);
+  const [syncingTemplates, setSyncingTemplates] = useState(false);
   // Live Meta status (real connection check)
   const [metaStatus, setMetaStatus] = useState<{ status: string; quality_rating?: string; message?: string; code?: number; verified_name?: string } | null>(null);
   const [loadingMeta, setLoadingMeta] = useState(false);
@@ -104,6 +105,18 @@ export default function AdminWorkspaces() {
       window.open(`/auth/sso?code=${encodeURIComponent(code)}`, '_blank');
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed'); }
     finally { setBusy(false); }
+  }
+
+  // Template sync lives here only — project users can't pull from Meta themselves
+  async function syncTemplates(id: number) {
+    setSyncingTemplates(true);
+    try {
+      const r = await adminFetch(`/api/admin/workspaces/${id}/sync-templates`, { method: 'POST' });
+      toast.success(r.data?.message || 'Templates synced', { duration: 5000 });
+      const names: string[] = r.data?.imported_names || [];
+      if (names.length > 0) toast.success(`Imported: ${names.slice(0, 5).join(', ')}${names.length > 5 ? '…' : ''}`, { duration: 6000 });
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Sync failed', { duration: 6000 }); }
+    finally { setSyncingTemplates(false); }
   }
 
   async function removeProject(id: number, name: string) {
@@ -283,6 +296,12 @@ export default function AdminWorkspaces() {
                   <button onClick={() => patch(detail.project.id, { is_active: 1 })} disabled={busy}
                     className="text-xs px-2.5 py-1 rounded-lg text-green-700 bg-green-50 hover:bg-green-100 flex items-center gap-1"><CheckCircle size={13} /> Activate</button>
                 )}
+                <button onClick={() => syncTemplates(detail.project.id)} disabled={busy || syncingTemplates}
+                  title="Pull this project's templates from Meta (status, content and new ones)"
+                  className="text-xs px-2.5 py-1 rounded-lg text-blue-700 bg-blue-50 hover:bg-blue-100 flex items-center gap-1 disabled:opacity-50">
+                  <RefreshCw size={13} className={syncingTemplates ? 'animate-spin' : ''} />
+                  {syncingTemplates ? 'Syncing…' : 'Sync templates'}
+                </button>
                 <button onClick={() => removeProject(detail.project.id, detail.project.name)} disabled={busy}
                   className="text-xs px-2.5 py-1 rounded-lg text-red-600 bg-red-50 hover:bg-red-100 flex items-center gap-1 ml-auto"><Trash2 size={13} /> Delete</button>
               </div>
