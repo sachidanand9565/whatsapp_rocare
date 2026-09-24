@@ -5,7 +5,7 @@ import { apiFetch } from '@/hooks/useApi';
 import {
   MessageSquare, Users, Megaphone, CheckCircle, BookOpen,
   TrendingUp, Facebook, Settings, RefreshCw,
-  Copy, ExternalLink, BarChart3, Bot, ChevronRight, Wifi, WifiOff,
+  Copy, ExternalLink, BarChart3, Bot, ChevronRight, Wifi, WifiOff, AlertTriangle,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import toast from 'react-hot-toast';
@@ -35,6 +35,9 @@ interface Summary {
 
 interface WaStatus {
   connected:      boolean;
+  state?:         string;   // live | flagged | restricted | banned | …
+  state_label?:   string;
+  state_reason?:  string | null;
   phone_number?:  string;
   verified_name?: string;
   name_status?:   string;
@@ -54,7 +57,14 @@ export default function DashboardPage() {
   const [statusLoading, setStatusLoading] = useState(true);
   const [userRole, setUserRole]     = useState('');
 
-  const isConnected = !!(workspace?.phone_number_id && workspace?.waba_id && workspace?.is_active);
+  const hasCreds = !!(workspace?.phone_number_id && workspace?.waba_id && workspace?.is_active);
+  // Meta's live state wins — a banned/restricted number has credentials too
+  const state       = statusLoading ? (hasCreds ? 'live' : 'not_connected') : (waStatus?.state || (hasCreds ? 'live' : 'not_connected'));
+  const isConnected = state === 'live' || state === 'flagged';
+  const isHealthy   = state === 'live';
+  const stateLabel  = statusLoading && hasCreds ? 'LIVE' : (waStatus?.state_label || (hasCreds ? 'LIVE' : 'NOT CONNECTED'));
+  // Banned/restricted/expired need the loudest treatment; flagged is a warning
+  const stateTone   = isHealthy ? 'good' : state === 'flagged' || state === 'pending' ? 'warn' : 'bad';
 
   useEffect(() => {
     setUserRole(localStorage.getItem('userRole') || '');
@@ -100,13 +110,14 @@ export default function DashboardPage() {
 
         {/* API Status pill */}
         <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border ${
-          isConnected
-            ? 'bg-green-50 border-green-200 text-green-700'
-            : 'bg-red-50 border-red-200 text-red-600'
-        }`}>
-          {isConnected
-            ? <><Wifi size={12} className="text-green-500" /> WA API: LIVE</>
-            : <><WifiOff size={12} /> WA API: NOT CONNECTED</>}
+          stateTone === 'good' ? 'bg-green-50 border-green-200 text-green-700'
+          : stateTone === 'warn' ? 'bg-yellow-50 border-yellow-200 text-yellow-700'
+          : 'bg-red-50 border-red-200 text-red-600'
+        }`}
+          title={waStatus?.state_reason || undefined}>
+          {stateTone === 'good'
+            ? <><Wifi size={12} className="text-green-500" /> WA API: {stateLabel}</>
+            : <><WifiOff size={12} /> WA API: {stateLabel}</>}
         </div>
 
         {/* Plan badge */}
@@ -128,9 +139,9 @@ export default function DashboardPage() {
 
           {/* API Status card */}
           <div className={`rounded-xl border p-5 ${
-            isConnected
-              ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200'
-              : 'bg-gradient-to-r from-orange-50 to-yellow-50 border-orange-200'
+            stateTone === 'good' ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200'
+            : stateTone === 'warn' ? 'bg-gradient-to-r from-orange-50 to-yellow-50 border-orange-200'
+            : 'bg-gradient-to-r from-red-50 to-orange-50 border-red-200'
           }`}>
             <div className="flex flex-wrap gap-6 items-start">
 
@@ -138,10 +149,12 @@ export default function DashboardPage() {
               <div>
                 <p className="text-xs text-gray-500 font-medium mb-1">WhatsApp Business API</p>
                 <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold ${
-                  isConnected ? 'bg-green-500 text-white' : 'bg-orange-400 text-white'
+                  stateTone === 'good' ? 'bg-green-500 text-white'
+                  : stateTone === 'warn' ? 'bg-orange-400 text-white'
+                  : 'bg-red-500 text-white'
                 }`}>
                   <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                  {isConnected ? 'LIVE' : 'NOT CONNECTED'}
+                  {stateLabel}
                 </div>
               </div>
 
@@ -189,12 +202,20 @@ export default function DashboardPage() {
                 </>
               )}
 
-              {!isConnected && (
+              {state === 'not_connected' && (
                 <div className="flex items-center gap-3 ml-auto">
                   <Link href="/settings"
                     className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors">
                     <Facebook size={15} /> Connect WhatsApp
                   </Link>
+                </div>
+              )}
+
+              {/* Why the number can't send right now */}
+              {waStatus?.state_reason && stateTone !== 'good' && (
+                <div className="w-full bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700 flex items-start gap-2">
+                  <span className="font-bold flex-shrink-0">⚠️</span>
+                  <span>{waStatus.state_reason}</span>
                 </div>
               )}
 
@@ -326,16 +347,14 @@ export default function DashboardPage() {
                   )}
                 </div>
                 <div>
-                  {isConnected ? (
-                    <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">
-                      <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                      LIVE
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-red-600 bg-red-50 border border-red-200 px-2.5 py-1 rounded-full">
-                      NOT CONNECTED
-                    </span>
-                  )}
+                  <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full border ${
+                    stateTone === 'good' ? 'text-green-700 bg-green-50 border-green-200'
+                    : stateTone === 'warn' ? 'text-yellow-700 bg-yellow-50 border-yellow-200'
+                    : 'text-red-600 bg-red-50 border-red-200'
+                  }`}>
+                    {stateTone === 'good' && <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />}
+                    {stateLabel}
+                  </span>
                 </div>
               </div>
 
@@ -357,17 +376,31 @@ export default function DashboardPage() {
           </div>
 
           {/* ── Connect / Status ── */}
-          {!isConnected ? (
+          {state === 'not_connected' ? (
             <Link href="/settings"
               className="flex items-center justify-center gap-2 w-full py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm">
               <Facebook size={16} /> Connect WhatsApp Business
             </Link>
-          ) : (
+          ) : stateTone === 'good' ? (
             <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 flex items-center gap-3">
               <CheckCircle size={16} className="text-green-600 flex-shrink-0" />
               <div>
                 <p className="text-sm font-semibold text-green-800">WhatsApp API — LIVE</p>
                 <p className="text-xs text-green-600">Receiving & sending messages</p>
+              </div>
+            </div>
+          ) : (
+            <div className={`rounded-xl px-4 py-3 flex items-center gap-3 border ${
+              stateTone === 'warn' ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200'
+            }`}>
+              <AlertTriangle size={16} className={`flex-shrink-0 ${stateTone === 'warn' ? 'text-yellow-600' : 'text-red-600'}`} />
+              <div className="min-w-0">
+                <p className={`text-sm font-semibold ${stateTone === 'warn' ? 'text-yellow-800' : 'text-red-800'}`}>
+                  WhatsApp API — {stateLabel}
+                </p>
+                <p className={`text-xs ${stateTone === 'warn' ? 'text-yellow-700' : 'text-red-600'}`}>
+                  {waStatus?.state_reason || 'Meta is limiting this number — sending may fail'}
+                </p>
               </div>
             </div>
           )}
