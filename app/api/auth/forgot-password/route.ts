@@ -62,6 +62,10 @@ export async function POST(req: NextRequest) {
     return ok;
   } catch (err) {
     console.error('[forgot-password]', err);
+    // Setup miss — say so instead of a blank "Server error"
+    if ((err as { code?: string })?.code === 'ER_NO_SUCH_TABLE') {
+      return apiError('Password reset is not set up yet — run migration-password-reset.sql on the database', 500);
+    }
     return apiError('Server error', 500);
   }
 }
