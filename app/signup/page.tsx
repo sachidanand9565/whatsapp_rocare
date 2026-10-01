@@ -1,9 +1,9 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import LogoMark from '../components/LogoMark';
-import { User, Mail, Lock, Building2, Eye, EyeOff, Loader2, ArrowRight, Check } from 'lucide-react';
+import { User, Mail, Lock, Building2, Eye, EyeOff, Loader2, ArrowRight, ArrowLeft, Check, KeyRound } from 'lucide-react';
 
 const PERKS = [
   'Connect your number with Meta’s official Embedded Signup',
@@ -12,33 +12,74 @@ const PERKS = [
   'Chatbot, calling, CRM and developer API included',
 ];
 
+const RESEND_SECONDS = 45;
+
 export default function SignupPage() {
   const [form, setForm]       = useState({ name: '', email: '', password: '', workspaceName: '' });
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Step 2: the emailed code must check out before the account is created
+  const [otpStep, setOtpStep]   = useState(false);
+  const [otp, setOtp]           = useState('');
+  const [cooldown, setCooldown] = useState(0);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
 
   function onChange(e: React.ChangeEvent<HTMLInputElement>) {
     setForm({ ...form, [e.target.name]: e.target.value });
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function post(url: string, body: Record<string, string>) {
+    const res  = await fetch(url, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Something went wrong');
+    return data.data;
+  }
+
+  // Step 1 -> email the code
+  async function handleSubmit(e?: React.FormEvent) {
+    e?.preventDefault();
     if (form.password.length < 8) { toast.error('Password must be at least 8 characters'); return; }
     setLoading(true);
     try {
-      const res  = await fetch('/api/auth/signup', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(form),
+      await post('/api/auth/signup/send-otp', { email: form.email.trim() });
+      toast.success(`Code sent to ${form.email.trim()}`);
+      setOtpStep(true);
+      setCooldown(RESEND_SECONDS);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not send the code');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Step 2 -> verify the code, then create the account with the token it returns
+  async function verifyAndCreate(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const { verifyToken } = await post('/api/auth/signup/verify-otp', { email: form.email.trim(), otp });
+      const data = await post('/api/auth/signup', {
+        name:          form.name,
+        password:      form.password,
+        workspaceName: form.workspaceName,
+        verifyToken,
       });
-      const data = await res.json();
-      if (!res.ok) { toast.error(data.error || 'Signup failed'); return; }
-      localStorage.setItem('token', data.data.token);
-      localStorage.setItem('workspaceId', String(data.data.workspaceId));
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('workspaceId', String(data.workspaceId));
       toast.success('Account created! Welcome 🎉');
       // Hard redirect so the browser sends the auth cookie to middleware
       setTimeout(() => { window.location.href = '/dashboard'; }, 500);
-    } finally {
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Signup failed');
       setLoading(false);
     }
   }
@@ -98,9 +139,49 @@ export default function SignupPage() {
 
         <div className="flex-1 flex items-center justify-center">
           <div className="w-full max-w-md">
-            <h2 className="text-3xl font-extrabold tracking-tight text-gray-900">Create your account</h2>
-            <p className="text-gray-500 mt-2">Free to start — send WhatsApp campaigns today.</p>
+            <h2 className="text-3xl font-extrabold tracking-tight text-gray-900">
+              {otpStep ? 'Verify your email' : 'Create your account'}
+            </h2>
+            <p className="text-gray-500 mt-2">
+              {otpStep
+                ? <>We sent a 6-digit code to <span className="font-semibold text-gray-700">{form.email}</span>. It expires in 10 minutes.</>
+                : 'Free to start — send WhatsApp campaigns today.'}
+            </p>
 
+            {otpStep ? (
+              <>
+                <form onSubmit={verifyAndCreate} className="mt-8 space-y-5">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">Verification code</label>
+                    <div className="relative">
+                      <KeyRound size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                      <input
+                        inputMode="numeric" autoFocus required value={otp}
+                        onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        className="w-full border border-gray-300 rounded-xl pl-10 pr-3.5 py-3 font-mono text-lg tracking-[0.4em] focus:outline-none focus:ring-2 focus:ring-whatsapp-green focus:border-transparent transition-shadow"
+                        placeholder="123456"
+                      />
+                    </div>
+                  </div>
+                  <button type="submit" disabled={loading || otp.length !== 6}
+                    className="w-full inline-flex items-center justify-center gap-2 bg-whatsapp-green hover:bg-whatsapp-teal disabled:opacity-60 text-white font-bold py-3.5 rounded-xl transition-colors shadow-lg shadow-green-200">
+                    {loading
+                      ? <><Loader2 size={17} className="animate-spin" /> Creating account…</>
+                      : <>Verify &amp; create account <ArrowRight size={17} /></>}
+                  </button>
+                </form>
+                <div className="mt-5 flex items-center justify-between text-sm">
+                  <button onClick={() => { setOtpStep(false); setOtp(''); }}
+                    className="text-gray-500 hover:text-gray-700 inline-flex items-center gap-1">
+                    <ArrowLeft size={14} /> Edit details
+                  </button>
+                  <button onClick={() => handleSubmit()} disabled={cooldown > 0 || loading}
+                    className="text-whatsapp-teal font-semibold hover:underline disabled:text-gray-400 disabled:no-underline">
+                    {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend code'}
+                  </button>
+                </div>
+              </>
+            ) : (
             <form onSubmit={handleSubmit} className="mt-8 space-y-4">
               {FIELDS.map((f) => (
                 <div key={f.name}>
@@ -139,10 +220,11 @@ export default function SignupPage() {
               <button type="submit" disabled={loading}
                 className="w-full inline-flex items-center justify-center gap-2 bg-whatsapp-green hover:bg-whatsapp-teal disabled:opacity-60 text-white font-bold py-3.5 rounded-xl transition-colors shadow-lg shadow-green-200 !mt-6">
                 {loading
-                  ? <><Loader2 size={17} className="animate-spin" /> Creating account…</>
-                  : <>Create Account <ArrowRight size={17} /></>}
+                  ? <><Loader2 size={17} className="animate-spin" /> Sending code…</>
+                  : <>Continue <ArrowRight size={17} /></>}
               </button>
             </form>
+            )}
 
             <p className="text-center text-sm text-gray-500 mt-8">
               Already have an account?{' '}

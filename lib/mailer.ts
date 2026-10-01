@@ -35,6 +35,27 @@ export async function sendMail(opts: { to: string; subject: string; html: string
   await getTransporter().sendMail({ from, ...opts });
 }
 
+/** Signup verification OTP mail */
+export function signupOtpEmail(code: string, minutes: number) {
+  const text =
+    `Your Limbu AI verification code is ${code}.\n\n` +
+    `Enter it to finish creating your account. It expires in ${minutes} minutes. ` +
+    `If you did not sign up, ignore this email.`;
+
+  const html = `
+  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#111">
+    <h2 style="margin:0 0 4px;font-size:18px">Verify your email</h2>
+    <p style="margin:0 0 20px;color:#666;font-size:14px">Enter this code to finish creating your Limbu AI account.</p>
+    <div style="background:#f3faf7;border:1px solid #cdebe0;border-radius:12px;padding:18px;text-align:center">
+      <div style="font-size:32px;font-weight:700;letter-spacing:8px;color:#075E54">${code}</div>
+      <div style="margin-top:6px;font-size:12px;color:#666">Expires in ${minutes} minutes</div>
+    </div>
+    <p style="margin:20px 0 0;color:#888;font-size:12px">Didn't sign up? You can ignore this email.</p>
+  </div>`;
+
+  return { subject: `${code} is your Limbu AI verification code`, text, html };
+}
+
 /** Password-reset OTP mail — plain text is what most inboxes show in the preview. */
 export function otpEmail(code: string, minutes: number) {
   const text =
