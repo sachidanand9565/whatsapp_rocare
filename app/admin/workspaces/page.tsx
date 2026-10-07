@@ -4,7 +4,7 @@ import { adminFetch } from '@/hooks/useAdminApi';
 import toast from 'react-hot-toast';
 import {
   Search, Loader2, Ban, CheckCircle, Trash2, ExternalLink, ChevronRight,
-  Building2, Users, UserPlus, Megaphone, MessageSquare, ArrowDownLeft, RefreshCw,
+  Building2, Users, UserPlus, Megaphone, MessageSquare, ArrowDownLeft, RefreshCw, KeyRound, Copy,
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -38,6 +38,11 @@ export default function AdminWorkspaces() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [busy, setBusy]           = useState(false);
   const [syncingTemplates, setSyncingTemplates] = useState(false);
+  // Owner password reset: the new password is shown once, right here
+  const [pwdOpen, setPwdOpen]       = useState(false);
+  const [pwdInput, setPwdInput]     = useState('');
+  const [pwdResult, setPwdResult]   = useState<{ email: string; password: string } | null>(null);
+  const [pwdSaving, setPwdSaving]   = useState(false);
   // Live Meta status (real connection check)
   const [metaStatus, setMetaStatus] = useState<{ status: string; quality_rating?: string; message?: string; code?: number; verified_name?: string } | null>(null);
   const [loadingMeta, setLoadingMeta] = useState(false);
@@ -73,6 +78,7 @@ export default function AdminWorkspaces() {
 
   const loadDetail = useCallback((id: number) => {
     setSelProj(id); setLoadingDetail(true);
+    setPwdOpen(false); setPwdResult(null); setPwdInput('');
     adminFetch(`/api/admin/workspaces/${id}`)
       .then((r) => setDetail(r.data))
       .catch((e) => toast.error(e.message))
@@ -105,6 +111,20 @@ export default function AdminWorkspaces() {
       window.open(`/auth/sso?code=${encodeURIComponent(code)}`, '_blank');
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed'); }
     finally { setBusy(false); }
+  }
+
+  async function resetOwnerPassword(id: number) {
+    setPwdSaving(true);
+    try {
+      const r = await adminFetch(`/api/admin/workspaces/${id}/reset-password`, {
+        method: 'POST',
+        body:   JSON.stringify(pwdInput.trim() ? { password: pwdInput.trim() } : {}),
+      });
+      setPwdResult({ email: r.data.email, password: r.data.password });
+      setPwdInput('');
+      toast.success('Password reset — the owner is signed out everywhere');
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Reset failed'); }
+    finally { setPwdSaving(false); }
   }
 
   // Template sync lives here only — project users can't pull from Meta themselves
@@ -296,6 +316,11 @@ export default function AdminWorkspaces() {
                   <button onClick={() => patch(detail.project.id, { is_active: 1 })} disabled={busy}
                     className="text-xs px-2.5 py-1 rounded-lg text-green-700 bg-green-50 hover:bg-green-100 flex items-center gap-1"><CheckCircle size={13} /> Activate</button>
                 )}
+                <button onClick={() => { setPwdOpen((o) => !o); setPwdResult(null); }} disabled={busy}
+                  title="Set a new login password for the project owner"
+                  className="text-xs px-2.5 py-1 rounded-lg text-purple-700 bg-purple-50 hover:bg-purple-100 flex items-center gap-1 disabled:opacity-50">
+                  <KeyRound size={13} /> Reset password
+                </button>
                 <button onClick={() => syncTemplates(detail.project.id)} disabled={busy || syncingTemplates}
                   title="Pull this project's templates from Meta (status, content and new ones)"
                   className="text-xs px-2.5 py-1 rounded-lg text-blue-700 bg-blue-50 hover:bg-blue-100 flex items-center gap-1 disabled:opacity-50">
@@ -305,6 +330,40 @@ export default function AdminWorkspaces() {
                 <button onClick={() => removeProject(detail.project.id, detail.project.name)} disabled={busy}
                   className="text-xs px-2.5 py-1 rounded-lg text-red-600 bg-red-50 hover:bg-red-100 flex items-center gap-1 ml-auto"><Trash2 size={13} /> Delete</button>
               </div>
+
+              {/* Owner password reset */}
+              {pwdOpen && (
+                <div className="border border-purple-100 bg-purple-50/50 rounded-lg p-3 space-y-2">
+                  <p className="text-xs text-gray-600">
+                    New login password for <span className="font-semibold">{detail.project.owner_email}</span>.
+                    Leave it empty to generate a strong one.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input value={pwdInput} onChange={(e) => setPwdInput(e.target.value)}
+                      placeholder="Leave empty to auto-generate"
+                      className="border border-gray-200 rounded-lg px-2 py-1 text-xs font-mono flex-1 min-w-[180px] bg-white" />
+                    <button onClick={() => resetOwnerPassword(detail.project.id)} disabled={pwdSaving}
+                      className="text-xs px-3 py-1.5 rounded-lg text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1">
+                      {pwdSaving ? <Loader2 size={13} className="animate-spin" /> : <KeyRound size={13} />}
+                      {pwdSaving ? 'Saving\u2026' : 'Set password'}
+                    </button>
+                    <button onClick={() => { setPwdOpen(false); setPwdResult(null); setPwdInput(''); }}
+                      className="text-xs px-2.5 py-1.5 rounded-lg text-gray-500 hover:bg-gray-100">Cancel</button>
+                  </div>
+                  {pwdResult && (
+                    <div className="bg-white border border-purple-200 rounded-lg px-3 py-2 flex items-center gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] text-gray-400">Share this once — it cannot be shown again</p>
+                        <p className="text-sm font-mono font-semibold text-gray-900 break-all">{pwdResult.password}</p>
+                      </div>
+                      <button onClick={() => { navigator.clipboard.writeText(pwdResult.password); toast.success('Password copied'); }}
+                        className="text-xs px-2 py-1 rounded-lg text-purple-700 bg-purple-50 hover:bg-purple-100 flex items-center gap-1 flex-shrink-0">
+                        <Copy size={12} /> Copy
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Agents / members list */}
               <div>
