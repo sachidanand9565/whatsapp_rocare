@@ -254,16 +254,107 @@ export default function SettingsPage() {
   const [workspaceId, setWorkspaceId] = useState<number | null>(null);
 
   // Sidebar navigation
-  const [activeSection, setActiveSection] = useState<'profile' | 'auth' | 'developer' | 'campaigns' | 'crm' | 'calling'>('profile');
+  const [activeSection, setActiveSection] = useState<'profile' | 'wa-profile' | 'auth' | 'developer' | 'campaigns' | 'crm' | 'calling'>('profile');
 
   // ── My Profile state ─────────────────────────────────────────
   const [profileForm, setProfileForm] = useState({ name: '', email: '', phone: '' });
+
+  // ── WhatsApp Business profile (what customers see in the chat header) ──
+  const [waProfile, setWaProfile] = useState({
+    about: '', description: '', address: '', email: '', vertical: 'UNDEFINED',
+    website1: '', website2: '', profile_picture_url: '',
+  });
+  const [waVerticals, setWaVerticals]   = useState<string[]>([]);
+  const [waLoaded, setWaLoaded]         = useState(false);
+  const [waLoading, setWaLoading]       = useState(false);
+  const [waSaving, setWaSaving]         = useState(false);
+  const [waPhotoBusy, setWaPhotoBusy]   = useState(false);
+  const waPhotoRef = useRef<HTMLInputElement>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [pwdForm, setPwdForm] = useState({ current: '', next: '', confirm: '' });
   const [savingPwd, setSavingPwd] = useState(false);
   const [showCurPwd, setShowCurPwd]   = useState(false);
   const [showNextPwd, setShowNextPwd] = useState(false);
+
+
+  // Meta is the source of truth here — always read it fresh, never cache in our DB
+  async function loadWaProfile() {
+    setWaLoading(true);
+    try {
+      const r = await apiFetch('/api/workspace/wa-profile');
+      const d = r.data || {};
+      setWaProfile({
+        about:       d.about       || '',
+        description: d.description || '',
+        address:     d.address     || '',
+        email:       d.email       || '',
+        vertical:    d.vertical    || 'UNDEFINED',
+        website1:    d.websites?.[0] || '',
+        website2:    d.websites?.[1] || '',
+        profile_picture_url: d.profile_picture_url || '',
+      });
+      setWaVerticals(d.verticals || []);
+      setWaLoaded(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not load the WhatsApp profile');
+    } finally {
+      setWaLoading(false);
+    }
+  }
+
+  async function saveWaProfile() {
+    setWaSaving(true);
+    try {
+      await apiFetch('/api/workspace/wa-profile', {
+        method: 'POST',
+        body: JSON.stringify({
+          about:       waProfile.about,
+          description: waProfile.description,
+          address:     waProfile.address,
+          email:       waProfile.email,
+          vertical:    waProfile.vertical,
+          websites:    [waProfile.website1, waProfile.website2].filter(Boolean),
+        }),
+      });
+      toast.success('WhatsApp profile updated');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Update failed', { duration: 7000 });
+    } finally {
+      setWaSaving(false);
+    }
+  }
+
+  async function uploadWaPhoto(file: File) {
+    setWaPhotoBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const token = localStorage.getItem('token');
+      const res   = await fetch('/api/workspace/wa-profile/photo', {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
+      });
+      // A proxy rejecting the upload answers with HTML, not JSON
+      const text = await res.text();
+      let data: { error?: string; data?: { profile_picture_url?: string } } = {};
+      try { data = JSON.parse(text); } catch { /* keep the status-based message */ }
+      if (!res.ok) {
+        throw new Error(
+          res.status === 413
+            ? `Server rejected the ${(file.size / (1024 * 1024)).toFixed(1)} MB image — upload limit is too low`
+            : data.error || `Upload failed (HTTP ${res.status})`
+        );
+      }
+      if (data.data?.profile_picture_url) {
+        setWaProfile((p) => ({ ...p, profile_picture_url: data.data!.profile_picture_url as string }));
+      }
+      toast.success('Display picture updated');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed', { duration: 7000 });
+    } finally {
+      setWaPhotoBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (activeSection !== 'profile' || profileLoaded) return;
@@ -274,6 +365,11 @@ export default function SettingsPage() {
       }
     });
   }, [activeSection, profileLoaded]);
+
+  useEffect(() => {
+    if (activeSection === 'wa-profile' && !waLoaded && !waLoading) loadWaProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSection]);
 
   async function saveProfile() {
     setSavingProfile(true);
@@ -1069,6 +1165,9 @@ export default function SettingsPage() {
           <button onClick={() => setActiveSection('profile')} className={navBtn('profile')}>
             <User size={14} /> My Profile
           </button>
+          <button onClick={() => setActiveSection('wa-profile')} className={navBtn('wa-profile')}>
+            <MessageSquare size={14} /> WhatsApp Profile
+          </button>
 
           <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider px-3 pt-4 pb-1">General</p>
           <button onClick={() => setActiveSection('auth')} className={navBtn('auth')}>
@@ -1206,6 +1305,131 @@ export default function SettingsPage() {
         )}
 
         {/* ─── AUTH SECTION ─── */}
+        {/* ─── WHATSAPP BUSINESS PROFILE ─── */}
+        {activeSection === 'wa-profile' && (
+          <div className="space-y-4 max-w-3xl">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">WhatsApp Profile</h2>
+              <p className="text-sm text-gray-500 mt-0.5">
+                This is what customers see when they open your chat. Saved straight to Meta.
+              </p>
+            </div>
+
+            {waLoading ? (
+              <div className="card py-16 text-center text-gray-400">
+                <Loader2 size={22} className="animate-spin mx-auto" />
+              </div>
+            ) : (
+              <>
+                {/* Display picture */}
+                <div className="card space-y-4">
+                  <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+                    <Image size={18} className="text-whatsapp-teal" />
+                    <p className="font-semibold text-gray-800">Display Picture</p>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="w-20 h-20 rounded-full bg-gray-100 overflow-hidden flex items-center justify-center flex-shrink-0 border border-gray-200">
+                      {waProfile.profile_picture_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={waProfile.profile_picture_url} alt="Display picture" className="w-full h-full object-cover" />
+                      ) : (
+                        <User size={28} className="text-gray-300" />
+                      )}
+                    </div>
+                    <div className="space-y-1.5">
+                      <button onClick={() => waPhotoRef.current?.click()} disabled={waPhotoBusy}
+                        className="btn-secondary text-sm flex items-center gap-2 disabled:opacity-60">
+                        {waPhotoBusy ? <Loader2 size={14} className="animate-spin" /> : <Image size={14} />}
+                        {waPhotoBusy ? 'Uploading…' : 'Change picture'}
+                      </button>
+                      <p className="text-xs text-gray-400">JPG or PNG, square, at least 192×192 px, under 5 MB</p>
+                    </div>
+                    <input ref={waPhotoRef} type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" className="hidden"
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadWaPhoto(f); e.target.value = ''; }} />
+                  </div>
+                </div>
+
+                {/* Business details */}
+                <div className="card space-y-4">
+                  <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+                    <Globe size={18} className="text-whatsapp-teal" />
+                    <p className="font-semibold text-gray-800">Business Details</p>
+                  </div>
+
+                  <div>
+                    <label className="form-label">About</label>
+                    <input value={waProfile.about} maxLength={139}
+                      onChange={(e) => setWaProfile({ ...waProfile, about: e.target.value })}
+                      className="input" placeholder="Hi! We are here to help." />
+                    <p className="text-xs text-gray-400 mt-1">{waProfile.about.length}/139 — the line under your name in the chat</p>
+                  </div>
+
+                  <div>
+                    <label className="form-label">Description</label>
+                    <textarea value={waProfile.description} maxLength={512} rows={3}
+                      onChange={(e) => setWaProfile({ ...waProfile, description: e.target.value })}
+                      className="input resize-none" placeholder="What your business does" />
+                    <p className="text-xs text-gray-400 mt-1">{waProfile.description.length}/512</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="form-label">Business category</label>
+                      <select value={waProfile.vertical}
+                        onChange={(e) => setWaProfile({ ...waProfile, vertical: e.target.value })}
+                        className="input">
+                        {(waVerticals.length ? waVerticals : [waProfile.vertical]).map((v) => (
+                          <option key={v} value={v}>{v.replace(/_/g, ' ')}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="form-label">Contact email</label>
+                      <input type="email" value={waProfile.email} maxLength={128}
+                        onChange={(e) => setWaProfile({ ...waProfile, email: e.target.value })}
+                        className="input" placeholder="support@company.com" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="form-label">Address</label>
+                    <input value={waProfile.address} maxLength={256}
+                      onChange={(e) => setWaProfile({ ...waProfile, address: e.target.value })}
+                      className="input" placeholder="Shop 12, MG Road, Lucknow" />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="form-label">Website</label>
+                      <input value={waProfile.website1} maxLength={256}
+                        onChange={(e) => setWaProfile({ ...waProfile, website1: e.target.value })}
+                        className="input" placeholder="https://company.com" />
+                    </div>
+                    <div>
+                      <label className="form-label">Second website <span className="text-gray-400 font-normal">(optional)</span></label>
+                      <input value={waProfile.website2} maxLength={256}
+                        onChange={(e) => setWaProfile({ ...waProfile, website2: e.target.value })}
+                        className="input" placeholder="https://company.com/support" />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <button onClick={saveWaProfile} disabled={waSaving}
+                      className="btn-primary flex items-center gap-2 text-sm disabled:opacity-60">
+                      {waSaving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                      {waSaving ? 'Saving…' : 'Save profile'}
+                    </button>
+                    <button onClick={loadWaProfile} disabled={waLoading}
+                      className="btn-secondary flex items-center gap-2 text-sm disabled:opacity-60">
+                      <RefreshCw size={14} /> Reload from Meta
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {activeSection === 'auth' && (<>
           <h2 className="text-lg font-bold text-gray-900">Auth &amp; WhatsApp</h2>
 
