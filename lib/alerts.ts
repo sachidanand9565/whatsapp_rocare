@@ -14,6 +14,15 @@ import { RowDataPacket } from 'mysql2';
 export type AlertType = 'payment' | 'banned' | 'token' | 'other';
 
 const COOLDOWN_MINUTES = 180;   // 3 hours between repeats of the same alert
+const RETRY_MINUTES    = 5;     // after a send error, allow another attempt sooner
+
+/**
+ * In-process claim, taken BEFORE any await. A campaign fires 80 sends in
+ * parallel; without this they would all read an empty alert_log and all send
+ * their own email. The alert_log check below still covers restarts and the
+ * worker process.
+ */
+const claimed = new Map<string, number>();   // "workspaceId:type" → claim expiry (ms)
 
 interface Rule {
   type:   AlertType;
@@ -125,12 +134,18 @@ export async function reportSendFailure(
   errorCode: number | null,
   detail: string,
 ): Promise<void> {
-  try {
-    if (!workspaceId || !errorCode) return;
-    const rule = RULES[errorCode];
-    if (!rule) return;                       // not an account-level problem
-    if (!mailConfigured()) return;
+  if (!workspaceId || !errorCode) return;
+  const rule = RULES[errorCode];
+  if (!rule) return;                         // not an account-level problem
+  if (!mailConfigured()) return;
 
+  // Claim this alert synchronously — whoever gets here first owns the email
+  const key = `${workspaceId}:${rule.type}`;
+  const now = Date.now();
+  if ((claimed.get(key) || 0) > now) return;
+  claimed.set(key, now + COOLDOWN_MINUTES * 60_000);
+
+  try {
     const { emails, enabled, workspaceName } = await recipientsFor(workspaceId);
     if (!enabled || emails.length === 0) return;
 
@@ -156,7 +171,9 @@ export async function reportSendFailure(
     console.log(`[alerts] ${rule.type} alert sent for workspace ${workspaceId} to ${emails.join(',')}`);
   } catch (err) {
     // Alerting is best-effort — a missing table or a dead SMTP host must not
-    // break sending.
+    // break sending. Shorten the claim so the next failure tries again instead
+    // of staying silent for the full cooldown.
+    claimed.set(key, Date.now() + RETRY_MINUTES * 60_000);
     console.error('[alerts] could not send alert:', err instanceof Error ? err.message : err);
   }
 }
