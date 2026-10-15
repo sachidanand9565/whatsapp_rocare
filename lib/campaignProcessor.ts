@@ -12,6 +12,7 @@
 import pool, { query, execute } from '@/lib/db';
 import { sendTemplateMessage } from '@/lib/whatsapp';
 import { buildComponents, parseJson } from '@/lib/campaignComponents';
+import { reportSendFailure } from '@/lib/alerts';
 import { sleep, utcNow } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 
@@ -290,7 +291,7 @@ async function processBatch(
 
         return { ok: true, ccId, contactId: contact.contact_id as number, wamid: wamid || null, content: templateContent };
       } catch (err) {
-        const axiosErr = err as { response?: { data?: { error?: { message?: string; error_data?: { details?: string } } }; status?: number } };
+        const axiosErr = err as { response?: { data?: { error?: { message?: string; code?: number; error_data?: { details?: string } } }; status?: number } };
         if (axiosErr?.response) {
           console.error(`[process] Meta API error for ${contact.phone as string}: status=${axiosErr.response.status} body=`, JSON.stringify(axiosErr.response.data));
         } else {
@@ -301,6 +302,11 @@ async function processBatch(
         const errMessage = metaErr?.message
           ? `Meta: ${metaErr.message}${metaErr.error_data?.details ? ` — ${metaErr.error_data.details}` : ''}`
           : String(err);
+        // Account-level breakage (payment, ban, dead token) emails the owner —
+        // fire-and-forget, and throttled inside reportSendFailure.
+        if (metaErr?.code) {
+          void reportSendFailure(workspaceId, Number(metaErr.code), errMessage);
+        }
         return { ok: false, ccId, error: errMessage.slice(0, 1000) };
       }
     }

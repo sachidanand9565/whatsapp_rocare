@@ -254,7 +254,7 @@ export default function SettingsPage() {
   const [workspaceId, setWorkspaceId] = useState<number | null>(null);
 
   // Sidebar navigation
-  const [activeSection, setActiveSection] = useState<'profile' | 'wa-profile' | 'auth' | 'developer' | 'campaigns' | 'crm' | 'calling'>('profile');
+  const [activeSection, setActiveSection] = useState<'profile' | 'wa-profile' | 'alerts' | 'auth' | 'developer' | 'campaigns' | 'crm' | 'calling'>('profile');
 
   // ── My Profile state ─────────────────────────────────────────
   const [profileForm, setProfileForm] = useState({ name: '', email: '', phone: '' });
@@ -270,6 +270,16 @@ export default function SettingsPage() {
   const [waSaving, setWaSaving]         = useState(false);
   const [waPhotoBusy, setWaPhotoBusy]   = useState(false);
   const waPhotoRef = useRef<HTMLInputElement>(null);
+
+  // ── Account health alerts (payment / ban / token failures) ──
+  interface AlertRow { alert_type: string; error_code: number | null; detail: string | null; sent_at: string }
+  const [alertsOn, setAlertsOn]         = useState(true);
+  const [alertEmails, setAlertEmails]   = useState('');
+  const [alertOwner, setAlertOwner]     = useState('');
+  const [alertRecent, setAlertRecent]   = useState<AlertRow[]>([]);
+  const [alertsLoaded, setAlertsLoaded] = useState(false);
+  const [alertsBusy, setAlertsBusy]     = useState(false);
+  const [alertTesting, setAlertTesting] = useState(false);
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [pwdForm, setPwdForm] = useState({ current: '', next: '', confirm: '' });
@@ -277,6 +287,49 @@ export default function SettingsPage() {
   const [showCurPwd, setShowCurPwd]   = useState(false);
   const [showNextPwd, setShowNextPwd] = useState(false);
 
+
+  async function loadAlerts() {
+    try {
+      const r = await apiFetch('/api/workspace/alerts');
+      setAlertsOn(r.data?.enabled !== false);
+      setAlertEmails((r.data?.extra_emails || []).join(', '));
+      setAlertOwner(r.data?.owner_email || '');
+      setAlertRecent(r.data?.recent || []);
+      setAlertsLoaded(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not load alert settings', { duration: 7000 });
+    }
+  }
+
+  async function saveAlerts() {
+    setAlertsBusy(true);
+    try {
+      await apiFetch('/api/workspace/alerts', {
+        method: 'POST',
+        body: JSON.stringify({
+          enabled: alertsOn,
+          extraEmails: alertEmails.split(',').map((e) => e.trim()).filter(Boolean),
+        }),
+      });
+      toast.success('Alert settings saved');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Save failed', { duration: 7000 });
+    } finally {
+      setAlertsBusy(false);
+    }
+  }
+
+  async function sendAlertTest() {
+    setAlertTesting(true);
+    try {
+      const r = await apiFetch('/api/workspace/alerts/test', { method: 'POST' });
+      toast.success(`Test email sent to ${(r.data?.recipients || []).join(', ')}`, { duration: 6000 });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not send the test email', { duration: 7000 });
+    } finally {
+      setAlertTesting(false);
+    }
+  }
 
   // Meta is the source of truth here — always read it fresh, never cache in our DB
   async function loadWaProfile() {
@@ -368,6 +421,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (activeSection === 'wa-profile' && !waLoaded && !waLoading) loadWaProfile();
+    if (activeSection === 'alerts' && !alertsLoaded) loadAlerts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection]);
 
@@ -1168,6 +1222,9 @@ export default function SettingsPage() {
           <button onClick={() => setActiveSection('wa-profile')} className={navBtn('wa-profile')}>
             <MessageSquare size={14} /> WhatsApp Profile
           </button>
+          <button onClick={() => setActiveSection('alerts')} className={navBtn('alerts')}>
+            <Bell size={14} /> Alerts
+          </button>
 
           <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider px-3 pt-4 pb-1">General</p>
           <button onClick={() => setActiveSection('auth')} className={navBtn('auth')}>
@@ -1427,6 +1484,86 @@ export default function SettingsPage() {
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {/* ─── ACCOUNT HEALTH ALERTS ─── */}
+        {activeSection === 'alerts' && (
+          <div className="space-y-4 max-w-3xl">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Alerts</h2>
+              <p className="text-sm text-gray-500 mt-0.5">
+                Get an email the moment sending breaks — a billing problem, a restricted number or an expired token.
+              </p>
+            </div>
+
+            <div className="card space-y-4">
+              <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <Bell size={18} className="text-whatsapp-teal" />
+                  <p className="font-semibold text-gray-800">Email me when sending breaks</p>
+                </div>
+                <button onClick={() => setAlertsOn((v) => !v)} className="flex-shrink-0">
+                  {alertsOn
+                    ? <ToggleRight size={34} className="text-whatsapp-green" />
+                    : <ToggleLeft  size={34} className="text-gray-300" />}
+                </button>
+              </div>
+
+              <div>
+                <label className="form-label">Sent to</label>
+                <input value={alertOwner} readOnly className="input bg-gray-50 text-gray-500 cursor-not-allowed" />
+                <p className="text-xs text-gray-400 mt-1">Your registration email — always included</p>
+              </div>
+
+              <div>
+                <label className="form-label">Also notify <span className="text-gray-400 font-normal">(optional)</span></label>
+                <input value={alertEmails} onChange={(e) => setAlertEmails(e.target.value)}
+                  className="input" placeholder="accounts@company.com, manager@company.com" />
+                <p className="text-xs text-gray-400 mt-1">Comma-separated, up to 5 addresses</p>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+                One email per problem every 3 hours — a campaign that fails for 5,000 contacts still sends a single alert.
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <button onClick={saveAlerts} disabled={alertsBusy}
+                  className="btn-primary flex items-center gap-2 text-sm disabled:opacity-60">
+                  {alertsBusy ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                  {alertsBusy ? 'Saving…' : 'Save'}
+                </button>
+                <button onClick={sendAlertTest} disabled={alertTesting}
+                  className="btn-secondary flex items-center gap-2 text-sm disabled:opacity-60">
+                  {alertTesting ? <Loader2 size={14} className="animate-spin" /> : <Bell size={14} />}
+                  Send test email
+                </button>
+              </div>
+            </div>
+
+            <div className="card space-y-3">
+              <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+                <AlertTriangle size={18} className="text-whatsapp-teal" />
+                <p className="font-semibold text-gray-800">Recent alerts</p>
+              </div>
+              {alertRecent.length === 0 ? (
+                <p className="text-sm text-gray-400 py-2">No alerts sent yet — nothing has broken.</p>
+              ) : (
+                <div className="divide-y divide-gray-50">
+                  {alertRecent.map((a, i) => (
+                    <div key={i} className="py-2.5 flex items-start gap-3">
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-red-50 text-red-600 flex-shrink-0 mt-0.5">
+                        {a.alert_type}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs text-gray-700 break-words">{a.detail || `Meta error ${a.error_code ?? ''}`}</p>
+                        <p className="text-[11px] text-gray-400 mt-0.5">{new Date(a.sent_at).toLocaleString('en-IN')}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 

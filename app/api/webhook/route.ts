@@ -13,6 +13,7 @@ import { setRinging, clearRinging } from '@/lib/activeCalls';
 import { enqueueFlowJob } from '@/lib/queue';
 import { logCallStart, logCallEnded } from '@/lib/callLogs';
 import { linkTableExists } from '@/lib/failed-webhooks';
+import { reportSendFailure } from '@/lib/alerts';
 
 // ---- GET: Verify webhook with Meta ----
 export async function GET(req: NextRequest) {
@@ -672,6 +673,11 @@ export async function POST(req: NextRequest) {
             const code    = e.code    ? `(#${e.code})` : '';
             const details = (e as { error_data?: { details?: string } }).error_data?.details || '';
             errText = [title, code].filter(Boolean).join(' ') || details || 'Message delivery failed';
+            // Payment / ban / token failures reach us only as a status webhook
+            // when the message was accepted first — alert on those too.
+            if (e.code && workspaceId) {
+              void reportSendFailure(workspaceId, Number(e.code), [title, details].filter(Boolean).join(' — ') || errText);
+            }
           }
           await execute(
             'UPDATE campaign_contacts SET error = ? WHERE message_id = ?',
