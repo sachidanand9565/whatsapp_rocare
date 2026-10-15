@@ -2,9 +2,10 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { apiFetch } from '@/hooks/useApi';
+import { ConnectWhatsAppButton } from '@/app/components/MetaConnect';
 import {
   MessageSquare, Users, Megaphone, CheckCircle, BookOpen,
-  TrendingUp, Facebook, Settings, RefreshCw,
+  TrendingUp, Settings, RefreshCw,
   Copy, ExternalLink, BarChart3, Bot, ChevronRight, Wifi, WifiOff, AlertTriangle,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -66,9 +67,9 @@ export default function DashboardPage() {
   // Banned/restricted/expired need the loudest treatment; flagged is a warning
   const stateTone   = isHealthy ? 'good' : state === 'flagged' || state === 'pending' ? 'warn' : 'bad';
 
-  useEffect(() => {
-    setUserRole(localStorage.getItem('userRole') || '');
-
+  // Re-read the workspace + live Meta state (after connecting, say)
+  function reloadStatus() {
+    setWsLoading(true); setStatusLoading(true);
     apiFetch('/api/workspace').then((r) => {
       if (r?.data) setWorkspace(r.data);
     }).finally(() => setWsLoading(false));
@@ -76,6 +77,11 @@ export default function DashboardPage() {
     apiFetch('/api/workspace/status').then((r) => {
       if (r?.data) setWaStatus(r.data);
     }).finally(() => setStatusLoading(false));
+  }
+
+  useEffect(() => {
+    setUserRole(localStorage.getItem('userRole') || '');
+    reloadStatus();
 
     apiFetch('/api/analytics').then((r) => {
       if (r?.data) {
@@ -204,10 +210,9 @@ export default function DashboardPage() {
 
               {state === 'not_connected' && (
                 <div className="flex items-center gap-3 ml-auto">
-                  <Link href="/settings"
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors">
-                    <Facebook size={15} /> Connect WhatsApp
-                  </Link>
+                  <ConnectWhatsAppButton
+                    onConnected={reloadStatus}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors" />
                 </div>
               )}
 
@@ -377,10 +382,10 @@ export default function DashboardPage() {
 
           {/* ── Connect / Status ── */}
           {state === 'not_connected' ? (
-            <Link href="/settings"
-              className="flex items-center justify-center gap-2 w-full py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm">
-              <Facebook size={16} /> Connect WhatsApp Business
-            </Link>
+            <ConnectWhatsAppButton
+              label="Connect WhatsApp Business"
+              onConnected={reloadStatus}
+              className="flex items-center justify-center gap-2 w-full py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm" />
           ) : stateTone === 'good' ? (
             <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 flex items-center gap-3">
               <CheckCircle size={16} className="text-green-600 flex-shrink-0" />
