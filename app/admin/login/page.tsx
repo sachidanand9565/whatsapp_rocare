@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ShieldAlert, Loader2 } from 'lucide-react';
 
@@ -9,6 +9,14 @@ export default function AdminLogin() {
   const [password, setPassword] = useState('');
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState('');
+  const [next, setNext]         = useState('/admin');
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const want = params.get('next') || '';
+    if (want.startsWith('/admin') && !want.startsWith('//')) setNext(want);
+    if (params.get('expired')) setError('Your session expired — please sign in again');
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -28,7 +36,7 @@ export default function AdminLogin() {
 
       // Store in a SEPARATE admin token + go to panel
       localStorage.setItem('admin_token', token);
-      router.replace('/admin');
+      router.replace(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {

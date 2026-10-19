@@ -53,7 +53,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   useEffect(() => {
     if (!localStorage.getItem('token')) {
-      router.replace('/login');
+      // Keep the page they wanted so login can send them back to it
+      const next = encodeURIComponent(window.location.pathname + window.location.search);
+      router.replace(`/login?next=${next}`);
       return;
     }
     const r = (localStorage.getItem('userRole') || 'admin') as Role;

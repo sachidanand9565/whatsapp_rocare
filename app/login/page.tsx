@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import LogoMark from '../components/LogoMark';
@@ -17,6 +17,20 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [showPwd, setShowPwd]   = useState(false);
   const [loading, setLoading]   = useState(false);
+
+  // Where to go after signing in — the page the expired session was on.
+  // Read from window so this page stays statically rendered.
+  const [next, setNext] = useState('/dashboard');
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    // Only same-site paths: "//evil.com" and absolute URLs are not ours
+    const want = params.get('next') || '';
+    if (want.startsWith('/') && !want.startsWith('//')) setNext(want);
+    if (params.get('expired')) {
+      toast('Your session expired — please sign in again', { icon: '\u23F1\uFE0F', duration: 5000 });
+    }
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -38,7 +52,7 @@ export default function LoginPage() {
       localStorage.setItem('userRole', data.data.user.role);
       localStorage.setItem('userName', data.data.user.name);
       localStorage.setItem('workspaces', JSON.stringify(data.data.workspaces || []));
-      window.location.href = '/dashboard';
+      window.location.href = next;
     } finally {
       setLoading(false);
     }
