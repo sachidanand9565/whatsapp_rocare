@@ -722,7 +722,7 @@ async function executeFromNode(
         if (!targetFlowId) { await endSession(session.id); return; }
 
         const targetRows = await query<RowDataPacket[]>(
-          'SELECT * FROM flows WHERE id = ? AND workspace_id = ? LIMIT 1',
+          'SELECT * FROM flows WHERE id = ? AND workspace_id = ? AND is_active = 1 LIMIT 1',
           [targetFlowId, workspaceId]
         );
         if (!targetRows.length) { await endSession(session.id); return; }
@@ -843,6 +843,9 @@ export async function tryResumeFlow(
   );
   if (rows.length === 0) return false;
   const r = rows[0];
+
+  // Flow inactive kar diya gaya → beech me atka session band karo, aage mat chalao
+  if (!Number(r.f_active)) { await endSession(r.s_id as number); return false; }
 
   const session: FlowSession = {
     id:              r.s_id as number,

@@ -55,6 +55,13 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
       `UPDATE flows SET ${updates.join(', ')} WHERE id = ? AND workspace_id = ?`,
       params
     );
+    // Inactive karne par is flow ke chalu sessions band karo
+    if (is_active !== undefined && !Number(is_active)) {
+      await execute(
+        "UPDATE flow_sessions SET status = 'abandoned', updated_at = NOW() WHERE flow_id = ? AND workspace_id = ? AND status = 'active'",
+        [id, payload.workspaceId]
+      );
+    }
     return apiSuccess({ updated: true });
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
