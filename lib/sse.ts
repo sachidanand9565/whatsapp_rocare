@@ -32,9 +32,38 @@ export interface SSEPayload {
   inIntervened?: boolean;
 }
 
+// Same DB pe chal rahe dusre panel(s) ko bhi live events bhejo — webhook sirf ek
+// server pe aata hai, to baaki panels ka inbox isi relay se turant update hota hai.
+//   SSE_RELAY_URLS   = https://panel2.limbu.ai/api/sse-relay   (comma-separated)
+//   SSE_RELAY_SECRET = dono servers pe same random string
+const RELAY_URLS = (process.env.SSE_RELAY_URLS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+const RELAY_SECRET = process.env.SSE_RELAY_SECRET || '';
+
 /** Called from the webhook handler after a message is persisted. */
 export function emitSSE(payload: SSEPayload) {
+  emitLocalSSE(payload);
+  relaySSE(payload);
+}
+
+/** Sirf is process ke subscribers ko — relay se aaye events ke liye (aage forward nahi, loop na bane). */
+export function emitLocalSSE(payload: SSEPayload) {
   emitter.emit(`ws:${payload.workspaceId}`, payload);
+}
+
+function relaySSE(payload: SSEPayload) {
+  if (!RELAY_URLS.length || !RELAY_SECRET) return;
+  const body = JSON.stringify(payload);
+  for (const url of RELAY_URLS) {
+    fetch(url, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'x-relay-secret': RELAY_SECRET },
+      body,
+      signal:  AbortSignal.timeout(3000),
+    }).catch((e) => console.warn(`[sse-relay] ${url} failed:`, String(e)));
+  }
 }
 
 /** Subscribe to events for a workspace. Returns an unsubscribe function. */
