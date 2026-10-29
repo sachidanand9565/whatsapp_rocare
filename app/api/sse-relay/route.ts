@@ -7,6 +7,7 @@
 import { NextRequest } from 'next/server';
 import { timingSafeEqual } from 'crypto';
 import { emitLocalSSE, SSEPayload } from '@/lib/sse';
+import { setRinging, clearRinging } from '@/lib/activeCalls';
 import { apiSuccess, apiError } from '@/lib/utils';
 
 function secretMatches(given: string | null, expected: string) {
@@ -30,6 +31,20 @@ export async function POST(req: NextRequest) {
   }
   if (!payload || typeof payload.workspaceId !== 'number' || typeof payload.type !== 'string') {
     return apiError('Invalid payload', 400);
+  }
+
+  // Ringing state bhi yahan rakho — webhook dusre server pe set karta hai, aur
+  // push-notification tap se khula panel GET /api/calling/ringing se popup dikhata hai.
+  if (payload.type === 'incoming_call' && payload.callId) {
+    setRinging(payload.workspaceId, {
+      callId:      payload.callId,
+      contactId:   payload.contactId,
+      callerName:  payload.callerName || '',
+      callerPhone: payload.callerPhone || '',
+      sdp:         payload.sdp,
+    });
+  } else if (payload.type === 'call_ended' || payload.type === 'call_taken') {
+    clearRinging(payload.workspaceId, payload.callId);
   }
 
   emitLocalSSE(payload);
