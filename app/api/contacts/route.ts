@@ -3,7 +3,7 @@
  * POST /api/contacts  — create contact
  */
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth';
+import { requireAuth, resolveWorkspaceScopes } from '@/lib/auth';
 import { query, insert } from '@/lib/db';
 import { apiSuccess, apiError, getPagination, normalizePhone } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
@@ -17,45 +17,38 @@ export async function GET(req: NextRequest) {
     const status     = sp.get('status') || '';
     const chatStatus = sp.get('chatStatus') || '';
 
+    // Combined inbox: ?workspaces=1,2,3 — sirf member projects, har ek apne role ke saath.
+    const scopes = await resolveWorkspaceScopes(payload, sp.get('workspaces'));
+    if (scopes.length === 0) return apiSuccess({ data: [], total: 0, page, limit, totalPages: 0 });
+
     // Agents see:
     //  - If NO campaigns assigned → all inbox contacts (unassigned or assigned to them)
     //  - If campaigns assigned → only their campaign contacts + directly assigned contacts
-    const agentFilterMain  = payload.role === 'agent'
-      ? `AND (
-           c.assigned_agent_id = ${payload.userId}
+    // p = column prefix ('c.' for the list query, '' for the count query)
+    const agentFilter = (p: string) => `AND (
+           ${p}assigned_agent_id = ${payload.userId}
            OR (
-             c.assigned_agent_id IS NULL
+             ${p}assigned_agent_id IS NULL
              AND (
                NOT EXISTS (
                  SELECT 1 FROM campaign_assignments WHERE agent_id = ${payload.userId} LIMIT 1
                )
-               OR c.id IN (
+               OR ${p}id IN (
                  SELECT cc.contact_id FROM campaign_contacts cc
                  JOIN campaign_assignments ca ON ca.campaign_id = cc.campaign_id
                  WHERE ca.agent_id = ${payload.userId}
                )
              )
            )
-         )`
-      : '';
-    const agentFilterCount = payload.role === 'agent'
-      ? `AND (
-           assigned_agent_id = ${payload.userId}
-           OR (
-             assigned_agent_id IS NULL
-             AND (
-               NOT EXISTS (
-                 SELECT 1 FROM campaign_assignments WHERE agent_id = ${payload.userId} LIMIT 1
-               )
-               OR id IN (
-                 SELECT cc.contact_id FROM campaign_contacts cc
-                 JOIN campaign_assignments ca ON ca.campaign_id = cc.campaign_id
-                 WHERE ca.agent_id = ${payload.userId}
-               )
-             )
-           )
-         )`
-      : '';
+         )`;
+    // Role per project alag ho sakta hai, isliye agent filter har workspace ke saath.
+    // Intervened tab: agents must only see chats explicitly transferred TO them.
+    const wsScope = (p: string) => '(' + scopes.map(({ workspaceId, role }) =>
+      `(${p}workspace_id = ${Number(workspaceId)}`
+      + (role === 'agent' ? ` ${agentFilter(p)}` : '')
+      + (role === 'agent' && chatStatus === 'intervened' ? ` AND ${p}assigned_agent_id = ${payload.userId}` : '')
+      + ')'
+    ).join(' OR ') + ')';
 
     let sql    = `
       SELECT c.*,
@@ -68,9 +61,9 @@ export async function GET(req: NextRequest) {
          WHERE mi.contact_id = c.id AND mi.direction = 'inbound'
         ) AS inbound_count,
         c.last_message_at AS last_message_at
-      FROM contacts c WHERE c.workspace_id = ? ${agentFilterMain}`;
-    let countSql = `SELECT COUNT(*) as total FROM contacts WHERE workspace_id = ? ${agentFilterCount}`;
-    const params: unknown[] = [payload.workspaceId];
+      FROM contacts c WHERE ${wsScope('c.')}`;
+    let countSql = `SELECT COUNT(*) as total FROM contacts WHERE ${wsScope('')}`;
+    const params: unknown[] = [];
 
     if (search) {
       sql       += ' AND (c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ?)';
@@ -98,11 +91,6 @@ export async function GET(req: NextRequest) {
     } else if (chatStatus === 'intervened') {
       sql      += " AND c.chat_status = 'intervened'";
       countSql += " AND chat_status = 'intervened'";
-      // Agents must only see chats explicitly transferred TO them (not the general unassigned pool)
-      if (payload.role === 'agent') {
-        sql      += ` AND c.assigned_agent_id = ${payload.userId}`;
-        countSql += ` AND assigned_agent_id = ${payload.userId}`;
-      }
     } else if (chatStatus === 'history') {
       // No inbound message in last 24h (exact inverse of inbox) — uses denormalized column
       sql += ` AND (c.last_inbound_at IS NULL OR c.last_inbound_at <= DATE_SUB(NOW(), INTERVAL 24 HOUR))`;

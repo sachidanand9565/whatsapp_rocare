@@ -6,7 +6,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAuth, getMemberRole } from '@/lib/auth';
 import { RowDataPacket } from 'mysql2';
 
 export const maxDuration = 30;
@@ -24,7 +24,8 @@ export async function GET(req: NextRequest) {
   // token we're about to use — otherwise workspaceId is a free IDOR lever.
   let payload;
   try { payload = await requireAuth(req); } catch { return new NextResponse('Unauthorized', { status: 401 }); }
-  if (payload.workspaceId !== Number(workspaceId)) {
+  // Combined inbox: <img> header nahi bhej sakta, to dusre member project ka media bhi allow
+  if (payload.workspaceId !== Number(workspaceId) && !(await getMemberRole(payload.userId, Number(workspaceId)))) {
     return new NextResponse('Forbidden', { status: 403 });
   }
 

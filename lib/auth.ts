@@ -115,9 +115,51 @@ export async function comparePassword(plain: string, hash: string): Promise<bool
   return bcrypt.compare(plain, hash);
 }
 
+// ---- Combined inbox: ek user ke kai projects (workspaces) ek saath ----
+// Membership role per (user, workspace), same short cache as tokens_valid_from.
+const memberCache = new Map<string, { role: string | null; at: number }>();
+
+export async function getMemberRole(userId: number, workspaceId: number): Promise<string | null> {
+  const key = `${userId}:${workspaceId}`;
+  const cached = memberCache.get(key);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.role;
+  const rows = await query<RowDataPacket[]>(
+    'SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? LIMIT 1',
+    [workspaceId, userId]
+  );
+  const role = rows.length > 0 ? (rows[0].role as string) : null;
+  memberCache.set(key, { role, at: Date.now() });
+  return role;
+}
+
+export interface WorkspaceScope { workspaceId: number; role: string; }
+
+/**
+ * `?workspaces=1,2,3` → sirf wahi projects jinka user member hai, har ek apne role ke saath.
+ * Param na ho to token wala single workspace (purana behaviour).
+ */
+export async function resolveWorkspaceScopes(payload: JWTPayload, param: string | null): Promise<WorkspaceScope[]> {
+  const ids = Array.from(new Set((param || '').split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0)));
+  if (ids.length === 0) return [{ workspaceId: payload.workspaceId, role: payload.role }];
+  const rows = await query<RowDataPacket[]>(
+    `SELECT workspace_id, role FROM workspace_members
+     WHERE user_id = ? AND workspace_id IN (${ids.map(() => '?').join(',')})`,
+    [payload.userId, ...ids]
+  );
+  return rows.map((r) => ({ workspaceId: Number(r.workspace_id), role: r.role as string }));
+}
+
 // ---- Middleware guard — use inside API routes (await it) ----
+// `x-workspace-id` header: combined inbox me jo chat kisi aur project ki hai, uski
+// request usi project ke naam pe chale — member ho tabhi, warna FORBIDDEN.
 export async function requireAuth(req: NextRequest): Promise<JWTPayload> {
   const payload = await authenticate(req);
   if (!payload) throw new Error('UNAUTHORIZED');
+  const wsId = Number(req.headers.get('x-workspace-id') || 0);
+  if (wsId && wsId !== payload.workspaceId) {
+    const role = await getMemberRole(payload.userId, wsId);
+    if (!role) throw new Error('FORBIDDEN');
+    return { ...payload, workspaceId: wsId, role };
+  }
   return payload;
 }

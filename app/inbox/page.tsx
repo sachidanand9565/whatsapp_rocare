@@ -3,9 +3,16 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { apiFetch } from '@/hooks/useApi';
 import MediaLibrary, { type MediaItem as MLItem } from '@/app/components/MediaLibrary';
 import { validateMediaFile } from '@/lib/mediaLimits';
-import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter, BellOff, Bell, ArrowLeft, Info, PhoneCall, PhoneMissed, PhoneOutgoing, MousePointerClick, CheckCheck } from 'lucide-react';
+import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter, BellOff, Bell, ArrowLeft, Info, Layers, PhoneCall, PhoneMissed, PhoneOutgoing, MousePointerClick, CheckCheck } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Contact, Message } from '@/types';
+
+// Combined inbox: chat-specific calls us chat ke project ke naam pe jaate hain —
+// server `x-workspace-id` pe membership check karke wahi workspace use karta hai.
+function inWs(workspaceId: number | undefined, options: RequestInit = {}): RequestInit {
+  if (!workspaceId) return options;
+  return { ...options, headers: { ...(options.headers as Record<string, string> | undefined), 'x-workspace-id': String(workspaceId) } };
+}
 
 // ── Template bubble types ─────────────────────────────────────
 interface TemplateContent {
@@ -464,10 +471,10 @@ function ProfilePanel({ contact, templateMsgCount, sessionMsgCount, onContactUpd
   async function saveNotes() {
     setSavingNotes(true);
     try {
-      await apiFetch(`/api/contacts/${contact.id}`, {
+      await apiFetch(`/api/contacts/${contact.id}`, inWs(contact.workspace_id, {
         method: 'PUT',
         body: JSON.stringify({ notes: notesVal }),
-      });
+      }));
       onContactUpdate({ notes: notesVal });
       toast.success('Notes saved');
     } catch { toast.error('Failed to save notes'); }
@@ -486,10 +493,10 @@ function ProfilePanel({ contact, templateMsgCount, sessionMsgCount, onContactUpd
   async function saveTags(newTags: string[]) {
     setSavingTags(true);
     try {
-      await apiFetch(`/api/contacts/${contact.id}`, {
+      await apiFetch(`/api/contacts/${contact.id}`, inWs(contact.workspace_id, {
         method: 'PUT',
         body: JSON.stringify({ tags: newTags }),
-      });
+      }));
       onContactUpdate({ tags: newTags });
     } catch { toast.error('Failed to save tags'); }
     finally { setSavingTags(false); }
@@ -575,10 +582,10 @@ function ProfilePanel({ contact, templateMsgCount, sessionMsgCount, onContactUpd
                 onClick={async () => {
                   const newVal = contact.opted_in === 0 ? 1 : 0;
                   try {
-                    await apiFetch(`/api/contacts/${contact.id}`, {
+                    await apiFetch(`/api/contacts/${contact.id}`, inWs(contact.workspace_id, {
                       method: 'PUT',
                       body:   JSON.stringify({ opted_in: newVal }),
-                    });
+                    }));
                     onContactUpdate({ opted_in: newVal });
                     toast.success(newVal ? 'Opted In ✓' : 'Opted Out');
                   } catch { toast.error('Failed'); }
@@ -731,6 +738,7 @@ export default function InboxPage() {
   const emojiRef                        = useRef<HTMLDivElement>(null);
   const [showTransfer, setShowTransfer]     = useState(false);
   const [transferAgents, setTransferAgents] = useState<{ id: number; name: string; workspace_role: string }[]>([]);
+  const [transferAgentsWs, setTransferAgentsWs] = useState<number | undefined>(undefined);
   const [loadingAgents, setLoadingAgents]   = useState(false);
   const [transferring, setTransferring]     = useState(false);
   const transferRef                         = useRef<HTMLDivElement>(null);
@@ -779,10 +787,10 @@ export default function InboxPage() {
       : item.mime_type.startsWith('audio/') ? 'audio'
       : 'document';
     try {
-      await apiFetch('/api/send-message', {
+      await apiFetch('/api/send-message', inWs(selected.workspace_id, {
         method: 'POST',
         body: JSON.stringify({ contactId: selected.id, type: mediaType, mediaId: item.media_id, filename: item.filename }),
-      });
+      }));
       toast.success('Media sent!');
       loadMessages(selected.id);
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to send'); }
@@ -798,7 +806,7 @@ export default function InboxPage() {
       const fd = new FormData();
       fd.append('file', file);
       const token = localStorage.getItem('token');
-      const upRes = await fetch('/api/media', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
+      const upRes = await fetch('/api/media', inWs(selected?.workspace_id, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd }));
       const upData = await upRes.json();
       if (!upRes.ok) throw new Error(upData.error || 'Upload failed');
 
@@ -807,10 +815,10 @@ export default function InboxPage() {
         : file.type.startsWith('audio/') ? 'audio'
         : 'document';
 
-      await apiFetch('/api/send-message', {
+      await apiFetch('/api/send-message', inWs(selected.workspace_id, {
         method: 'POST',
         body: JSON.stringify({ contactId: selected.id, type: mediaType, mediaId: upData.data.mediaId, caption: '', filename: file.name }),
-      });
+      }));
       toast.success('Sent!', { id: toastId });
       loadMessages(selected.id);
     } catch (err) {
@@ -865,6 +873,32 @@ export default function InboxPage() {
     } catch { return null; }
   })();
 
+  // ── Combined inbox: kaun-kaun se projects ki chats ek list me dikhein ──
+  // Selection har user ke liye is browser me save hoti hai. Khali = sirf current project.
+  const currentWsId = typeof window !== 'undefined' ? Number(localStorage.getItem('workspaceId')) || 0 : 0;
+  const inboxWsKey  = `inboxWorkspaces:${currentUserId ?? ''}`;
+  const [allWorkspaces] = useState<{ id: number; name: string }[]>(() => {
+    try { return JSON.parse(localStorage.getItem('workspaces') || '[]'); } catch { return []; }
+  });
+  const [inboxWsIds, setInboxWsIds] = useState<number[]>(() => {
+    try { return JSON.parse(localStorage.getItem(inboxWsKey) || '[]'); } catch { return []; }
+  });
+  const [showWsDrop, setShowWsDrop] = useState(false);
+  const wsDropRef                   = useRef<HTMLDivElement>(null);
+  const shownWsIds = inboxWsIds.filter((id) => allWorkspaces.some((w) => w.id === id));
+  const combined   = shownWsIds.length > 0 && !(shownWsIds.length === 1 && shownWsIds[0] === currentWsId);
+  const wsParam    = combined ? `&workspaces=${shownWsIds.join(',')}` : '';
+  const wsParamRef = useRef(wsParam);
+  wsParamRef.current = wsParam;
+  const wsName = (id: number) => allWorkspaces.find((w) => w.id === id)?.name || `Project ${id}`;
+
+  function toggleInboxWs(id: number) {
+    const base = shownWsIds.length > 0 ? shownWsIds : [currentWsId];
+    const next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+    setInboxWsIds(next);
+    try { localStorage.setItem(inboxWsKey, JSON.stringify(next)); } catch { /* private mode */ }
+  }
+
   // Campaign filter
   const [campaignFilter, setCampaignFilter]         = useState<number | null>(null);
   const [campaignContactIds, setCampaignContactIds] = useState<Set<number> | null>(null);
@@ -898,6 +932,7 @@ export default function InboxPage() {
       ? `limit=500&chatStatus=inbox&campaignId=${campaignId}`
       : `limit=500&chatStatus=inbox`;
     if (replyFilterRef.current) qs += `&buttonReply=${encodeURIComponent(replyFilterRef.current)}`;
+    qs += wsParamRef.current;
     apiFetch(`/api/contacts?${qs}`).then((r) => {
       const list: Contact[] = r.data?.data || [];
       setContacts(list);
@@ -920,7 +955,7 @@ export default function InboxPage() {
 
   // Load intervened contacts — for admin/manager: all agents' chats; for agent: their own assigned
   const loadIntervenedContacts = useCallback(() => {
-    apiFetch('/api/contacts?chatStatus=intervened&limit=500').then((r) => {
+    apiFetch(`/api/contacts?chatStatus=intervened&limit=500${wsParamRef.current}`).then((r) => {
       setIntervenedContacts(r.data?.data || []);
     });
   }, []);
@@ -975,6 +1010,9 @@ export default function InboxPage() {
       if (replyDropRef.current && !replyDropRef.current.contains(e.target as Node)) {
         setShowReplyDrop(false);
       }
+      if (wsDropRef.current && !wsDropRef.current.contains(e.target as Node)) {
+        setShowWsDrop(false);
+      }
     }
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -1016,11 +1054,12 @@ export default function InboxPage() {
     } finally { setBulkResolving(false); }
   }
 
+  // Projects ki selection badalne pe bhi dobara load
   useEffect(() => {
-    loadContacts();
+    loadContacts(campaignFilterRef.current);
     loadIntervenedContacts();
     // No polling — SSE handles real-time updates
-  }, [loadContacts, loadIntervenedContacts]);
+  }, [loadContacts, loadIntervenedContacts, wsParam]);
 
   // Debounced server-side search — finds contacts beyond the initial 500 load
   useEffect(() => {
@@ -1035,8 +1074,8 @@ export default function InboxPage() {
       const cqs = (campaignFilter ? `&campaignId=${campaignFilter}` : '')
         + (replyFilter ? `&buttonReply=${encodeURIComponent(replyFilter)}` : '');
       Promise.all([
-        apiFetch(`/api/contacts?limit=500&chatStatus=inbox&search=${enc}${cqs}`),
-        apiFetch(`/api/contacts?limit=500&chatStatus=intervened&search=${enc}`),
+        apiFetch(`/api/contacts?limit=500&chatStatus=inbox&search=${enc}${cqs}${wsParam}`),
+        apiFetch(`/api/contacts?limit=500&chatStatus=intervened&search=${enc}${wsParam}`),
       ]).then(([inboxRes, intervenedRes]) => {
         setSearchResults([
           ...(inboxRes.data?.data || []),
@@ -1045,7 +1084,7 @@ export default function InboxPage() {
       }).finally(() => setSearchLoading(false));
     }, 400);
     return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
-  }, [search, campaignFilter, replyFilter]);
+  }, [search, campaignFilter, replyFilter, wsParam]);
 
   // Tracks the highest message id loaded for the current chat (for incremental SSE fetch)
   const lastMsgIdRef = useRef<number>(0);
@@ -1053,7 +1092,7 @@ export default function InboxPage() {
   const loadMessages = useCallback((contactId: number) => {
     setMessagesLoading(true);
     lastMsgIdRef.current = 0;
-    apiFetch(`/api/messages?contactId=${contactId}&limit=80`)
+    apiFetch(`/api/messages?contactId=${contactId}&limit=80`, inWs(selectedRef.current?.workspace_id))
       .then((r) => {
         const msgs: Message[] = r.data || [];
         setMessages(msgs);
@@ -1077,7 +1116,7 @@ export default function InboxPage() {
 
     function connect() {
       if (destroyed) return;
-      es = new EventSource(`/api/events?token=${encodeURIComponent(token!)}`);
+      es = new EventSource(`/api/events?token=${encodeURIComponent(token!)}${wsParam}`);
 
       es.onmessage = (e) => {
         try {
@@ -1109,7 +1148,7 @@ export default function InboxPage() {
               // Incremental fetch: only load messages newer than last known id
               const lastId = lastMsgIdRef.current;
               if (lastId > 0) {
-                apiFetch(`/api/messages?contactId=${data.contactId}&afterId=${lastId}&limit=20`)
+                apiFetch(`/api/messages?contactId=${data.contactId}&afterId=${lastId}&limit=20`, inWs(selectedRef.current?.workspace_id))
                   .then((r) => {
                     const newMsgs: Message[] = r.data || [];
                     if (newMsgs.length > 0) {
@@ -1161,15 +1200,19 @@ export default function InboxPage() {
       if (retryTimer) clearTimeout(retryTimer);
       es?.close();
     };
-  }, [loadContacts, loadMessages, loadIntervenedContacts, applyContactUpdate]);
+  }, [loadContacts, loadMessages, loadIntervenedContacts, applyContactUpdate, wsParam]);
 
+  // Templates har project ke alag — chat badalne pe dusre project ke templates load karo
+  const [templatesWs, setTemplatesWs] = useState<number | undefined>(undefined);
   const loadTemplates = useCallback(() => {
-    if (templates.length > 0) return;
-    apiFetch('/api/templates').then((r) => {
+    const wsId = selectedRef.current?.workspace_id;
+    if (templates.length > 0 && templatesWs === wsId) return;
+    apiFetch('/api/templates', inWs(wsId)).then((r) => {
       const approved = (r.data || []).filter((t: { status: string }) => t.status === 'APPROVED');
       setTemplates(approved);
+      setTemplatesWs(wsId);
     });
-  }, [templates.length]);
+  }, [templates.length, templatesWs]);
 
   // 24h session: open if user messaged us OR we sent a template within 24h
   const isSessionOpen = messages.some((m) =>
@@ -1188,19 +1231,19 @@ export default function InboxPage() {
       return next;
     });
     // Server-side read: updates last_read_at in DB (syncs across all devices)
-    apiFetch(`/api/contacts/${c.id}`, { method: 'PUT', body: JSON.stringify({ reset_unread: true }) }).catch(() => {});
+    apiFetch(`/api/contacts/${c.id}`, inWs(c.workspace_id, { method: 'PUT', body: JSON.stringify({ reset_unread: true }) })).catch(() => {});
     // Send WhatsApp read receipts so user sees blue ticks on their end
-    apiFetch('/api/messages/read', { method: 'POST', body: JSON.stringify({ contactId: c.id }) }).catch(() => {});
+    apiFetch('/api/messages/read', inWs(c.workspace_id, { method: 'POST', body: JSON.stringify({ contactId: c.id }) })).catch(() => {});
   }
 
   async function toggleOptedIn(e: React.MouseEvent, c: Contact) {
     e.stopPropagation(); // contact select na ho
     const newVal = c.opted_in === 0 ? 1 : 0;
     try {
-      await apiFetch(`/api/contacts/${c.id}`, {
+      await apiFetch(`/api/contacts/${c.id}`, inWs(c.workspace_id, {
         method: 'PUT',
         body:   JSON.stringify({ opted_in: newVal }),
-      });
+      }));
       // Update both lists
       const update = (prev: Contact[]) =>
         prev.map((x) => x.id === c.id ? { ...x, opted_in: newVal } : x);
@@ -1238,10 +1281,10 @@ export default function InboxPage() {
     setMessages((prev) => [...prev, optimistic]);
 
     try {
-      await apiFetch('/api/send-message', {
+      await apiFetch('/api/send-message', inWs(selected.workspace_id, {
         method: 'POST',
         body: JSON.stringify({ contactId: selected.id, type: 'text', text: msgText }),
-      });
+      }));
       // Reload to get real wamid and status from server
       loadMessages(selected.id);
     } catch (err) {
@@ -1262,14 +1305,14 @@ export default function InboxPage() {
       if (headerComponent) components.push(headerComponent);
       if (params.length > 0) components.push({ type: 'body', parameters: params.map((v) => ({ type: 'text', text: String(v) })) });
 
-      await apiFetch('/api/send-message', {
+      await apiFetch('/api/send-message', inWs(selected.workspace_id, {
         method: 'POST',
         body: JSON.stringify({
           contactId: selected.id, type: 'template', templateName, language,
           templateParams: params,
           ...(components.length > 0 ? { components } : {}),
         }),
-      });
+      }));
       setShowTemplates(false);
       setTplForParams(null);
       setTplParamVals([]);
@@ -1306,7 +1349,7 @@ export default function InboxPage() {
       const fd = new FormData();
       fd.append('file', file);
       const token = localStorage.getItem('token');
-      const upRes = await fetch('/api/media', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
+      const upRes = await fetch('/api/media', inWs(selected?.workspace_id, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd }));
       const upData = await upRes.json();
       if (!upRes.ok) throw new Error(upData.error || 'Upload failed');
       setTplHeaderMediaId(upData.data.mediaId);
@@ -1335,10 +1378,10 @@ export default function InboxPage() {
     };
     setMessages((prev) => [...prev, optimistic]);
     try {
-      await apiFetch(`/api/contacts/${selected.id}`, {
+      await apiFetch(`/api/contacts/${selected.id}`, inWs(selected.workspace_id, {
         method: 'PUT',
         body: JSON.stringify({ chat_status: 'intervened' }),
-      });
+      }));
       const updated = { ...selected, chat_status: 'intervened' as const, intervened_by: userName, assigned_agent_id: null as unknown as number };
       setSelected(updated);
       setContacts((prev) => prev.map((c) => c.id === selected.id ? updated : c));
@@ -1370,10 +1413,10 @@ export default function InboxPage() {
       };
       setMessages((prev) => [...prev, closedMsg]);
 
-      await apiFetch(`/api/contacts/${selected.id}`, {
+      await apiFetch(`/api/contacts/${selected.id}`, inWs(selected.workspace_id, {
         method: 'PUT',
         body: JSON.stringify({ chat_status: 'resolved' }),
-      });
+      }));
 
       // Mark resolved locally — contact stays in "All" for 24h, then auto-moves to History
       const resolved = { ...selected, chat_status: 'resolved' as const };
@@ -1402,7 +1445,7 @@ export default function InboxPage() {
     setShowCallMenu((s) => !s);
     setCallPermLoading(true);
     setCallPerm(null);
-    apiFetch(`/api/calling/permission?contactId=${selected.id}`)
+    apiFetch(`/api/calling/permission?contactId=${selected.id}`, inWs(selected.workspace_id))
       .then((r) => setCallPerm(r.data || null))
       .catch(() => setCallPerm(null))
       .finally(() => setCallPermLoading(false));
@@ -1411,7 +1454,7 @@ export default function InboxPage() {
     if (!selected) return;
     setCallMenuBusy(action);
     try {
-      await apiFetch('/api/calling/permission', { method: 'POST', body: JSON.stringify({ contactId: selected.id, action }) });
+      await apiFetch('/api/calling/permission', inWs(selected.workspace_id, { method: 'POST', body: JSON.stringify({ contactId: selected.id, action }) }));
       toast.success(action === 'request' ? 'Call permission request sent' : '"Call us" button sent');
       setShowCallMenu(false);
       loadMessages(selected.id);
@@ -1466,11 +1509,13 @@ export default function InboxPage() {
   }
 
   async function openTransfer() {
-    if (transferAgents.length === 0 && !showTransfer) {
+    const wsId = selected?.workspace_id;
+    if ((transferAgents.length === 0 || transferAgentsWs !== wsId) && !showTransfer) {
       setLoadingAgents(true);
       try {
-        const r = await apiFetch('/api/agents');
+        const r = await apiFetch('/api/agents', inWs(wsId));
         setTransferAgents(r.data || []);
+        setTransferAgentsWs(wsId);
       } catch { toast.error('Failed to load agents'); }
       finally { setLoadingAgents(false); }
     }
@@ -1482,10 +1527,10 @@ export default function InboxPage() {
     setTransferring(true);
     setShowTransfer(false);
     try {
-      await apiFetch(`/api/contacts/${selected.id}`, {
+      await apiFetch(`/api/contacts/${selected.id}`, inWs(selected.workspace_id, {
         method: 'PUT',
         body: JSON.stringify({ transfer_to_id: agent.id }),
-      });
+      }));
       // Remove from current agent's view immediately
       setContacts((prev) => prev.filter((c) => c.id !== selected.id));
       setIntervenedContacts((prev) => prev.filter((c) => c.id !== selected.id));
@@ -1588,6 +1633,43 @@ export default function InboxPage() {
               <input value={search} onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search contacts..." className="input pl-9 text-sm py-2 w-full" />
             </div>
+            {/* Projects selector — kai projects ki chats ek inbox me */}
+            {allWorkspaces.length > 1 && (
+              <div className="relative" ref={wsDropRef}>
+                <button
+                  onClick={() => setShowWsDrop((p) => !p)}
+                  title="Show chats from multiple projects"
+                  className={`flex items-center justify-center gap-1 h-9 px-2 rounded-lg border transition-colors flex-shrink-0
+                    ${combined
+                      ? 'bg-whatsapp-green border-whatsapp-green text-white'
+                      : 'bg-white border-gray-300 text-gray-500 hover:border-whatsapp-green hover:text-whatsapp-green'}`}>
+                  <Layers size={15} />
+                  {combined && <span className="text-xs font-semibold">{shownWsIds.length}</span>}
+                </button>
+
+                {showWsDrop && (
+                  <div className="absolute right-0 top-11 w-60 bg-white border border-gray-200 rounded-xl shadow-lg z-30 overflow-hidden">
+                    <div className="px-3 py-2 border-b border-gray-100">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Show chats from</p>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto">
+                      {allWorkspaces.map((w) => {
+                        const checked = shownWsIds.length > 0 ? shownWsIds.includes(w.id) : w.id === currentWsId;
+                        return (
+                          <label key={w.id}
+                            className="w-full px-4 py-2.5 text-sm flex items-center gap-2 cursor-pointer text-gray-700 hover:bg-gray-50">
+                            <input type="checkbox" checked={checked} onChange={() => toggleInboxWs(w.id)}
+                              className="accent-whatsapp-green" />
+                            <span className="truncate flex-1">{w.name}</span>
+                            {w.id === currentWsId && <span className="text-[10px] text-gray-400 flex-shrink-0">current</span>}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             {/* Campaign filter icon */}
             <div className="relative" ref={campaignDropRef}>
               <button
@@ -1935,6 +2017,11 @@ export default function InboxPage() {
                             Opted Out
                           </span>
                         )}
+                        {combined && (
+                          <span className="flex-shrink-0 max-w-[90px] truncate text-[9px] font-semibold bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full leading-none">
+                            {wsName(c.workspace_id)}
+                          </span>
+                        )}
                       </div>
                       {c.last_message_at && (
                         <span className="text-xs text-gray-400 flex-shrink-0">
@@ -1977,7 +2064,10 @@ export default function InboxPage() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="font-semibold text-sm text-gray-900 truncate">{selected.name || selected.phone}</p>
-              <p className="text-xs text-gray-400">+{selected.phone}</p>
+              <p className="text-xs text-gray-400 truncate">
+                +{selected.phone}
+                {combined && <span className="text-indigo-600 font-medium"> · {wsName(selected.workspace_id)}</span>}
+              </p>
             </div>
             {/* WhatsApp voice call menu (Business Calling API) — needs calling
                 enabled in Settings → Calling; outbound calls need the customer's permission */}
