@@ -16,21 +16,22 @@ export async function GET(req: NextRequest) {
     const rows = await query<RowDataPacket[]>(
       // type ENUM predates 'button': legacy rows have type='' — match both.
       // CHAR_LENGTH cap keeps stray non-button '' rows out (WA button text ≤ 25 chars).
-      `SELECT t.content AS reply, COUNT(*) AS contacts
+      // Latest tap per contact in ONE grouped pass (MAX(id)) — the old per-contact
+      // subquery re-read every message of every contact and timed out on big
+      // accounts. Same result: a contact who tapped in the last 90 days has their
+      // latest tap inside that window too.
+      `SELECT bm.content AS reply, COUNT(*) AS contacts
        FROM (
-         SELECT m.contact_id,
-                (SELECT bm.content FROM messages bm
-                 WHERE bm.contact_id = m.contact_id AND bm.direction = 'inbound'
-                   AND (bm.type = 'button' OR (bm.type = '' AND bm.content NOT LIKE '⚠%'))
-                 ORDER BY bm.id DESC LIMIT 1) AS content
-         FROM messages m
-         WHERE m.workspace_id = ? AND m.direction = 'inbound'
-           AND (m.type = 'button' OR (m.type = '' AND m.content NOT LIKE '⚠%'))
-           AND m.created_at > DATE_SUB(NOW(), INTERVAL 90 DAY)
-         GROUP BY m.contact_id
+         SELECT contact_id, MAX(id) AS last_id
+         FROM messages
+         WHERE workspace_id = ? AND direction = 'inbound'
+           AND type IN ('button', '') AND (type = 'button' OR content NOT LIKE '⚠%')
+           AND created_at > DATE_SUB(NOW(), INTERVAL 90 DAY)
+         GROUP BY contact_id
        ) t
-       WHERE t.content IS NOT NULL AND t.content != '' AND CHAR_LENGTH(t.content) <= 30
-       GROUP BY t.content
+       JOIN messages bm ON bm.id = t.last_id
+       WHERE bm.content IS NOT NULL AND bm.content != '' AND CHAR_LENGTH(bm.content) <= 30
+       GROUP BY bm.content
        ORDER BY contacts DESC
        LIMIT 25`,
       [payload.workspaceId]
