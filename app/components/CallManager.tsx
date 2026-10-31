@@ -9,21 +9,28 @@
  * WebRTC session, recording upload.
  *
  * Talks to pages via window CustomEvents:
- *   'wa:start-call'  (in)  detail {contactId?, name?, phone} → place outbound call
+ *   'wa:start-call'  (in)  detail {contactId?, name?, phone, workspaceId?} → place outbound call
+ *   'wa:inbox-workspaces' (in) — combined inbox selection changed → re-subscribe to those projects
  *   'wa:open-chat'   (out) detail {contactId?, phone} — inbox listens & opens the chat
  *   'wa:call-state'  (out) detail {active: boolean}   — pages can disable their Call buttons
  */
 import { useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { apiFetch } from '@/hooks/useApi';
+import { inWs, readInboxWorkspaceIds, workspaceName, INBOX_WS_EVENT } from '@/lib/inboxWorkspaces';
 import { WhatsAppCallSession } from '@/lib/webrtcCall';
 import { PhoneCall, PhoneMissed, Mic, MicOff, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-interface IncomingCall { callId: string; contactId?: number; name: string; phone: string; startedAt: number; sdp?: string }
+interface IncomingCall {
+  callId: string; contactId?: number; name: string; phone: string; startedAt: number; sdp?: string;
+  workspaceId?: number;   // combined inbox: call kis project ki hai (undefined = current)
+  project?: string;
+}
 interface ActiveCall {
   callId:    string;
   contactId?: number;
+  workspaceId?: number;
   name:      string;
   phone:     string;
   direction: 'inbound' | 'outbound';
@@ -95,6 +102,7 @@ function IncomingCallPopup({ call, onDecline, onAnswer, onOpenChat, busy }: {
             <div className="min-w-0">
               <p className="font-semibold text-lg leading-tight truncate">{call.name || call.phone}</p>
               <p className="text-emerald-200 text-sm truncate">+{call.phone}</p>
+              {call.project && <p className="text-emerald-100 text-xs font-medium truncate">{call.project}</p>}
               <p className="text-emerald-300/80 text-[11px] mt-0.5">Ringing… {elapsed}s</p>
             </div>
           </div>
@@ -336,22 +344,21 @@ export default function CallManager() {
     // First connect only — also load the record-calls pref once
     if (!settingsLoadedRef.current) {
       settingsLoadedRef.current = true;
-      apiFetch('/api/calling/settings')
-        .then((r) => { recordCallsRef.current = !!r.data?.record_calls && !!r.data?.recording_storage_ready; })
-        .catch(() => {});
+      loadRecordPref();
     }
 
     function connect() {
       if (destroyedRef.current) return;
       const t = localStorage.getItem('token');
       if (!t) return;
-      const es = new EventSource(`/api/events?token=${encodeURIComponent(t)}`);
+      const wsIds = readInboxWorkspaceIds();
+      const es = new EventSource(`/api/events?token=${encodeURIComponent(t)}${wsIds.length ? `&workspaces=${wsIds.join(',')}` : ''}`);
       esRef.current = es;
 
       es.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data) as {
-            type?: string; contactId?: number;
+            type?: string; contactId?: number; workspaceId?: number;
             callerName?: string; callerPhone?: string;
             callId?: string; sdp?: string; agentName?: string;
           };
@@ -359,6 +366,7 @@ export default function CallManager() {
           if (data.type === 'incoming_call' && data.callId) {
             // Already on a call → don't pop a second one (Meta will ring it out as missed)
             if (activeCallRef.current) return;
+            const combined = wsIds.length > 0 && !!data.workspaceId;
             setIncomingCall({
               callId:    data.callId,
               contactId: data.contactId,
@@ -366,6 +374,8 @@ export default function CallManager() {
               phone:     data.callerPhone || '',
               startedAt: Date.now(),
               sdp:       data.sdp,
+              workspaceId: combined ? data.workspaceId : undefined,
+              project:     combined ? workspaceName(data.workspaceId!) : undefined,
             });
             // Local notification — instant even when the server push is being
             // throttled by the phone's battery saver (tab alive = we can show it)
@@ -411,28 +421,41 @@ export default function CallManager() {
     // No per-navigation cleanup — the connection must outlive route changes.
   }, [pathname]);
 
+  // Record-calls pref har project ka apna — call shuru hote waqt uske project se lo
+  function loadRecordPref(workspaceId?: number) {
+    apiFetch('/api/calling/settings', inWs(workspaceId))
+      .then((r) => { recordCallsRef.current = !!r.data?.record_calls && !!r.data?.recording_storage_ready; })
+      .catch(() => {});
+  }
+
   // A panel opened AFTER the ring started (push-notification tap, fresh tab)
   // missed the SSE event — ask the server if a call is ringing right now.
   async function checkRinging() {
     if (activeCallRef.current || incomingCallRef.current) return;
     if (!localStorage.getItem('token')) return;
-    try {
-      const r = await apiFetch('/api/calling/ringing');
-      const ring = r.data?.ringing as {
-        call_id: string; contact_id: number | null; caller_name: string;
-        caller_phone: string; sdp: string | null; started_at: number;
-      } | null;
-      if (ring && !activeCallRef.current && !incomingCallRef.current) {
-        setIncomingCall({
-          callId:    ring.call_id,
-          contactId: ring.contact_id ?? undefined,
-          name:      ring.caller_name || '',
-          phone:     ring.caller_phone || '',
-          startedAt: ring.started_at || Date.now(),
-          sdp:       ring.sdp || undefined,
-        });
-      }
-    } catch { /* transient */ }
+    const wsIds = readInboxWorkspaceIds();
+    for (const wsId of wsIds.length ? wsIds : [undefined]) {
+      try {
+        const r = await apiFetch('/api/calling/ringing', inWs(wsId));
+        const ring = r.data?.ringing as {
+          call_id: string; contact_id: number | null; caller_name: string;
+          caller_phone: string; sdp: string | null; started_at: number;
+        } | null;
+        if (ring && !activeCallRef.current && !incomingCallRef.current) {
+          setIncomingCall({
+            callId:    ring.call_id,
+            contactId: ring.contact_id ?? undefined,
+            name:      ring.caller_name || '',
+            phone:     ring.caller_phone || '',
+            startedAt: ring.started_at || Date.now(),
+            sdp:       ring.sdp || undefined,
+            workspaceId: wsId,
+            project:     wsId ? workspaceName(wsId) : undefined,
+          });
+          return;
+        }
+      } catch { /* transient */ }
+    }
   }
   const checkRingingRef = useRef(checkRinging);
   checkRingingRef.current = checkRinging;
@@ -459,6 +482,17 @@ export default function CallManager() {
     };
   }, []);
 
+  useEffect(() => {
+    function onInboxWorkspaces() {
+      if (retryRef.current) clearTimeout(retryRef.current);
+      esRef.current?.close();
+      esRef.current = null;
+      connectRef.current?.();
+    }
+    window.addEventListener(INBOX_WS_EVENT, onInboxWorkspaces);
+    return () => window.removeEventListener(INBOX_WS_EVENT, onInboxWorkspaces);
+  }, []);
+
   useEffect(() => () => {
     destroyedRef.current = true;
     if (retryRef.current) clearTimeout(retryRef.current);
@@ -472,7 +506,7 @@ export default function CallManager() {
     if (!incomingCallRef.current) return;
     setCallBusy(true);
     try {
-      await apiFetch('/api/calling/action', { method: 'POST', body: JSON.stringify({ call_id: incomingCallRef.current.callId, action: 'reject' }) });
+      await apiFetch('/api/calling/action', inWs(incomingCallRef.current.workspaceId, { method: 'POST', body: JSON.stringify({ call_id: incomingCallRef.current.callId, action: 'reject' }) }));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not decline');
     } finally {
@@ -487,13 +521,14 @@ export default function CallManager() {
     const call = incomingCallRef.current;
     if (!call?.sdp) return;
     setCallBusy(true);
+    loadRecordPref(call.workspaceId);
     const session = new WhatsAppCallSession({
       onConnected: () => {
         // Media path is up → tell Meta to start the call
-        apiFetch('/api/calling/action', {
+        apiFetch('/api/calling/action', inWs(call.workspaceId, {
           method: 'POST',
           body: JSON.stringify({ call_id: call.callId, action: 'accept', sdp: lastSdpRef.current }),
-        }).then(() => {
+        })).then(() => {
           setActiveCall(prev => prev ? { ...prev, phase: 'active', startedAt: Date.now() } : prev);
           if (recordCallsRef.current) callSessionRef.current?.startRecording();
         }).catch((err) => { toast.error('Accept failed: ' + (err?.message || err)); endActiveCall(true); });
@@ -510,14 +545,14 @@ export default function CallManager() {
       setIncomingCall(null);
       closeCallNotification(call.callId);
       setActiveCall({
-        callId: call.callId, contactId: call.contactId, name: call.name, phone: call.phone,
+        callId: call.callId, contactId: call.contactId, workspaceId: call.workspaceId, name: call.name, phone: call.phone,
         direction: 'inbound', phase: 'connecting', startedAt: Date.now(),
       });
       setCallMuted(false);
-      await apiFetch('/api/calling/action', {
+      await apiFetch('/api/calling/action', inWs(call.workspaceId, {
         method: 'POST',
         body: JSON.stringify({ call_id: call.callId, action: 'pre_accept', sdp: sdpAnswer }),
-      });
+      }));
       // 'accept' fires from onConnected once ICE/DTLS is up
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -532,8 +567,9 @@ export default function CallManager() {
   }
 
   // Outbound: mic → SDP offer (ICE complete) → action=connect → wait for call_answer SSE
-  async function startOutboundCall(contact: { contactId?: number; name?: string; phone: string }) {
+  async function startOutboundCall(contact: { contactId?: number; name?: string; phone: string; workspaceId?: number }) {
     if (activeCallRef.current) { toast.error('Already on a call'); return; }
+    loadRecordPref(contact.workspaceId);
     const session = new WhatsAppCallSession({
       onConnected: () => {
         setActiveCall(prev => prev ? { ...prev, phase: 'active', startedAt: Date.now() } : prev);
@@ -543,16 +579,16 @@ export default function CallManager() {
     });
     callSessionRef.current = session;
     setActiveCall({
-      callId: '', contactId: contact.contactId, name: contact.name || contact.phone, phone: contact.phone,
+      callId: '', contactId: contact.contactId, workspaceId: contact.workspaceId, name: contact.name || contact.phone, phone: contact.phone,
       direction: 'outbound', phase: 'ringing', startedAt: Date.now(),
     });
     setCallMuted(false);
     try {
       const sdpOffer = await session.createOffer();
-      const r = await apiFetch('/api/calling/action', {
+      const r = await apiFetch('/api/calling/action', inWs(contact.workspaceId, {
         method: 'POST',
         body: JSON.stringify({ action: 'connect', to: contact.phone, sdp: sdpOffer }),
-      });
+      }));
       const callId = r.data?.call_id as string;
       if (!callId) throw new Error('No call id from Meta');
       setActiveCall(prev => prev ? { ...prev, callId } : prev);
@@ -571,7 +607,7 @@ export default function CallManager() {
     const ac = activeCallRef.current;
     if (ac && sendTerminate && ac.callId) {
       setActiveCall(prev => prev ? { ...prev, phase: 'ending' } : prev);
-      apiFetch('/api/calling/action', { method: 'POST', body: JSON.stringify({ call_id: ac.callId, action: 'terminate' }) })
+      apiFetch('/api/calling/action', inWs(ac.workspaceId, { method: 'POST', body: JSON.stringify({ call_id: ac.callId, action: 'terminate' }) }))
         .catch(() => {});
     }
     const session = callSessionRef.current;
@@ -590,10 +626,10 @@ export default function CallManager() {
         fd.append('file', rec.blob, `call_${callId}.webm`);
         // raw fetch: apiFetch forces a JSON content-type which breaks multipart
         const token = localStorage.getItem('token');
-        return fetch('/api/calling/recording', {
+        return fetch('/api/calling/recording', inWs(ac?.workspaceId, {
           method: 'POST', body: fd,
           headers: token ? { Authorization: `Bearer ${token}` } : {},
-        })
+        }))
           .then(async (res) => {
             if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `HTTP ${res.status}`); }
             toast.success('Call recording saved', { duration: 2500 });
@@ -617,15 +653,17 @@ export default function CallManager() {
       // Inbox is mounted — let it select the contact in place
       window.dispatchEvent(new CustomEvent('wa:open-chat', { detail: { contactId: call.contactId, phone: call.phone } }));
     } else {
-      window.location.href = call.contactId ? `/inbox?contact=${call.contactId}` : '/inbox';
+      window.location.href = call.contactId
+        ? `/inbox?contact=${call.contactId}${call.workspaceId ? `&ws=${call.workspaceId}` : ''}`
+        : '/inbox';
     }
   }
 
   // Pages ask us to place a call (e.g. inbox chat header "Call now")
   useEffect(() => {
     function onStartCall(e: Event) {
-      const d = (e as CustomEvent).detail as { contactId?: number; name?: string; phone?: string } | undefined;
-      if (d?.phone) startOutboundCall({ contactId: d.contactId, name: d.name, phone: d.phone });
+      const d = (e as CustomEvent).detail as { contactId?: number; name?: string; phone?: string; workspaceId?: number } | undefined;
+      if (d?.phone) startOutboundCall({ contactId: d.contactId, name: d.name, phone: d.phone, workspaceId: d.workspaceId });
     }
     window.addEventListener('wa:start-call', onStartCall);
     return () => window.removeEventListener('wa:start-call', onStartCall);

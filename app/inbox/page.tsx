@@ -6,13 +6,7 @@ import { validateMediaFile } from '@/lib/mediaLimits';
 import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter, BellOff, Bell, ArrowLeft, Info, Layers, PhoneCall, PhoneMissed, PhoneOutgoing, MousePointerClick, CheckCheck } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Contact, Message } from '@/types';
-
-// Combined inbox: chat-specific calls us chat ke project ke naam pe jaate hain —
-// server `x-workspace-id` pe membership check karke wahi workspace use karta hai.
-function inWs(workspaceId: number | undefined, options: RequestInit = {}): RequestInit {
-  if (!workspaceId) return options;
-  return { ...options, headers: { ...(options.headers as Record<string, string> | undefined), 'x-workspace-id': String(workspaceId) } };
-}
+import { inWs, inboxWsKey as wsKeyFor, shownInboxWorkspaceIds, isCombined, INBOX_WS_EVENT } from '@/lib/inboxWorkspaces';
 
 // ── Template bubble types ─────────────────────────────────────
 interface TemplateContent {
@@ -876,7 +870,7 @@ export default function InboxPage() {
   // ── Combined inbox: kaun-kaun se projects ki chats ek list me dikhein ──
   // Selection har user ke liye is browser me save hoti hai. Khali = sirf current project.
   const currentWsId = typeof window !== 'undefined' ? Number(localStorage.getItem('workspaceId')) || 0 : 0;
-  const inboxWsKey  = `inboxWorkspaces:${currentUserId ?? ''}`;
+  const inboxWsKey  = wsKeyFor(currentUserId);
   const [allWorkspaces] = useState<{ id: number; name: string }[]>(() => {
     try { return JSON.parse(localStorage.getItem('workspaces') || '[]'); } catch { return []; }
   });
@@ -885,8 +879,8 @@ export default function InboxPage() {
   });
   const [showWsDrop, setShowWsDrop] = useState(false);
   const wsDropRef                   = useRef<HTMLDivElement>(null);
-  const shownWsIds = inboxWsIds.filter((id) => allWorkspaces.some((w) => w.id === id));
-  const combined   = shownWsIds.length > 0 && !(shownWsIds.length === 1 && shownWsIds[0] === currentWsId);
+  const shownWsIds = shownInboxWorkspaceIds(inboxWsIds, allWorkspaces);
+  const combined   = isCombined(shownWsIds, currentWsId);
   const wsParam    = combined ? `&workspaces=${shownWsIds.join(',')}` : '';
   const wsParamRef = useRef(wsParam);
   wsParamRef.current = wsParam;
@@ -897,6 +891,8 @@ export default function InboxPage() {
     const next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
     setInboxWsIds(next);
     try { localStorage.setItem(inboxWsKey, JSON.stringify(next)); } catch { /* private mode */ }
+    // CallManager bhi in projects ki calls sune
+    window.dispatchEvent(new CustomEvent(INBOX_WS_EVENT));
   }
 
   // Campaign filter
@@ -1600,9 +1596,10 @@ export default function InboxPage() {
   // Deep link: /inbox?contact=ID (from Calls page "Chat", notifications, etc.)
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const id = Number(new URLSearchParams(window.location.search).get('contact') || 0);
+    const params = new URLSearchParams(window.location.search);
+    const id = Number(params.get('contact') || 0);
     if (!id) return;
-    apiFetch(`/api/contacts/${id}`)
+    apiFetch(`/api/contacts/${id}`, inWs(Number(params.get('ws') || 0) || undefined))
       .then((r) => { if (r.data?.id) selectContact(r.data as Contact); })
       .catch(() => {});
     // strip the param so a refresh doesn't re-select
@@ -2113,7 +2110,7 @@ export default function InboxPage() {
                     <button onClick={() => {
                       setShowCallMenu(false);
                       window.dispatchEvent(new CustomEvent('wa:start-call', {
-                        detail: { contactId: selected.id, name: selected.name || selected.phone, phone: selected.phone },
+                        detail: { contactId: selected.id, name: selected.name || selected.phone, phone: selected.phone, workspaceId: selected.workspace_id },
                       }));
                     }}
                       disabled={!granted || callPermLoading}
