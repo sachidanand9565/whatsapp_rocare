@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
       // contact list, enrich with this agent's view of the contact so the inbox
       // can upsert locally instead of re-fetching /api/contacts on every event.
       const unsubscribers = scopes.map(({ workspaceId, role }) => subscribeSSE(workspaceId, (payload: SSEPayload) => {
-        if ((payload.type === 'new_message' || payload.type === 'chat_status_update') && payload.contactId) {
+        if ((payload.type === 'new_message' || payload.type === 'chat_status_update' || payload.type === 'chat_assigned') && payload.contactId) {
           getContactForAgent(workspaceId, payload.contactId, userId, role)
             .then(({ contact, inInbox, inIntervened }) => {
               enqueue({ ...payload, contact, inInbox, inIntervened });

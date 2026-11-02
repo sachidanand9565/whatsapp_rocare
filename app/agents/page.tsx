@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, Trash2, ToggleLeft, ToggleRight, Search, UserCog, SlidersHorizontal, X, Check, Eye, EyeOff, KeyRound } from 'lucide-react';
 import toast from 'react-hot-toast';
+import AutoAssignCard from '../components/AutoAssignCard';
 
 interface Agent {
   id: number;
@@ -304,6 +305,8 @@ export default function AgentsPage() {
           <Plus size={16} /> Add Agent
         </button>
       </div>
+
+      <AutoAssignCard />
 
       {/* Search */}
       <div className="relative max-w-sm">

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import LogoMark from '../components/LogoMark';
+import AvailabilityToggle, { goOffline } from '../components/AvailabilityToggle';
 
 type Role = 'admin' | 'manager' | 'agent';
 
@@ -156,6 +157,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const nav = ALL_NAV.filter((item) => item.roles.includes(role));
 
   async function logout() {
+    if (role !== 'admin') await goOffline();
     await fetch('/api/auth/logout', { method: 'POST' });
     localStorage.removeItem('token');
     localStorage.removeItem('workspaceId');
@@ -328,6 +330,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </h2>
           {userName && (
             <div className="flex items-center gap-2">
+              {role !== 'admin' && <AvailabilityToggle />}
               <span className={`text-[10px] font-semibold text-white px-2 py-0.5 rounded-full capitalize ${roleBadgeColor[role]}`}>
                 {role}
               </span>

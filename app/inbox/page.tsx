@@ -999,6 +999,12 @@ export default function InboxPage() {
     }
   }, [loadContacts, loadIntervenedContacts]);
 
+  // Chat no longer visible to this user (e.g. auto-assigned to someone else)
+  const dropContact = useCallback((contactId: number) => {
+    setContacts(prev => prev.filter((c) => c.id !== contactId));
+    setIntervenedContacts(prev => prev.filter((c) => c.id !== contactId));
+  }, []);
+
   useEffect(() => {
     apiFetch('/api/campaigns').then((r) => {
       setCampaigns((r.data || []).map((c: { id: number; name: string }) => ({ id: c.id, name: c.name })));
@@ -1147,6 +1153,8 @@ export default function InboxPage() {
           if (data.type === 'new_message') {
             if (data.contact) {
               applyContactUpdate(data.contact, !!data.inInbox, !!data.inIntervened);
+            } else if (data.contact === null && data.contactId) {
+              dropContact(data.contactId);
             }
 
             if (selectedRef.current?.id === data.contactId) {
@@ -1178,6 +1186,10 @@ export default function InboxPage() {
                 m.wamid === data.wamid ? { ...m, status: data.status as Message['status'] } : m
               ));
             }
+          } else if (data.type === 'chat_assigned' && data.contactId) {
+            // Auto-assign moved this chat: show it to its new owner, drop it for the rest
+            if (data.contact) applyContactUpdate(data.contact, !!data.inInbox, !!data.inIntervened);
+            else if (data.contact === null) dropContact(data.contactId);
           } else if (data.type === 'chat_status_update' && data.contactId && data.chatStatus) {
             if (data.contact) {
               applyContactUpdate(data.contact, !!data.inInbox, !!data.inIntervened);
@@ -1205,7 +1217,7 @@ export default function InboxPage() {
       if (retryTimer) clearTimeout(retryTimer);
       es?.close();
     };
-  }, [loadContacts, loadMessages, loadIntervenedContacts, applyContactUpdate, wsParam]);
+  }, [loadContacts, loadMessages, loadIntervenedContacts, applyContactUpdate, dropContact, wsParam]);
 
   // Templates har project ke alag — chat badalne pe dusre project ke templates load karo
   const [templatesWs, setTemplatesWs] = useState<number | undefined>(undefined);

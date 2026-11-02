@@ -7,6 +7,7 @@ import { requireAuth, resolveWorkspaceScopes } from '@/lib/auth';
 import { query, insert } from '@/lib/db';
 import { apiSuccess, apiError, getPagination, normalizePhone } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
+import { ownChatsOnly } from '@/lib/autoAssign';
 
 export async function GET(req: NextRequest) {
   try {
@@ -41,12 +42,15 @@ export async function GET(req: NextRequest) {
              )
            )
          )`;
+    // Auto-assign projects: managers and agents see only the chats assigned to them.
+    const ownOnly = await Promise.all(scopes.map(({ workspaceId, role }) => ownChatsOnly(workspaceId, role)));
     // Role per project alag ho sakta hai, isliye agent filter har workspace ke saath.
     // Intervened tab: agents must only see chats explicitly transferred TO them.
-    const wsScope = (p: string) => '(' + scopes.map(({ workspaceId, role }) =>
+    const wsScope = (p: string) => '(' + scopes.map(({ workspaceId, role }, i) =>
       `(${p}workspace_id = ${Number(workspaceId)}`
-      + (role === 'agent' ? ` ${agentFilter(p)}` : '')
-      + (role === 'agent' && chatStatus === 'intervened' ? ` AND ${p}assigned_agent_id = ${payload.userId}` : '')
+      + (ownOnly[i] ? ` AND ${p}assigned_agent_id = ${payload.userId}`
+        : (role === 'agent' ? ` ${agentFilter(p)}` : '')
+          + (role === 'agent' && chatStatus === 'intervened' ? ` AND ${p}assigned_agent_id = ${payload.userId}` : ''))
       + ')'
     ).join(' OR ') + ')';
 

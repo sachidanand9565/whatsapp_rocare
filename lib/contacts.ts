@@ -7,6 +7,7 @@
 import { query } from '@/lib/db';
 import { RowDataPacket } from 'mysql2';
 import { Contact } from '@/types';
+import { ownChatsOnly } from '@/lib/autoAssign';
 
 export interface ContactForAgentResult {
   contact:      (Contact & { last_inbound_at?: string | null }) | null;
@@ -47,7 +48,10 @@ export async function getContactForAgent(
 
   // Base visibility (mirrors agentFilterMain in app/api/contacts/route.ts)
   let visible = true;
-  if (role === 'agent') {
+  if (await ownChatsOnly(workspaceId, role)) {
+    // Auto-assign project: managers and agents see only their own chats
+    visible = contact.assigned_agent_id === userId;
+  } else if (role === 'agent') {
     if (contact.assigned_agent_id === userId) {
       visible = true;
     } else if (contact.assigned_agent_id == null) {

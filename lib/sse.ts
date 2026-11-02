@@ -10,7 +10,7 @@ const emitter = new EventEmitter();
 emitter.setMaxListeners(500);
 
 export interface SSEPayload {
-  type:        'new_message' | 'status_update' | 'chat_status_update' | 'campaign_update' | 'incoming_call' | 'call_ended' | 'call_answer' | 'call_taken';
+  type:        'new_message' | 'status_update' | 'chat_status_update' | 'campaign_update' | 'incoming_call' | 'call_ended' | 'call_answer' | 'call_taken' | 'chat_assigned';
   workspaceId: number;
   contactId?:  number;
   direction?:  'inbound' | 'outbound';

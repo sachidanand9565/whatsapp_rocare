@@ -9,6 +9,7 @@ import { timingSafeEqual } from 'crypto';
 import { emitLocalSSE, SSEPayload } from '@/lib/sse';
 import { setRinging, clearRinging } from '@/lib/activeCalls';
 import { apiSuccess, apiError } from '@/lib/utils';
+import { autoAssignContact } from '@/lib/autoAssign';
 
 function secretMatches(given: string | null, expected: string) {
   if (!given) return false;
@@ -45,6 +46,16 @@ export async function POST(req: NextRequest) {
     });
   } else if (payload.type === 'call_ended' || payload.type === 'call_taken') {
     clearRinging(payload.workspaceId, payload.callId);
+  }
+
+  // Auto-assign (projects that turned it on) — before the emit, so the inbox
+  // push already shows the chat to its new owner only.
+  if (payload.type === 'new_message' && payload.direction === 'inbound' && payload.contactId) {
+    try {
+      await autoAssignContact(payload.workspaceId, payload.contactId);
+    } catch (err) {
+      console.error('[sse-relay] auto-assign failed', err);
+    }
   }
 
   emitLocalSSE(payload);
