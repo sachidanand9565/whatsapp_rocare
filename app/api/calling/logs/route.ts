@@ -4,10 +4,11 @@
  *   ?direction=    inbound | outbound
  *   ?status=       completed | missed | rejected | ringing
  *   ?page=&limit=
+ *   ?workspaces=1,2,3  combined inbox — saare member projects ki calls ek saath
  * Returns { stats, calls, pagination }
  */
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth';
+import { requireAuth, resolveWorkspaceScopes } from '@/lib/auth';
 import { query } from '@/lib/db';
 import { apiSuccess, apiError } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
@@ -23,8 +24,13 @@ export async function GET(req: NextRequest) {
     const limit     = Math.min(100, Math.max(1, Number(sp.get('limit') || 50)));
     const offset    = (page - 1) * limit;
 
-    const where: string[] = ['cl.workspace_id = ?'];
-    const params: (string | number)[] = [payload.workspaceId];
+    // Only projects the user is a member of (ids come from the DB, safe to inline)
+    const wsIds = (await resolveWorkspaceScopes(payload, sp.get('workspaces'))).map((s) => Number(s.workspaceId));
+    if (wsIds.length === 0) wsIds.push(-1);
+    const wsIn = `(${wsIds.join(',')})`;
+
+    const where: string[] = [`cl.workspace_id IN ${wsIn}`];
+    const params: (string | number)[] = [];
     if (direction === 'inbound' || direction === 'outbound') { where.push('cl.direction = ?'); params.push(direction); }
     if (['completed', 'missed', 'rejected', 'ringing', 'failed'].includes(status)) { where.push('cl.status = ?'); params.push(status); }
     if (q) {
@@ -44,8 +50,7 @@ export async function GET(req: NextRequest) {
            COALESCE(SUM(status = 'completed'), 0)                     AS completed,
            COALESCE(SUM(status IN ('missed','rejected')), 0)          AS missed,
            COALESCE(SUM(IF(status = 'completed', duration_sec, 0)), 0) AS talk_seconds
-         FROM call_logs WHERE workspace_id = ?`,
-        [payload.workspaceId]
+         FROM call_logs WHERE workspace_id IN ${wsIn}`
       );
       stats = {
         incoming: Number(s[0]?.incoming || 0), outgoing: Number(s[0]?.outgoing || 0),
@@ -60,7 +65,7 @@ export async function GET(req: NextRequest) {
       total = Number(cnt[0]?.total || 0);
 
       const listSql = (withRec: boolean) =>
-        `SELECT cl.id, cl.call_id, cl.direction, cl.status, cl.duration_sec,
+        `SELECT cl.id, cl.call_id, cl.workspace_id, cl.direction, cl.status, cl.duration_sec,
                 cl.started_at, cl.answered_at, cl.ended_at, cl.created_at,
                 cl.contact_id, c.name AS contact_name, c.phone AS contact_phone,
                 cl.agent_id, u.name AS agent_name

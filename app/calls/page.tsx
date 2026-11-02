@@ -2,13 +2,14 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/hooks/useApi';
+import { inWs, readInboxWorkspaceIds, workspaceName } from '@/lib/inboxWorkspaces';
 import {
   PhoneCall, PhoneIncoming, PhoneOutgoing, PhoneMissed, Clock, Search,
   RefreshCw, Loader2, Settings, ChevronLeft, ChevronRight, XCircle, Play, Download,
 } from 'lucide-react';
 
 interface CallRow {
-  id: number; call_id: string;
+  id: number; call_id: string; workspace_id: number;
   direction: 'inbound' | 'outbound';
   status: 'ringing' | 'completed' | 'missed' | 'rejected' | 'failed';
   duration_sec: number;
@@ -19,7 +20,7 @@ interface CallRow {
 }
 
 // Inline recording player — fetches a short-lived presigned URL on first play
-function RecordingCell({ callId }: { callId: string }) {
+function RecordingCell({ callId, workspaceId }: { callId: string; workspaceId?: number }) {
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -27,14 +28,14 @@ function RecordingCell({ callId }: { callId: string }) {
     if (url || loading) return;
     setLoading(true); setErr('');
     try {
-      const r = await apiFetch(`/api/calling/recording?call_id=${encodeURIComponent(callId)}`);
+      const r = await apiFetch(`/api/calling/recording?call_id=${encodeURIComponent(callId)}`, inWs(workspaceId));
       setUrl(r.data?.url || null);
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed'); }
     finally { setLoading(false); }
   }
   async function download() {
     try {
-      const r = await apiFetch(`/api/calling/recording?call_id=${encodeURIComponent(callId)}&download=1`);
+      const r = await apiFetch(`/api/calling/recording?call_id=${encodeURIComponent(callId)}&download=1`, inWs(workspaceId));
       if (r.data?.url) window.open(r.data.url, '_blank');
     } catch (e) { setErr(e instanceof Error ? e.message : 'Failed'); }
   }
@@ -95,13 +96,20 @@ export default function CallsPage() {
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [total, setTotal] = useState(0);
+  // Inbox me jo projects select kiye hain, unki calls bhi yahan ek saath
+  // (localStorage padhna mount ke baad — null tak list load nahi hoti, warna pehle galat project ki aati)
+  const [wsIds, setWsIds] = useState<number[] | null>(null);
+  useEffect(() => { setWsIds(readInboxWorkspaceIds()); }, []);
+  const combined = !!wsIds && wsIds.length > 0;
 
   const load = useCallback(() => {
+    if (wsIds === null) return;
     setLoading(true);
     const sp = new URLSearchParams({ page: String(page), limit: '50' });
     if (q) sp.set('q', q);
     if (direction) sp.set('direction', direction);
     if (status) sp.set('status', status);
+    if (combined) sp.set('workspaces', wsIds!.join(','));
     apiFetch(`/api/calling/logs?${sp}`)
       .then((r) => {
         setStats(r.data?.stats || stats);
@@ -113,7 +121,7 @@ export default function CallsPage() {
       .catch(() => {})
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, direction, status, page]);
+  }, [q, direction, status, page, wsIds]);
 
   useEffect(() => { const t = setTimeout(load, q ? 300 : 0); return () => clearTimeout(t); }, [load, q]);
   useEffect(() => { setPage(1); }, [q, direction, status]);
@@ -139,7 +147,11 @@ export default function CallsPage() {
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <PhoneCall size={22} className="text-whatsapp-teal" /> Calls
           </h1>
-          <p className="text-sm text-gray-500 mt-0.5">WhatsApp voice calls on your business number — incoming, outgoing, missed</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {combined
+              ? `WhatsApp calls from ${wsIds!.length} projects selected in the inbox — incoming, outgoing, missed`
+              : 'WhatsApp voice calls on your business number — incoming, outgoing, missed'}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {callingEnabled === false && (
@@ -227,6 +239,11 @@ export default function CallsPage() {
                     <td className="px-4 py-3">
                       <p className="font-semibold text-gray-800">{c.contact_name || c.contact_phone || '—'}</p>
                       {c.contact_phone && <p className="text-xs text-blue-500">+{c.contact_phone}</p>}
+                      {combined && (
+                        <span className="inline-block mt-0.5 max-w-[160px] truncate text-[10px] font-semibold bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full leading-none">
+                          {workspaceName(c.workspace_id)}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1.5 text-gray-700">
@@ -242,12 +259,12 @@ export default function CallsPage() {
                     <td className="px-4 py-3 text-gray-700">{c.agent_name || <span className="text-gray-300">—</span>}</td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-700">{c.status === 'completed' ? fmtDur(c.duration_sec) : '—'}</td>
                     <td className="px-4 py-3">
-                      {c.has_recording ? <RecordingCell callId={c.call_id} /> : <span className="text-gray-300 text-xs">—</span>}
+                      {c.has_recording ? <RecordingCell callId={c.call_id} workspaceId={c.workspace_id} /> : <span className="text-gray-300 text-xs">—</span>}
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{fmtWhen(c.started_at || c.created_at)}</td>
                     <td className="px-4 py-3 text-right">
                       {c.contact_id && (
-                        <button onClick={() => router.push(`/inbox?contact=${c.contact_id}`)}
+                        <button onClick={() => router.push(`/inbox?contact=${c.contact_id}&ws=${c.workspace_id}`)}
                           className="text-xs font-semibold text-gray-600 hover:text-whatsapp-teal">Chat</button>
                       )}
                     </td>
