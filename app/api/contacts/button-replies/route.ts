@@ -14,8 +14,8 @@ export async function GET(req: NextRequest) {
   try {
     const payload = await requireAuth(req);
     const rows = await query<RowDataPacket[]>(
-      // Template button taps ('button') + chatbot/flow button & list replies
-      // ('interactive'). type ENUM predates 'button': legacy rows have type=''.
+      // Template button taps only — chatbot/flow replies ('interactive') stay out.
+      // type ENUM predates 'button': legacy rows have type='' — match both.
       // CHAR_LENGTH cap keeps stray non-button '' rows out (WA button text ≤ 25 chars).
       // Latest tap per contact in ONE grouped pass (MAX(id)) — the old per-contact
       // subquery re-read every message of every contact and timed out on big
@@ -26,8 +26,7 @@ export async function GET(req: NextRequest) {
          SELECT contact_id, MAX(id) AS last_id
          FROM messages
          WHERE workspace_id = ? AND direction = 'inbound'
-           AND type IN ('button', 'interactive', '')
-           AND (type != '' OR content NOT LIKE '⚠%') AND content != '📋 Interactive reply'
+           AND type IN ('button', '') AND (type = 'button' OR content NOT LIKE '⚠%')
            AND created_at > DATE_SUB(NOW(), INTERVAL 90 DAY)
          GROUP BY contact_id
        ) t
