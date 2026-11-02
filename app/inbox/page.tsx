@@ -913,6 +913,7 @@ export default function InboxPage() {
   const [replyOptions, setReplyOptions]             = useState<{ reply: string; contacts: number }[]>([]);
   const [showReplyDrop, setShowReplyDrop]           = useState(false);
   const [replyOptionsLoading, setReplyOptionsLoading] = useState(false);
+  const [replyOptionsError, setReplyOptionsError]   = useState('');
   const [bulkResolving, setBulkResolving]           = useState(false);
   const replyDropRef                                 = useRef<HTMLDivElement>(null);
   const replyFilterRef                               = useRef<string | null>(null);
@@ -1028,9 +1029,10 @@ export default function InboxPage() {
     setShowReplyDrop((p) => !p);
     // Refresh options each open — cheap, and counts stay honest
     setReplyOptionsLoading(true);
+    setReplyOptionsError('');
     apiFetch('/api/contacts/button-replies')
       .then((r) => setReplyOptions(r.data?.replies || []))
-      .catch(() => {})
+      .catch((err) => setReplyOptionsError(err instanceof Error ? err.message : 'Could not load replies'))
       .finally(() => setReplyOptionsLoading(false));
   }
   function applyReplyFilter(reply: string | null) {
@@ -1766,7 +1768,10 @@ export default function InboxPage() {
                         <Loader2 size={14} className="animate-spin" /> Loading replies…
                       </div>
                     )}
-                    {!replyOptionsLoading && replyOptions.length === 0 && (
+                    {!replyOptionsLoading && replyOptionsError && (
+                      <p className="text-xs text-red-500 text-center py-4 px-3">Could not load replies: {replyOptionsError}</p>
+                    )}
+                    {!replyOptionsLoading && !replyOptionsError && replyOptions.length === 0 && (
                       <p className="text-xs text-gray-400 text-center py-4">No button replies yet</p>
                     )}
                     {replyOptions.map((o) => (

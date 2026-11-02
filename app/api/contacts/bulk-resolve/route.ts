@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
         AND (c.chat_status IS NULL OR c.chat_status != 'resolved')
         AND (SELECT bm.content FROM messages bm
              WHERE bm.contact_id = c.id AND bm.direction = 'inbound'
-               AND (bm.type = 'button' OR (bm.type = '' AND bm.content NOT LIKE '⚠%'))
+               AND (bm.type IN ('button', 'interactive') OR (bm.type = '' AND bm.content NOT LIKE '⚠%'))
              ORDER BY bm.id DESC LIMIT 1) = ?`;
     const params: unknown[] = [payload.workspaceId, buttonReply];
 
