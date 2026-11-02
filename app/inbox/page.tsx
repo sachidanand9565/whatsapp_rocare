@@ -886,13 +886,20 @@ export default function InboxPage() {
   wsParamRef.current = wsParam;
   const wsName = (id: number) => allWorkspaces.find((w) => w.id === id)?.name || `Project ${id}`;
 
-  function toggleInboxWs(id: number) {
-    const base = shownWsIds.length > 0 ? shownWsIds : [currentWsId];
-    const next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+  function saveInboxWs(next: number[]) {
     setInboxWsIds(next);
     try { localStorage.setItem(inboxWsKey, JSON.stringify(next)); } catch { /* private mode */ }
     // CallManager bhi in projects ki calls sune
     window.dispatchEvent(new CustomEvent(INBOX_WS_EVENT));
+  }
+  function toggleInboxWs(id: number) {
+    const base = shownWsIds.length > 0 ? shownWsIds : [currentWsId];
+    saveInboxWs(base.includes(id) ? base.filter((x) => x !== id) : [...base, id]);
+  }
+  // Select all ↔ wapas sirf current project
+  const allWsSelected = allWorkspaces.length > 0 && allWorkspaces.every((w) => shownWsIds.includes(w.id));
+  function toggleAllInboxWs() {
+    saveInboxWs(allWsSelected ? [] : allWorkspaces.map((w) => w.id));
   }
 
   // Campaign filter
@@ -1649,6 +1656,12 @@ export default function InboxPage() {
                     <div className="px-3 py-2 border-b border-gray-100">
                       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Show chats from</p>
                     </div>
+                    <label className="w-full px-4 py-2.5 text-sm flex items-center gap-2 cursor-pointer font-semibold text-gray-800 hover:bg-gray-50 border-b border-gray-100">
+                      <input type="checkbox" checked={allWsSelected} onChange={toggleAllInboxWs}
+                        className="accent-whatsapp-green" />
+                      <span className="flex-1">Select all</span>
+                      <span className="text-[10px] font-normal text-gray-400 flex-shrink-0">{allWorkspaces.length}</span>
+                    </label>
                     <div className="max-h-64 overflow-y-auto">
                       {allWorkspaces.map((w) => {
                         const checked = shownWsIds.length > 0 ? shownWsIds.includes(w.id) : w.id === currentWsId;
