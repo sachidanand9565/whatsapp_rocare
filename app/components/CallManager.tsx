@@ -75,20 +75,24 @@ function startRingtone(): () => void {
   };
 }
 
-function IncomingCallPopup({ call, onDecline, onAnswer, onOpenChat, busy }: {
-  call: IncomingCall; onDecline: () => void; onAnswer: () => void; onOpenChat: () => void; busy: boolean;
+function IncomingCallPopup({ call, ring, onDecline, onAnswer, onOpenChat, busy }: {
+  call: IncomingCall; ring: boolean; onDecline: () => void; onAnswer: () => void; onOpenChat: () => void; busy: boolean;
 }) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
-    const stop = startRingtone();
     const t = setInterval(() => setElapsed(Math.floor((Date.now() - call.startedAt) / 1000)), 1000);
-    return () => { stop(); clearInterval(t); };
+    return () => clearInterval(t);
   }, [call.callId, call.startedAt]);
+  // Several calls can ring at once — one ringtone is enough
+  useEffect(() => {
+    if (!ring) return;
+    return startRingtone();
+  }, [ring]);
 
   const initials = (call.name || call.phone || '?').replace(/[^\p{L}\p{N} ]/gu, '').trim().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase() || '#';
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start justify-center pt-16 pointer-events-none">
+    <div>
       <div className="pointer-events-auto w-[340px] max-w-[calc(100vw-24px)] rounded-2xl shadow-2xl border border-emerald-700/40 overflow-hidden animate-[pulse_2s_ease-in-out_infinite]"
         style={{ background: 'linear-gradient(160deg,#064e3b 0%,#065f46 60%,#047857 100%)' }}>
         <div className="px-5 pt-5 pb-4 text-white">
@@ -226,19 +230,29 @@ function closeCallNotification(callId?: string) {
 
 export default function CallManager() {
   const pathname = usePathname();
-  const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
-  const [callBusy, setCallBusy]     = useState(false);
+  // Several customers can ring at once — each gets its own popup. An agent on a
+  // call doesn't see them (rendered only when idle); everyone else does.
+  const [incomingCalls, setIncomingCalls] = useState<IncomingCall[]>([]);
+  const [busyCallId, setBusyCallId] = useState<string | null>(null);
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
   const [callMuted, setCallMuted]   = useState(false);
   const callSessionRef  = useRef<WhatsAppCallSession | null>(null);
   const activeCallRef   = useRef<ActiveCall | null>(null);
-  const incomingCallRef = useRef<IncomingCall | null>(null);
+  const incomingCallsRef = useRef<IncomingCall[]>([]);
   const lastSdpRef      = useRef<string>('');   // our SDP answer, re-sent with 'accept'
   const recordCallsRef  = useRef(false);        // Settings → Calling → Record calls
   const settingsLoadedRef = useRef(false);
 
   useEffect(() => { activeCallRef.current = activeCall; }, [activeCall]);
-  useEffect(() => { incomingCallRef.current = incomingCall; }, [incomingCall]);
+  useEffect(() => { incomingCallsRef.current = incomingCalls; }, [incomingCalls]);
+
+  function addIncomingCall(call: IncomingCall) {
+    setIncomingCalls(prev => prev.some((c) => c.callId === call.callId) ? prev : [...prev, call]);
+  }
+  /** callId omitted = clear every ringing popup */
+  function removeIncomingCall(callId?: string) {
+    setIncomingCalls(prev => callId ? prev.filter((c) => c.callId !== callId) : []);
+  }
 
   // Let pages disable their Call buttons while a call is live
   useEffect(() => {
@@ -364,10 +378,10 @@ export default function CallManager() {
           };
 
           if (data.type === 'incoming_call' && data.callId) {
-            // Already on a call → don't pop a second one (Meta will ring it out as missed)
-            if (activeCallRef.current) return;
+            // Kept even while this agent is on a call: hidden until they hang up,
+            // so a call still ringing then pops; free agents see it right away.
             const combined = wsIds.length > 0 && !!data.workspaceId;
-            setIncomingCall({
+            addIncomingCall({
               callId:    data.callId,
               contactId: data.contactId,
               name:      data.callerName || '',
@@ -379,7 +393,9 @@ export default function CallManager() {
             });
             // Local notification — instant even when the server push is being
             // throttled by the phone's battery saver (tab alive = we can show it)
-            showCallNotification(data.callId, `${data.callerName || data.callerPhone || ''} is calling — tap to answer`);
+            if (!activeCallRef.current) {
+              showCallNotification(data.callId, `${data.callerName || data.callerPhone || ''} is calling — tap to answer`);
+            }
           } else if (data.type === 'call_answer' && data.callId && data.sdp) {
             // Outbound call: customer picked up — finish WebRTC with their answer
             const ac = activeCallRef.current;
@@ -389,17 +405,16 @@ export default function CallManager() {
                 .catch((err) => { toast.error('Could not connect audio: ' + (err?.message || err)); endActiveCall(true); });
             }
           } else if (data.type === 'call_taken' && data.callId) {
-            // Another agent answered — stop ringing on this panel
+            // Someone answered — take this call's popup off every other panel
             closeCallNotification(data.callId);
-            const cur = incomingCallRef.current;
-            if (cur && cur.callId === data.callId) {
-              setIncomingCall(null);
-              toast(`Call answered by ${data.agentName || 'another agent'}`, { icon: '📞' });
+            if (incomingCallsRef.current.some((c) => c.callId === data.callId)) {
+              removeIncomingCall(data.callId);
+              if (!activeCallRef.current) toast(`Call answered by ${data.agentName || 'another agent'}`, { icon: '📞' });
             }
           } else if (data.type === 'call_ended') {
             // Customer hung up / rang out / declined — dismiss popup and tear down any live session
             closeCallNotification(data.callId);
-            setIncomingCall(prev => (prev && (!data.callId || prev.callId === data.callId)) ? null : prev);
+            removeIncomingCall(data.callId);
             const ac = activeCallRef.current;
             if (ac && (!data.callId || ac.callId === data.callId)) endActiveCall(false);
           }
@@ -431,29 +446,26 @@ export default function CallManager() {
   // A panel opened AFTER the ring started (push-notification tap, fresh tab)
   // missed the SSE event — ask the server if a call is ringing right now.
   async function checkRinging() {
-    if (activeCallRef.current || incomingCallRef.current) return;
     if (!localStorage.getItem('token')) return;
     const wsIds = readInboxWorkspaceIds();
     for (const wsId of wsIds.length ? wsIds : [undefined]) {
       try {
         const r = await apiFetch('/api/calling/ringing', inWs(wsId));
-        const ring = r.data?.ringing as {
+        // `calls` = every ringing call; older servers only send `ringing`
+        const rings = (r.data?.calls ?? (r.data?.ringing ? [r.data.ringing] : [])) as {
           call_id: string; contact_id: number | null; caller_name: string;
           caller_phone: string; sdp: string | null; started_at: number;
-        } | null;
-        if (ring && !activeCallRef.current && !incomingCallRef.current) {
-          setIncomingCall({
-            callId:    ring.call_id,
-            contactId: ring.contact_id ?? undefined,
-            name:      ring.caller_name || '',
-            phone:     ring.caller_phone || '',
-            startedAt: ring.started_at || Date.now(),
-            sdp:       ring.sdp || undefined,
-            workspaceId: wsId,
-            project:     wsId ? workspaceName(wsId) : undefined,
-          });
-          return;
-        }
+        }[];
+        rings.forEach((ring) => addIncomingCall({
+          callId:    ring.call_id,
+          contactId: ring.contact_id ?? undefined,
+          name:      ring.caller_name || '',
+          phone:     ring.caller_phone || '',
+          startedAt: ring.started_at || Date.now(),
+          sdp:       ring.sdp || undefined,
+          workspaceId: wsId,
+          project:     wsId ? workspaceName(wsId) : undefined,
+        }));
       } catch { /* transient */ }
     }
   }
@@ -502,25 +514,24 @@ export default function CallManager() {
   }, []);
 
   // ── Softphone: answer / call / hang up ─────────────────────
-  async function declineIncomingCall() {
-    if (!incomingCallRef.current) return;
-    setCallBusy(true);
+  async function declineIncomingCall(call: IncomingCall) {
+    setBusyCallId(call.callId);
     try {
-      await apiFetch('/api/calling/action', inWs(incomingCallRef.current.workspaceId, { method: 'POST', body: JSON.stringify({ call_id: incomingCallRef.current.callId, action: 'reject' }) }));
+      await apiFetch('/api/calling/action', inWs(call.workspaceId, { method: 'POST', body: JSON.stringify({ call_id: call.callId, action: 'reject' }) }));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not decline');
     } finally {
-      setCallBusy(false);
-      setIncomingCall(null);
-      closeCallNotification();
+      setBusyCallId(null);
+      removeIncomingCall(call.callId);
+      closeCallNotification(call.callId);
     }
   }
 
   // Answer: mic → SDP answer (ICE complete) → pre_accept → (WebRTC connected) → accept
-  async function answerIncomingCall() {
-    const call = incomingCallRef.current;
-    if (!call?.sdp) return;
-    setCallBusy(true);
+  async function answerIncomingCall(call: IncomingCall) {
+    if (!call.sdp) return;
+    if (activeCallRef.current) { toast.error('Already on a call'); return; }
+    setBusyCallId(call.callId);
     loadRecordPref(call.workspaceId);
     const session = new WhatsAppCallSession({
       onConnected: () => {
@@ -542,7 +553,7 @@ export default function CallManager() {
     try {
       const sdpAnswer = await session.answerOffer(call.sdp);
       lastSdpRef.current = sdpAnswer;
-      setIncomingCall(null);
+      removeIncomingCall(call.callId);
       closeCallNotification(call.callId);
       setActiveCall({
         callId: call.callId, contactId: call.contactId, workspaceId: call.workspaceId, name: call.name, phone: call.phone,
@@ -560,9 +571,9 @@ export default function CallManager() {
       session.close();
       callSessionRef.current = null;
       setActiveCall(null);
-      setIncomingCall(null);
+      removeIncomingCall(call.callId);
     } finally {
-      setCallBusy(false);
+      setBusyCallId(null);
     }
   }
 
@@ -646,9 +657,7 @@ export default function CallManager() {
     setCallMuted(next);
   }
 
-  function openIncomingCallChat() {
-    const call = incomingCallRef.current;
-    if (!call) return;
+  function openIncomingCallChat(call: IncomingCall) {
     if (window.location.pathname.startsWith('/inbox')) {
       // Inbox is mounted — let it select the contact in place
       window.dispatchEvent(new CustomEvent('wa:open-chat', { detail: { contactId: call.contactId, phone: call.phone } }));
@@ -670,12 +679,17 @@ export default function CallManager() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Ring-out safety: dismiss a popup nobody touched (Meta rings ~60–90s)
+  // Ring-out safety: dismiss popups nobody touched (Meta rings ~60–90s)
   useEffect(() => {
-    if (!incomingCall) return;
-    const t = setTimeout(() => setIncomingCall(null), 90_000);
-    return () => clearTimeout(t);
-  }, [incomingCall]);
+    if (incomingCalls.length === 0) return;
+    const t = setInterval(() => {
+      setIncomingCalls(prev => {
+        const next = prev.filter((c) => Date.now() - c.startedAt < 90_000);
+        return next.length === prev.length ? prev : next;
+      });
+    }, 5_000);
+    return () => clearInterval(t);
+  }, [incomingCalls.length]);
 
   return (<>
     {pushBanner && (
@@ -701,9 +715,19 @@ export default function CallManager() {
         </div>
       </div>
     )}
-    {incomingCall && !activeCall && (
-      <IncomingCallPopup call={incomingCall} busy={callBusy}
-        onDecline={declineIncomingCall} onAnswer={answerIncomingCall} onOpenChat={openIncomingCallChat} />
+    {incomingCalls.length > 0 && !activeCall && (
+      <div className="fixed inset-0 z-[100] flex flex-col items-center gap-3 pt-16 pb-4 pointer-events-none overflow-y-auto">
+        {incomingCalls.slice(0, 3).map((call, i) => (
+          <IncomingCallPopup key={call.callId} call={call} ring={i === 0} busy={!!busyCallId}
+            onDecline={() => declineIncomingCall(call)} onAnswer={() => answerIncomingCall(call)}
+            onOpenChat={() => openIncomingCallChat(call)} />
+        ))}
+        {incomingCalls.length > 3 && (
+          <p className="pointer-events-auto rounded-full bg-emerald-900/90 text-white text-xs font-semibold px-3 py-1.5 shadow-lg">
+            +{incomingCalls.length - 3} more calls ringing
+          </p>
+        )}
+      </div>
     )}
     {activeCall && (
       <ActiveCallBar call={activeCall} muted={callMuted}
