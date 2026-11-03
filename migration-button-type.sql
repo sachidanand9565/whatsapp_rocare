@@ -8,9 +8,10 @@ ALTER TABLE messages MODIFY type
        'reaction','location','contacts','sticker','button','unsupported','unknown')
   DEFAULT 'text';
 
--- Backfill: '' inbound rows are button taps, except the 'unsupported' warning rows
+-- Backfill: '' inbound rows are button taps, except the 'unsupported' warning
+-- rows and call records ('{"__type":"call"…}' — 'call' isn't in the ENUM either)
 UPDATE messages SET type = 'button'
- WHERE type = '' AND direction = 'inbound' AND content NOT LIKE '⚠%';
+ WHERE type = '' AND direction = 'inbound' AND content NOT LIKE '⚠%' AND content NOT LIKE '{%';
 
 UPDATE messages SET type = 'unsupported'
  WHERE type = '' AND direction = 'inbound' AND content LIKE '⚠%';

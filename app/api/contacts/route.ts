@@ -136,7 +136,7 @@ export async function GET(req: NextRequest) {
       // type='' — match both until migration-button-type.sql backfills them.
       const sub = `(SELECT bm.content FROM messages bm
         WHERE bm.contact_id = %C% AND bm.direction = 'inbound'
-          AND (bm.type = 'button' OR (bm.type = '' AND bm.content NOT LIKE '⚠%'))
+          AND (bm.type = 'button' OR (bm.type = '' AND bm.content NOT LIKE '⚠%' AND bm.content NOT LIKE '{%'))
         ORDER BY bm.id DESC LIMIT 1) = ?`;
       sql      += ' AND ' + sub.replace('%C%', 'c.id');
       countSql += ' AND ' + sub.replace('%C%', 'id');
