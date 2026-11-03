@@ -2,7 +2,8 @@
 /**
  * Header switch: Active / Break. Sends a heartbeat every minute while the panel
  * is open — no heartbeat for 5 minutes counts as Offline, so a closed laptop
- * stops getting chats. Only managers and agents get chats automatically.
+ * stops getting chats. Shown only to agents/managers whose Auto Assign toggle
+ * is on — nobody else gets chats automatically.
  */
 import { useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
@@ -24,13 +25,14 @@ export async function goOffline() {
 
 export default function AvailabilityToggle() {
   const [status, setStatus] = useState<Status | null>(null);
+  const [member, setMember] = useState(false);   // Auto Assign toggle on (Agents page)
   const [open, setOpen]     = useState(false);
   const [saving, setSaving] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const beat = () => apiFetch('/api/availability', { method: 'POST', body: JSON.stringify({ heartbeat: true }) })
-      .then((r) => setStatus(r.data?.status || null))
+      .then((r) => { setStatus(r.data?.status || null); setMember(!!r.data?.autoAssign); })
       .catch(() => {});
     beat();
     const t = setInterval(beat, 60_000);
@@ -60,7 +62,7 @@ export default function AvailabilityToggle() {
     }
   }
 
-  if (!status) return null;
+  if (!status || !member) return null;
   const look = LOOK[status];
 
   return (

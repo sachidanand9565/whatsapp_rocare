@@ -1,35 +1,43 @@
 /**
- * lib/autoAssign.ts — hand each chat to one Active agent/manager.
+ * lib/autoAssign.ts — hand each new chat to one Active auto-assign agent.
  *
- * Only for projects where an admin turned auto-assign on (auto_assign_settings).
- * The webhook lands on the other panel, so assignment runs here from the relayed
- * new_message (app/api/sse-relay) plus a sweep on every panel heartbeat
- * (app/api/availability) that catches missed relays and chats left with someone
- * who went on Break / Offline.
+ * Only for projects where an admin turned auto-assign on (auto_assign_settings),
+ * and only to the agents/managers whose "Auto Assign" toggle is on
+ * (auto_assign_agents). The webhook lands on the other panel, so assignment runs
+ * here from the relayed new_message (app/api/sse-relay) plus a sweep on every
+ * panel heartbeat (app/api/availability).
  *
  * Rules:
- *  - Candidates: workspace members with role manager/agent, status 'active' and
- *    a heartbeat in the last 5 minutes. Admins never get chats automatically.
- *  - A chat stays with its owner while the owner is available (or is an admin).
- *  - Otherwise it goes to the candidate with the fewest open chats (24h window,
- *    not resolved), ties → whoever got a chat longest ago. Agents assigned to one
- *    of the contact's campaigns get first pick.
- *  - The sweep only moves chats waiting for a reply (last message is inbound).
+ *  - Candidates: auto-assign members with status 'active' and a heartbeat in the
+ *    last 5 minutes. Admins never get chats automatically.
+ *  - A new message on an unassigned chat goes to the candidate with the fewest
+ *    open chats (24h window, not resolved), ties → whoever got a chat longest
+ *    ago. Agents assigned to one of the contact's campaigns get first pick.
+ *  - Nobody Active → the chat stays unassigned (the pool everyone sees) until
+ *    someone intervenes, which assigns it to them. Old pool chats are never
+ *    handed out later; only a new message from the customer is.
+ *  - A chat stays with its owner while they are available. Chats owned by an
+ *    auto-assign member who went on Break / Offline and still waiting for a
+ *    reply move to another candidate, or back to the pool if there is none.
+ *    Chats someone took by hand (intervene / transfer) by a non-member stay put.
  */
 import { query, execute } from '@/lib/db';
 import { emitLocalSSE } from '@/lib/sse';
 import { RowDataPacket } from 'mysql2';
 
 export const ONLINE_WINDOW_MIN = 5;
+// Sweep backup for a missed relay: unassigned chats this fresh still get assigned.
+const MISSED_RELAY_MIN = 3;
 
 export interface AutoAssignSettings { enabled: boolean; maxChats: number; }
 
-const SETTINGS_TTL_MS = 30_000;
+const CACHE_TTL_MS = 30_000;
 const settingsCache = new Map<number, { s: AutoAssignSettings; at: number }>();
+const membersCache  = new Map<number, { ids: Set<number>; at: number }>();
 
 export async function getAutoAssignSettings(workspaceId: number): Promise<AutoAssignSettings> {
   const cached = settingsCache.get(workspaceId);
-  if (cached && Date.now() - cached.at < SETTINGS_TTL_MS) return cached.s;
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.s;
   let s: AutoAssignSettings = { enabled: false, maxChats: 0 };
   try {
     const rows = await query<RowDataPacket[]>(
@@ -44,22 +52,46 @@ export async function getAutoAssignSettings(workspaceId: number): Promise<AutoAs
   return s;
 }
 
-export function clearAutoAssignCache(workspaceId: number) {
-  settingsCache.delete(workspaceId);
+/** Users whose "Auto Assign" toggle is on in this project. */
+export async function getAutoAssignMembers(workspaceId: number): Promise<Set<number>> {
+  const cached = membersCache.get(workspaceId);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.ids;
+  let ids = new Set<number>();
+  try {
+    const rows = await query<RowDataPacket[]>(
+      'SELECT user_id FROM auto_assign_agents WHERE workspace_id = ?',
+      [workspaceId]
+    );
+    ids = new Set(rows.map((r) => Number(r.user_id)));
+  } catch {
+    // Table not created yet (migration-auto-assign-agents.sql) → nobody
+  }
+  membersCache.set(workspaceId, { ids, at: Date.now() });
+  return ids;
 }
 
-/** Visibility: with auto-assign on, managers and agents see only their own chats. */
-export async function ownChatsOnly(workspaceId: number, role: string): Promise<boolean> {
+export function clearAutoAssignCache(workspaceId: number) {
+  settingsCache.delete(workspaceId);
+  membersCache.delete(workspaceId);
+}
+
+/**
+ * Visibility: an auto-assign member sees their own chats plus the unassigned
+ * pool. Everyone else keeps the usual rules.
+ */
+export async function poolView(workspaceId: number, role: string, userId: number): Promise<boolean> {
   if (role !== 'agent' && role !== 'manager') return false;
-  return (await getAutoAssignSettings(workspaceId)).enabled;
+  if (!(await getAutoAssignSettings(workspaceId)).enabled) return false;
+  return (await getAutoAssignMembers(workspaceId)).has(userId);
 }
 
 interface Candidate { userId: number; load: number; lastAssigned: number; }
 
-async function loadCandidates(workspaceId: number, maxChats: number): Promise<Candidate[]> {
+async function loadCandidates(workspaceId: number): Promise<Candidate[]> {
   const rows = await query<RowDataPacket[]>(
     `SELECT wm.user_id, aa.last_assigned_at
      FROM workspace_members wm
+     JOIN auto_assign_agents m ON m.workspace_id = wm.workspace_id AND m.user_id = wm.user_id
      JOIN agent_availability aa ON aa.user_id = wm.user_id
      WHERE wm.workspace_id = ? AND wm.role IN ('manager','agent')
        AND aa.status = 'active'
@@ -77,26 +109,17 @@ async function loadCandidates(workspaceId: number, maxChats: number): Promise<Ca
     [workspaceId, ...ids]
   );
   const loadOf = new Map(loads.map((r) => [Number(r.assigned_agent_id), Number(r.n)]));
-  return rows
-    .map((r) => ({
-      userId:       Number(r.user_id),
-      load:         loadOf.get(Number(r.user_id)) || 0,
-      lastAssigned: r.last_assigned_at ? new Date(r.last_assigned_at).getTime() : 0,
-    }))
-    .filter((c) => !maxChats || c.load < maxChats);
+  return rows.map((r) => ({
+    userId:       Number(r.user_id),
+    load:         loadOf.get(Number(r.user_id)) || 0,
+    lastAssigned: r.last_assigned_at ? new Date(r.last_assigned_at).getTime() : 0,
+  }));
 }
 
-async function adminIds(workspaceId: number): Promise<Set<number>> {
-  const rows = await query<RowDataPacket[]>(
-    "SELECT user_id FROM workspace_members WHERE workspace_id = ? AND role = 'admin'",
-    [workspaceId]
-  );
-  return new Set(rows.map((r) => Number(r.user_id)));
-}
-
-async function pick(candidates: Candidate[], contactId: number): Promise<Candidate | null> {
-  if (candidates.length === 0) return null;
-  let pool = candidates;
+async function pick(candidates: Candidate[], maxChats: number, contactId: number): Promise<Candidate | null> {
+  const open = maxChats ? candidates.filter((c) => c.load < maxChats) : candidates;
+  if (open.length === 0) return null;
+  let pool = open;
   const camp = await query<RowDataPacket[]>(
     `SELECT DISTINCT ca.agent_id FROM campaign_contacts cc
      JOIN campaign_assignments ca ON ca.campaign_id = cc.campaign_id
@@ -105,22 +128,27 @@ async function pick(candidates: Candidate[], contactId: number): Promise<Candida
   );
   if (camp.length) {
     const campIds = new Set(camp.map((r) => Number(r.agent_id)));
-    const preferred = candidates.filter((c) => campIds.has(c.userId));
+    const preferred = open.filter((c) => campIds.has(c.userId));
     if (preferred.length) pool = preferred;
   }
   return [...pool].sort((a, b) => a.load - b.load || a.lastAssigned - b.lastAssigned)[0];
 }
 
-/** Move one chat to `next` unless someone else changed its owner meanwhile. */
-async function assign(workspaceId: number, contactId: number, from: number | null, next: Candidate) {
+/**
+ * Move one chat to `next` (null = back to the unassigned pool) unless someone
+ * else changed its owner meanwhile.
+ */
+async function assign(workspaceId: number, contactId: number, from: number | null, next: Candidate | null) {
   const changed = await execute(
     'UPDATE contacts SET assigned_agent_id = ? WHERE id = ? AND workspace_id = ? AND assigned_agent_id <=> ?',
-    [next.userId, contactId, workspaceId, from]
+    [next ? next.userId : null, contactId, workspaceId, from]
   );
   if (!changed) return false;
-  next.load += 1;
-  next.lastAssigned = Date.now();
-  await execute('UPDATE agent_availability SET last_assigned_at = UTC_TIMESTAMP(3) WHERE user_id = ?', [next.userId]);
+  if (next) {
+    next.load += 1;
+    next.lastAssigned = Date.now();
+    await execute('UPDATE agent_availability SET last_assigned_at = UTC_TIMESTAMP(3) WHERE user_id = ?', [next.userId]);
+  }
   emitLocalSSE({ type: 'chat_assigned', workspaceId, contactId });
   return true;
 }
@@ -136,22 +164,25 @@ export async function autoAssignContact(workspaceId: number, contactId: number):
   if (rows.length === 0) return false;
   const owner = rows[0].assigned_agent_id == null ? null : Number(rows[0].assigned_agent_id);
 
-  const candidates = await loadCandidates(workspaceId, 0);
-  if (owner != null) {
-    if (candidates.some((c) => c.userId === owner)) return false;
-    if ((await adminIds(workspaceId)).has(owner)) return false;
-  }
-  const open = settings.maxChats ? candidates.filter((c) => c.load < settings.maxChats) : candidates;
-  const next = await pick(open, contactId);
-  return next ? assign(workspaceId, contactId, owner, next) : false;
+  // Taken by hand by someone outside auto-assign (admin, toggle off) → leave it
+  if (owner != null && !(await getAutoAssignMembers(workspaceId)).has(owner)) return false;
+
+  const candidates = await loadCandidates(workspaceId);
+  if (owner != null && candidates.some((c) => c.userId === owner)) return false;
+  const next = await pick(candidates, settings.maxChats, contactId);
+  // Nobody free: an unassigned chat just stays in the pool; an absent owner's
+  // chat goes back to it so everyone can see it
+  if (!next && owner == null) return false;
+  return assign(workspaceId, contactId, owner, next);
 }
 
 const lastSweep = new Map<number, number>();
 const SWEEP_EVERY_MS = 30_000;
 
 /**
- * Waiting chats (customer spoke last, 24h window) that nobody available owns:
- * unassigned, or owned by someone on Break / Offline / no longer a member.
+ * Chats waiting for a reply (customer spoke last, 24h window) that need a new
+ * owner: owned by an auto-assign member now on Break / Offline, or unassigned
+ * and only minutes old (the relay for it was missed).
  * `force` skips the throttle — used right after someone goes on Break.
  */
 export async function sweepWorkspace(workspaceId: number, force = false): Promise<number> {
@@ -160,22 +191,21 @@ export async function sweepWorkspace(workspaceId: number, force = false): Promis
   const settings = await getAutoAssignSettings(workspaceId);
   if (!settings.enabled) return 0;
 
-  const candidates = await loadCandidates(workspaceId, settings.maxChats);
-  if (candidates.length === 0) return 0;
+  const candidates = await loadCandidates(workspaceId);
 
   const rows = await query<RowDataPacket[]>(
     `SELECT c.id, c.assigned_agent_id
      FROM contacts c
-     LEFT JOIN workspace_members wm ON wm.workspace_id = c.workspace_id AND wm.user_id = c.assigned_agent_id
+     LEFT JOIN auto_assign_agents m ON m.workspace_id = c.workspace_id AND m.user_id = c.assigned_agent_id
      LEFT JOIN agent_availability aa ON aa.user_id = c.assigned_agent_id
      WHERE c.workspace_id = ?
        AND c.last_inbound_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
        AND (c.last_message_at IS NULL OR c.last_inbound_at >= c.last_message_at)
        AND (c.chat_status IS NULL OR c.chat_status != 'resolved')
        AND (
-         c.assigned_agent_id IS NULL
+         (c.assigned_agent_id IS NULL AND c.last_inbound_at > DATE_SUB(NOW(), INTERVAL ${MISSED_RELAY_MIN} MINUTE))
          OR (
-           (wm.role IS NULL OR wm.role != 'admin')
+           m.user_id IS NOT NULL
            AND (aa.user_id IS NULL OR aa.status != 'active'
                 OR aa.last_seen_at IS NULL
                 OR aa.last_seen_at < UTC_TIMESTAMP() - INTERVAL ${ONLINE_WINDOW_MIN} MINUTE)
@@ -188,10 +218,9 @@ export async function sweepWorkspace(workspaceId: number, force = false): Promis
 
   let moved = 0;
   for (const r of rows) {
-    const open = settings.maxChats ? candidates.filter((c) => c.load < settings.maxChats) : candidates;
-    const next = await pick(open, Number(r.id));
-    if (!next) break;
     const from = r.assigned_agent_id == null ? null : Number(r.assigned_agent_id);
+    const next = await pick(candidates, settings.maxChats, Number(r.id));
+    if (!next && from == null) continue;
     if (await assign(workspaceId, Number(r.id), from, next)) moved++;
   }
   return moved;
@@ -206,4 +235,15 @@ export async function sweepForUser(userId: number, force = false): Promise<void>
     [userId]
   ).catch(() => [] as RowDataPacket[]);
   for (const r of rows) await sweepWorkspace(Number(r.workspace_id), force);
+}
+
+/** Is this user an auto-assign member in any project that has it on? (header toggle) */
+export async function isAutoAssignAnywhere(userId: number): Promise<boolean> {
+  const rows = await query<RowDataPacket[]>(
+    `SELECT 1 FROM auto_assign_agents m
+     JOIN auto_assign_settings s ON s.workspace_id = m.workspace_id AND s.enabled = 1
+     WHERE m.user_id = ? LIMIT 1`,
+    [userId]
+  ).catch(() => [] as RowDataPacket[]);
+  return rows.length > 0;
 }

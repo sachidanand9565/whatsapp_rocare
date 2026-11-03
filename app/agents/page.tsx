@@ -215,6 +215,32 @@ export default function AgentsPage() {
 
   useEffect(() => { fetchAgents(); }, [fetchAgents]);
 
+  // Auto Assign toggle per agent/manager (who gets chats automatically)
+  const [autoAssign, setAutoAssign] = useState<Record<number, boolean>>({});
+  const fetchAutoAssign = useCallback(async () => {
+    const res = await fetch('/api/auto-assign', { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      setAutoAssign(Object.fromEntries(
+        (data.data?.members || []).map((m: { id: number; auto_assign: boolean }) => [m.id, m.auto_assign])
+      ));
+    }
+  }, [token]);
+  useEffect(() => { fetchAutoAssign(); }, [fetchAutoAssign]);
+
+  async function toggleAutoAssign(agent: Agent) {
+    const next = !autoAssign[agent.id];
+    const res = await fetch('/api/auto-assign', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ user_id: agent.id, auto_assign: next }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast.error(data.error || 'Failed to update auto assign'); return; }
+    setAutoAssign((p) => ({ ...p, [agent.id]: next }));
+    toast.success(next ? `${agent.name} will get chats automatically` : `${agent.name} won't get chats automatically`);
+  }
+
   async function createAgent(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
@@ -338,6 +364,7 @@ export default function AgentsPage() {
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Password</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Role</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Status</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-600" title="Gets new chats automatically while Active">Auto Assign</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Actions</th>
                 </tr>
               </thead>
@@ -388,6 +415,20 @@ export default function AgentsPage() {
                           <ToggleLeft size={22} className="text-gray-400" />
                         )}
                       </button>
+                    </td>
+                    <td className="px-4 py-3">
+                      {agent.workspace_role === 'manager' || agent.workspace_role === 'agent' ? (
+                        <button onClick={() => toggleAutoAssign(agent)}
+                          title={autoAssign[agent.id] ? 'Gets chats automatically' : 'Does not get chats automatically'}>
+                          {autoAssign[agent.id] ? (
+                            <ToggleRight size={22} className="text-green-500" />
+                          ) : (
+                            <ToggleLeft size={22} className="text-gray-400" />
+                          )}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-400">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">

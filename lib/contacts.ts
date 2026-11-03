@@ -7,7 +7,7 @@
 import { query } from '@/lib/db';
 import { RowDataPacket } from 'mysql2';
 import { Contact } from '@/types';
-import { ownChatsOnly } from '@/lib/autoAssign';
+import { poolView } from '@/lib/autoAssign';
 
 export interface ContactForAgentResult {
   contact:      (Contact & { last_inbound_at?: string | null }) | null;
@@ -48,9 +48,10 @@ export async function getContactForAgent(
 
   // Base visibility (mirrors agentFilterMain in app/api/contacts/route.ts)
   let visible = true;
-  if (await ownChatsOnly(workspaceId, role)) {
-    // Auto-assign project: managers and agents see only their own chats
-    visible = contact.assigned_agent_id === userId;
+  const pool = await poolView(workspaceId, role, userId);
+  if (pool) {
+    // Auto-assign member: own chats + the unassigned pool
+    visible = contact.assigned_agent_id == null || contact.assigned_agent_id === userId;
   } else if (role === 'agent') {
     if (contact.assigned_agent_id === userId) {
       visible = true;
@@ -80,7 +81,7 @@ export async function getContactForAgent(
   const within24h = !!lastInboundAt && Date.now() - lastInboundAt.getTime() < 24 * 60 * 60 * 1000;
 
   const inInbox = within24h && (contact.assigned_agent_id == null || contact.assigned_agent_id === userId);
-  const inIntervened = contact.chat_status === 'intervened' && (role !== 'agent' || contact.assigned_agent_id === userId);
+  const inIntervened = contact.chat_status === 'intervened' && ((role !== 'agent' && !pool) || contact.assigned_agent_id === userId);
 
   return { contact, inInbox, inIntervened };
 }

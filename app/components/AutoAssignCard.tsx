@@ -8,7 +8,7 @@ import toast from 'react-hot-toast';
 import { Shuffle } from 'lucide-react';
 import { apiFetch } from '@/hooks/useApi';
 
-interface Member { id: number; name: string; role: string; status: string; open_chats: number; }
+interface Member { id: number; name: string; role: string; auto_assign: boolean; status: string; open_chats: number; }
 
 const DOT: Record<string, string> = {
   active: 'bg-green-500', break: 'bg-yellow-400', offline: 'bg-gray-300',
@@ -66,9 +66,10 @@ export default function AutoAssignCard() {
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-gray-900">Auto-assign chats</p>
           <p className="text-xs text-gray-500 mt-0.5">
-            Each new chat goes to the Active agent or manager with the fewest open chats.
-            They see only their own chats; admins see all. Chats waiting for a reply move
-            to others when someone goes on Break.
+            New chats go to the Active member with the fewest open chats — only those with
+            the Auto Assign toggle on (table below). They see their own chats plus unassigned
+            ones; everyone else sees chats as before. If nobody is Active, a chat stays
+            unassigned for everyone, and whoever intervenes gets it.
           </p>
         </div>
         <button onClick={() => save(!enabled, maxChats)} disabled={saving}
@@ -90,9 +91,9 @@ export default function AutoAssignCard() {
             <span className="text-xs text-gray-400">0 = no limit</span>
           </div>
 
-          {members.length > 0 && (
+          {members.some((m) => m.auto_assign) ? (
             <div className="flex flex-wrap gap-2">
-              {members.map((m) => (
+              {members.filter((m) => m.auto_assign).map((m) => (
                 <span key={m.id} title={`${m.role} · ${m.status}`}
                   className="flex items-center gap-1.5 rounded-full border border-gray-200 px-2.5 py-1 text-xs text-gray-700">
                   <span className={`w-2 h-2 rounded-full ${DOT[m.status] || DOT.offline}`} />
@@ -101,6 +102,8 @@ export default function AutoAssignCard() {
                 </span>
               ))}
             </div>
+          ) : (
+            <p className="text-xs text-amber-600">Turn on Auto Assign for at least one agent in the table below.</p>
           )}
         </>
       )}

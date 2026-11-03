@@ -13,7 +13,7 @@ import { requireAuth } from '@/lib/auth';
 import { query, execute } from '@/lib/db';
 import { apiSuccess, apiError } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
-import { ownChatsOnly } from '@/lib/autoAssign';
+import { poolView } from '@/lib/autoAssign';
 
 export async function POST(req: NextRequest) {
   try {
@@ -39,9 +39,9 @@ export async function POST(req: NextRequest) {
     // Agents: mirror the inbox visibility rule so they can only resolve what
     // they can see — their assigned chats, plus the unassigned pool limited to
     // their campaigns (or everything unassigned if they have no campaigns).
-    if (await ownChatsOnly(payload.workspaceId, payload.role)) {
-      // Auto-assign project: only the chats assigned to this manager/agent
-      sql += ` AND c.assigned_agent_id = ${Number(payload.userId)}`;
+    if (await poolView(payload.workspaceId, payload.role, payload.userId)) {
+      // Auto-assign member: own chats + the unassigned pool
+      sql += ` AND (c.assigned_agent_id = ${Number(payload.userId)} OR c.assigned_agent_id IS NULL)`;
     } else if (payload.role === 'agent') {
       const uid = Number(payload.userId);
       sql += ` AND (

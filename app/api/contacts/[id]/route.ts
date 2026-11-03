@@ -9,6 +9,7 @@ import { query, execute, insert } from '@/lib/db';
 import { apiSuccess, apiError, utcNow } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { emitSSE } from '@/lib/sse';
+import { getAutoAssignSettings } from '@/lib/autoAssign';
 
 type Params = { params: { id: string } };
 
@@ -79,8 +80,12 @@ export async function PUT(req: NextRequest, { params }: Params) {
       const sets: string[] = ['chat_status = ?'];
       const vals: unknown[] = [chat_status];
       if (chat_status === 'intervened') {
-        sets.push('intervened_by = ?', 'assigned_agent_id = NULL');
+        // Auto-assign projects: whoever intervenes owns the chat (e.g. a pool chat
+        // that came in while nobody was Active). Elsewhere: unchanged.
+        const takeOver = (await getAutoAssignSettings(payload.workspaceId)).enabled;
+        sets.push('intervened_by = ?', takeOver ? 'assigned_agent_id = ?' : 'assigned_agent_id = NULL');
         vals.push(actorName);
+        if (takeOver) vals.push(payload.userId);
       } else if (chat_status === 'resolved' || chat_status === 'open') {
         // Clear agent assignment so next inbound is visible to all (admin + campaigns)
         sets.push('intervened_by = NULL', 'assigned_agent_id = NULL');

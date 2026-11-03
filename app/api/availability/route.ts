@@ -5,12 +5,13 @@
  *   login / reopened panel) but leaves Break alone. Both run the auto-assign
  *   sweep for the user's projects; going on Break / Offline sweeps right away so
  *   their waiting chats move to whoever is Active.
+ * Both return autoAssign: whether this user gets chats automatically anywhere.
  */
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 import { query, execute } from '@/lib/db';
 import { apiSuccess, apiError } from '@/lib/utils';
-import { sweepForUser, ONLINE_WINDOW_MIN } from '@/lib/autoAssign';
+import { sweepForUser, isAutoAssignAnywhere, ONLINE_WINDOW_MIN } from '@/lib/autoAssign';
 import { RowDataPacket } from 'mysql2';
 
 const STATUSES = ['active', 'break', 'offline'] as const;
@@ -30,7 +31,7 @@ async function myStatus(userId: number): Promise<Status> {
 export async function GET(req: NextRequest) {
   try {
     const payload = await requireAuth(req);
-    return apiSuccess({ status: await myStatus(payload.userId) });
+    return apiSuccess({ status: await myStatus(payload.userId), autoAssign: await isAutoAssignAnywhere(payload.userId) });
   } catch (err) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
     console.error('[availability GET]', err);
@@ -61,7 +62,8 @@ export async function POST(req: NextRequest) {
     } else {
       return apiError('status or heartbeat is required');
     }
-    return apiSuccess({ status: await myStatus(payload.userId) });
+    // autoAssign: the header shows the Active / Break switch only to auto-assign members
+    return apiSuccess({ status: await myStatus(payload.userId), autoAssign: await isAutoAssignAnywhere(payload.userId) });
   } catch (err) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
     console.error('[availability POST]', err);
