@@ -23,6 +23,7 @@
  */
 import { query, execute } from '@/lib/db';
 import { emitLocalSSE } from '@/lib/sse';
+import { logAgentEvent } from '@/lib/agentEvents';
 import { RowDataPacket } from 'mysql2';
 
 export const ONLINE_WINDOW_MIN = 5;
@@ -148,6 +149,7 @@ async function assign(workspaceId: number, contactId: number, from: number | nul
     next.load += 1;
     next.lastAssigned = Date.now();
     await execute('UPDATE agent_availability SET last_assigned_at = UTC_TIMESTAMP(3) WHERE user_id = ?', [next.userId]);
+    await logAgentEvent(workspaceId, next.userId, contactId, 'assigned');
   }
   emitLocalSSE({ type: 'chat_assigned', workspaceId, contactId });
   return true;

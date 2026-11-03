@@ -14,6 +14,7 @@ import { query, execute } from '@/lib/db';
 import { apiSuccess, apiError } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { poolView } from '@/lib/autoAssign';
+import { logAgentEventBulk } from '@/lib/agentEvents';
 
 export async function POST(req: NextRequest) {
   try {
@@ -44,8 +45,7 @@ export async function POST(req: NextRequest) {
 async function resolveIn({ workspaceId, role }: WorkspaceScope, userId: number, buttonReply: string, campaignId: number) {
   // Same "latest tap wins" rule as the inbox filter, so what you see is what
   // gets resolved. Only currently-unresolved chats count toward the total.
-  let sql = `
-    UPDATE contacts c SET c.chat_status = 'resolved'
+  let where = `
     WHERE c.workspace_id = ?
       AND (c.chat_status IS NULL OR c.chat_status != 'resolved')
       AND (SELECT bm.content FROM messages bm
@@ -59,10 +59,10 @@ async function resolveIn({ workspaceId, role }: WorkspaceScope, userId: number, 
   // their campaigns (or everything unassigned if they have no campaigns).
   if (await poolView(workspaceId, role, userId)) {
     // Auto-assign member: own chats + the unassigned pool
-    sql += ` AND (c.assigned_agent_id = ${Number(userId)} OR c.assigned_agent_id IS NULL)`;
+    where += ` AND (c.assigned_agent_id = ${Number(userId)} OR c.assigned_agent_id IS NULL)`;
   } else if (role === 'agent') {
     const uid = Number(userId);
-    sql += ` AND (
+    where += ` AND (
       c.assigned_agent_id = ${uid}
       OR (
         c.assigned_agent_id IS NULL
@@ -78,7 +78,7 @@ async function resolveIn({ workspaceId, role }: WorkspaceScope, userId: number, 
     )`;
   }
   if (campaignId) {
-    sql += ` AND c.id IN (
+    where += ` AND c.id IN (
       SELECT contact_id FROM campaign_contacts WHERE campaign_id = ?
       UNION
       SELECT contact_id FROM messages WHERE campaign_id = ? AND direction = 'outbound'
@@ -86,5 +86,7 @@ async function resolveIn({ workspaceId, role }: WorkspaceScope, userId: number, 
     params.push(campaignId, campaignId);
   }
 
-  return execute(sql, params);   // lib/db execute() returns affectedRows
+  // Log first — after the UPDATE these chats no longer match "unresolved"
+  await logAgentEventBulk(workspaceId, userId, 'resolved', `FROM contacts c ${where}`, params);
+  return execute(`UPDATE contacts c SET c.chat_status = 'resolved' ${where}`, params);   // returns affectedRows
 }

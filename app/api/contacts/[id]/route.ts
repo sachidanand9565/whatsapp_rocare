@@ -10,6 +10,7 @@ import { apiSuccess, apiError, utcNow } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { emitSSE } from '@/lib/sse';
 import { getAutoAssignSettings } from '@/lib/autoAssign';
+import { logAgentEvent } from '@/lib/agentEvents';
 
 type Params = { params: { id: string } };
 
@@ -64,6 +65,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
          VALUES (?, ?, 'outbound', 'system', ?, 'delivered', ?, ?)`,
         [payload.workspaceId, params.id, `Transferred to ${targetName} by ${actorName}`, t, t]
       );
+      if (transfer_to_id) await logAgentEvent(payload.workspaceId, Number(transfer_to_id), Number(params.id), 'assigned');
       emitSSE({ type: 'chat_status_update', workspaceId: payload.workspaceId, contactId: Number(params.id), chatStatus: 'intervened' });
       return apiSuccess({ updated: true });
     }
@@ -94,6 +96,11 @@ export async function PUT(req: NextRequest, { params }: Params) {
       await execute(
         `UPDATE contacts SET ${sets.join(', ')} WHERE id = ? AND workspace_id = ?`, vals
       );
+
+      // Agents page counts (resolving clears the agent, so log who did it)
+      if (chat_status === 'intervened' || chat_status === 'resolved') {
+        await logAgentEvent(payload.workspaceId, payload.userId, Number(params.id), chat_status);
+      }
 
       // Insert system message so it appears in chat
       let systemText = '';

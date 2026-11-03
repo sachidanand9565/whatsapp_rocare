@@ -228,6 +228,21 @@ export default function AgentsPage() {
   }, [token]);
   useEffect(() => { fetchAutoAssign(); }, [fetchAutoAssign]);
 
+  // Per-agent chat counts: assigned / resolved in the period, new / intervened right now
+  type ChatStats = { assigned: number; resolved: number; new: number; intervened: number };
+  const [statsPeriod, setStatsPeriod] = useState<'today' | '7d' | '30d'>('today');
+  const [chatStats, setChatStats]     = useState<Record<number, ChatStats>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => fetch(`/api/agents/chat-stats?period=${statsPeriod}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setChatStats(d.data?.stats || {}); })
+      .catch(() => {});
+    load();
+    const t = setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [statsPeriod, token]);
+
   async function toggleAutoAssign(agent: Agent) {
     const next = !autoAssign[agent.id];
     const res = await fetch('/api/auto-assign', {
@@ -334,14 +349,25 @@ export default function AgentsPage() {
 
       <AutoAssignCard />
 
-      {/* Search */}
-      <div className="relative max-w-sm">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-        <input
-          type="text" placeholder="Search by name or email…"
-          value={search} onChange={(e) => setSearch(e.target.value)}
-          className="input pl-9"
-        />
+      {/* Search + period for the chat counts */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="relative max-w-sm flex-1">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text" placeholder="Search by name or email…"
+            value={search} onChange={(e) => setSearch(e.target.value)}
+            className="input pl-9"
+          />
+        </div>
+        <div className="flex items-center gap-2 text-sm sm:ml-auto">
+          <span className="text-gray-500">Assigned / Resolved:</span>
+          <select value={statsPeriod} onChange={(e) => setStatsPeriod(e.target.value as 'today' | '7d' | '30d')}
+            className="input py-1.5 w-auto text-sm">
+            <option value="today">Today</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+          </select>
+        </div>
       </div>
 
       {/* Table */}
@@ -363,6 +389,10 @@ export default function AgentsPage() {
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Phone</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Password</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Role</th>
+                  <th className="px-4 py-3 text-center font-medium text-gray-600" title="Chats given to them in the selected period">Assigned</th>
+                  <th className="px-4 py-3 text-center font-medium text-gray-600" title="Their chats right now (last 24h) not yet intervened or resolved">New</th>
+                  <th className="px-4 py-3 text-center font-medium text-gray-600" title="Their chats in Intervened right now">Intervened</th>
+                  <th className="px-4 py-3 text-center font-medium text-gray-600" title="Chats they resolved in the selected period">Resolved</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Status</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600" title="Gets new chats automatically while Active">Auto Assign</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Actions</th>
@@ -406,6 +436,25 @@ export default function AgentsPage() {
                         <option value="agent">Agent</option>
                         <option value="manager">Manager</option>
                       </select>
+                    </td>
+                    <td className="px-4 py-3 text-center font-semibold text-gray-800">{chatStats[agent.id]?.assigned ?? 0}</td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`inline-block min-w-[28px] rounded-full px-2 py-0.5 text-xs font-semibold
+                        ${chatStats[agent.id]?.new ? 'bg-orange-100 text-orange-700' : 'text-gray-400'}`}>
+                        {chatStats[agent.id]?.new ?? 0}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`inline-block min-w-[28px] rounded-full px-2 py-0.5 text-xs font-semibold
+                        ${chatStats[agent.id]?.intervened ? 'bg-blue-100 text-blue-700' : 'text-gray-400'}`}>
+                        {chatStats[agent.id]?.intervened ?? 0}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`inline-block min-w-[28px] rounded-full px-2 py-0.5 text-xs font-semibold
+                        ${chatStats[agent.id]?.resolved ? 'bg-green-100 text-green-700' : 'text-gray-400'}`}>
+                        {chatStats[agent.id]?.resolved ?? 0}
+                      </span>
                     </td>
                     <td className="px-4 py-3">
                       <button onClick={() => toggleStatus(agent)}>
