@@ -1036,7 +1036,8 @@ export default function InboxPage() {
     // Refresh options each open — cheap, and counts stay honest
     setReplyOptionsLoading(true);
     setReplyOptionsError('');
-    apiFetch('/api/contacts/button-replies')
+    // Combined inbox: replies from every shown project, like the chat list
+    apiFetch('/api/contacts/button-replies' + wsParamRef.current.replace(/^&/, '?'))
       .then((r) => setReplyOptions(r.data?.replies || []))
       .catch((err) => setReplyOptionsError(err instanceof Error ? err.message : 'Could not load replies'))
       .finally(() => setReplyOptionsLoading(false));
@@ -1055,7 +1056,11 @@ export default function InboxPage() {
     try {
       const r = await apiFetch('/api/contacts/bulk-resolve', {
         method: 'POST',
-        body: JSON.stringify({ button_reply: replyFilter, campaign_id: campaignFilterRef.current || undefined }),
+        body: JSON.stringify({
+          button_reply: replyFilter,
+          campaign_id:  campaignFilterRef.current || undefined,
+          workspaces:   wsParamRef.current.replace(/^&workspaces=/, '') || undefined,
+        }),
       });
       toast.success(`${r.data?.resolved ?? 0} chats resolved`);
       loadContacts(campaignFilterRef.current, false);
