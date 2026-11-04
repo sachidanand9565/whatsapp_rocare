@@ -200,8 +200,9 @@ export async function POST(req: NextRequest) {
     if (existing.length > 0) return apiError('Contact with this phone already exists', 409);
 
     const id = await insert(
-      `INSERT INTO contacts (workspace_id, name, phone, email, city, source, status, tags, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      // opted_in = 1 — the column defaults to 0 (= opted out); only STOP opts out
+      `INSERT INTO contacts (workspace_id, name, phone, email, city, source, status, tags, notes, opted_in)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
       [
         payload.workspaceId,
         name || null, normalizedPhone,

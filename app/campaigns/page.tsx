@@ -641,6 +641,9 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
         setCreatedId(r.data?.id);
       } else {
         toast.success('Campaign created!');
+        if (r.data?.invalidPhones) {
+          toast.error(`${r.data.invalidPhones} CSV numbers aren't valid phone numbers and were left out — e.g. ${(r.data.invalidSamples || []).slice(0, 3).join(', ')}. Check the country selected or add a country code.`, { duration: 10_000 });
+        }
         onSaved();
       }
     } catch (err) {

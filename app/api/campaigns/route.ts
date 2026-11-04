@@ -122,15 +122,17 @@ export async function POST(req: NextRequest) {
     // Add contacts from CSV — BULK upsert + link (chunked). The old per-row
     // version ran 4 sequential queries per contact; a 500+ row CSV took minutes
     // and the AWS gateway cut the request with a 504 before it finished.
+    const invalidPhones: string[] = [];
     if (csv_contacts && csv_contacts.length > 0) {
-      const { normalizePhone } = await import('@/lib/utils');
+      const { parseImportPhone } = await import('@/lib/phoneImport');
       const { execute: exec } = await import('@/lib/db');
 
       // Normalize + dedupe (last occurrence of a phone wins)
       const byPhone = new Map<string, { phone: string; name: string | null; vars: Record<string, string> }>();
       for (const row of csv_contacts) {
-        const phone = normalizePhone(row.phone, row.country_code);   // country for numbers without one
-        if (!phone) continue;
+        // Any country; row.country_code = country for numbers written without one
+        const phone = parseImportPhone(row.phone, row.country_code);
+        if (!phone) { invalidPhones.push(row.phone); continue; }
         byPhone.set(phone, { phone, name: row.name || null, vars: row.vars || {} });
       }
       const rows = Array.from(byPhone.values());
@@ -171,7 +173,7 @@ export async function POST(req: NextRequest) {
       ).catch(() => {});
     }
 
-    return apiSuccess({ id }, 201);
+    return apiSuccess({ id, invalidPhones: invalidPhones.length, invalidSamples: invalidPhones.slice(0, 10) }, 201);
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
     console.error('[campaigns POST]', err);

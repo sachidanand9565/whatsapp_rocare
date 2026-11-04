@@ -84,7 +84,10 @@ export default function ContactsPage() {
     });
     const data = await res.json();
     if (res.ok) {
-      toast.success(`Imported ${data.data.imported}, skipped ${data.data.skipped}`);
+      toast.success(`Imported ${data.data.imported}, skipped ${data.data.skipped} (already there)`);
+      if (data.data.invalid) {
+        toast.error(`${data.data.invalid} numbers aren't valid phone numbers and were not imported — e.g. ${(data.data.invalidSamples || []).slice(0, 3).join(', ')}. Check the country selected or add a country code.`, { duration: 10_000 });
+      }
       load();
     } else {
       toast.error(data.error);
