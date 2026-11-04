@@ -389,12 +389,12 @@ export default function AgentsPage() {
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Phone</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Password</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Role</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-600" title="Gets new chats automatically while Active">Auto Assign</th>
                   <th className="px-4 py-3 text-center font-medium text-gray-600" title="Chats given to them in the selected period">Assigned</th>
                   <th className="px-4 py-3 text-center font-medium text-gray-600" title="Their chats right now (last 24h) not yet intervened or resolved">New</th>
                   <th className="px-4 py-3 text-center font-medium text-gray-600" title="Their chats in Intervened right now">Intervened</th>
                   <th className="px-4 py-3 text-center font-medium text-gray-600" title="Chats they resolved in the selected period">Resolved</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Status</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-600" title="Gets new chats automatically while Active">Auto Assign</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600">Actions</th>
                 </tr>
               </thead>
@@ -437,6 +437,20 @@ export default function AgentsPage() {
                         <option value="manager">Manager</option>
                       </select>
                     </td>
+                    <td className="px-4 py-3">
+                      {agent.workspace_role === 'manager' || agent.workspace_role === 'agent' ? (
+                        <button onClick={() => toggleAutoAssign(agent)}
+                          title={autoAssign[agent.id] ? 'Gets chats automatically' : 'Does not get chats automatically'}>
+                          {autoAssign[agent.id] ? (
+                            <ToggleRight size={22} className="text-green-500" />
+                          ) : (
+                            <ToggleLeft size={22} className="text-gray-400" />
+                          )}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-400">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-center font-semibold text-gray-800">{chatStats[agent.id]?.assigned ?? 0}</td>
                     <td className="px-4 py-3 text-center">
                       <span className={`inline-block min-w-[28px] rounded-full px-2 py-0.5 text-xs font-semibold
@@ -464,20 +478,6 @@ export default function AgentsPage() {
                           <ToggleLeft size={22} className="text-gray-400" />
                         )}
                       </button>
-                    </td>
-                    <td className="px-4 py-3">
-                      {agent.workspace_role === 'manager' || agent.workspace_role === 'agent' ? (
-                        <button onClick={() => toggleAutoAssign(agent)}
-                          title={autoAssign[agent.id] ? 'Gets chats automatically' : 'Does not get chats automatically'}>
-                          {autoAssign[agent.id] ? (
-                            <ToggleRight size={22} className="text-green-500" />
-                          ) : (
-                            <ToggleLeft size={22} className="text-gray-400" />
-                          )}
-                        </button>
-                      ) : (
-                        <span className="text-xs text-gray-400">—</span>
-                      )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
