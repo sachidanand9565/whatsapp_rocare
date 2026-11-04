@@ -5,6 +5,7 @@
 import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { NextResponse } from 'next/server';
+import { COUNTRY_COL_RE } from '@/lib/phoneCountries';
 
 // ---- Tailwind class merging ----
 export function cn(...inputs: ClassValue[]) {
@@ -29,14 +30,37 @@ export function getPagination(searchParams: URLSearchParams, maxLimit = 100) {
 }
 
 // ---- Phone normalizer: ensure E.164 without '+' ----
-// Auto-adds India country code (91) for 10-digit numbers starting with 6-9
-// Handles both: "919876543210" (already full) and "9876543210" (10-digit)
-export function normalizePhone(phone: string): string {
-  const digits = phone.replace(/\D/g, '');
+// "+44 7911 123456" / "0044 7911…" → already international, kept as is.
+// countryCode (e.g. '44', '1') = the country for numbers written WITHOUT one:
+//   UK "07911 123456" → 447911123456, US "(212) 555-1234" → 12125551234.
+// No countryCode → old India rule: 10 digits starting 6-9 get 91
+// ("9876543210" → 919876543210; "919876543210" stays).
+export function normalizePhone(phone: string, countryCode?: string): string {
+  const raw = String(phone || '').trim();
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return '';
+  if (raw.startsWith('+')) return digits;
+  if (digits.startsWith('00')) return digits.slice(2);
+
+  const cc = String(countryCode || '').replace(/\D/g, '');
+  if (cc && cc !== '91') {
+    // Already carries the code (e.g. 447911123456 / 12125551234) — keep it
+    if (digits.startsWith(cc) && digits.length > 10) return digits;
+    return cc + digits.replace(/^0+/, '');   // drop the national trunk 0
+  }
+  if (cc === '91' && digits.length === 11 && digits.startsWith('0')) return '91' + digits.slice(1);
   if (digits.length === 10 && /^[6-9]/.test(digits)) {
     return '91' + digits;
   }
   return digits;
+}
+
+/** A CSV row's own country code column, if it has one (country_code / country code / country). */
+export function rowCountryCode(row: Record<string, string>): string {
+  for (const [k, v] of Object.entries(row)) {
+    if (COUNTRY_COL_RE.test(k.trim()) && /\d/.test(v || '')) return String(v).replace(/\D/g, '');
+  }
+  return '';
 }
 
 // ---- UTC datetime helpers (MySQL-safe "YYYY-MM-DD HH:mm:ss" in UTC) ----

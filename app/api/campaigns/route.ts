@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
       contact_ids?: number[];
       campaign_type?: string;
       header_media?: string;
-      csv_contacts?: { phone: string; name: string; vars: Record<string, string> }[];
+      csv_contacts?: { phone: string; name: string; country_code?: string; vars: Record<string, string> }[];
     };
 
     if (!name || !template_id) return apiError('Name and template are required');
@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
       // Normalize + dedupe (last occurrence of a phone wins)
       const byPhone = new Map<string, { phone: string; name: string | null; vars: Record<string, string> }>();
       for (const row of csv_contacts) {
-        const phone = normalizePhone(row.phone);
+        const phone = normalizePhone(row.phone, row.country_code);   // country for numbers without one
         if (!phone) continue;
         byPhone.set(phone, { phone, name: row.name || null, vars: row.vars || {} });
       }

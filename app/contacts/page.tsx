@@ -4,6 +4,7 @@ import { apiFetch } from '@/hooks/useApi';
 import { Plus, Search, Upload, Trash2, Edit2, Tag, BellOff, Bell } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Contact } from '@/types';
+import { PHONE_COUNTRIES } from '@/lib/phoneCountries';
 
 const STATUS_COLORS: Record<string, string> = {
   new:       'bg-blue-100 text-blue-700',
@@ -60,11 +61,21 @@ export default function ContactsPage() {
     toast.success(newVal ? 'Contact opted in' : 'Contact opted out');
   }
 
+  const [importCountry, setImportCountry] = useState('91');
+  useEffect(() => {
+    try { const v = localStorage.getItem('importCountry'); if (v) setImportCountry(v); } catch { /* private mode */ }
+  }, []);
+  function saveImportCountry(v: string) {
+    setImportCountry(v);
+    try { localStorage.setItem('importCountry', v); } catch { /* private mode */ }
+  }
+
   async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     const form = new FormData();
     form.append('file', file);
+    form.append('country_code', importCountry);
     const token = localStorage.getItem('token');
     const res = await fetch('/api/contacts/import', {
       method: 'POST',
@@ -88,6 +99,12 @@ export default function ContactsPage() {
         <h1 className="text-2xl font-bold text-gray-900">Contacts ({total})</h1>
         <div className="flex gap-2">
           <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleImport} />
+          {/* Numbers without a country code (e.g. UK 07911…, US 212…) — which country */}
+          <select value={importCountry} onChange={(e) => saveImportCountry(e.target.value)}
+            title="Country for CSV numbers written without a country code. A country_code column in the CSV overrides it."
+            className="input w-auto py-1.5 text-sm">
+            {PHONE_COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+          </select>
           <button onClick={() => fileRef.current?.click()} className="btn-secondary flex items-center gap-2 text-sm">
             <Upload size={16} /> Import CSV
           </button>

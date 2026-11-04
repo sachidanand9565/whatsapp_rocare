@@ -1,12 +1,14 @@
 /**
  * POST /api/contacts/import
  * Import contacts from CSV file
- * Expected CSV columns: name, phone, email, city, source
+ * Expected CSV columns: name, phone, email, city, source[, country_code]
+ * Form field country_code: country for numbers written without one (default
+ * India); a row's own country_code column wins.
  */
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 import { execute } from '@/lib/db';
-import { apiSuccess, apiError, normalizePhone } from '@/lib/utils';
+import { apiSuccess, apiError, normalizePhone, rowCountryCode } from '@/lib/utils';
 import { parse } from 'csv-parse/sync';
 
 // Batched to avoid a SELECT+INSERT round trip per row (was up to 20,000
@@ -22,6 +24,7 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData();
     const file = formData.get('file') as File | null;
     if (!file) return apiError('CSV file required');
+    const defaultCountry = String(formData.get('country_code') || '').replace(/\D/g, '');
 
     const text = await file.text();
     const records = parse(text, {
@@ -38,7 +41,7 @@ export async function POST(req: NextRequest) {
     const rows: { name: string | null; phone: string; email: string | null; city: string | null; source: string }[] = [];
 
     for (const row of records) {
-      const phone = normalizePhone(row.phone || '');
+      const phone = normalizePhone(row.phone || '', rowCountryCode(row) || defaultCountry);
       if (!phone || seenPhones.has(phone)) { skipped++; continue; }
       seenPhones.add(phone);
       rows.push({

@@ -6,6 +6,7 @@ import { encryptId } from '@/lib/idCrypt';
 import { Plus, Radio, Zap, GitBranch, ShoppingBag, ChevronRight, Trash2, UserPlus, X, Search, ChevronDown, Loader2, Send } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Campaign, Template, Contact, User } from '@/types';
+import { PHONE_COUNTRIES, COUNTRY_COL_RE } from '@/lib/phoneCountries';
 
 const STATUS_COLORS: Record<string, string> = {
   draft:      'bg-gray-100 text-gray-600',
@@ -465,7 +466,9 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   const [contactSearch, setContactSearch] = useState('');
   const [contactSearchLoading, setContactSearchLoading] = useState(false);
   const contactDebounceRef              = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [csvRows, setCsvRows]           = useState<{ phone: string; name: string; vars: Record<string, string> }[]>([]);
+  const [csvRows, setCsvRows]           = useState<{ phone: string; name: string; country_code: string; vars: Record<string, string> }[]>([]);
+  // Country for CSV numbers written without a code (UK 07911…, US 212…)
+  const [csvCountry, setCsvCountry]     = useState('91');
   const [csvHeaders, setCsvHeaders]     = useState<string[]>([]);
   const [csvColMap, setCsvColMap]       = useState<Record<string, string>>({});
   const [csvError, setCsvError]         = useState('');
@@ -555,16 +558,19 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
       const headers = rows[0];
       const phoneCol = headers.findIndex((h) => /phone|mobile|number|whatsapp/i.test(h));
       const nameCol  = headers.findIndex((h) => /name/i.test(h));
+      const countryCol = headers.findIndex((h) => COUNTRY_COL_RE.test(h.trim()));
       if (phoneCol < 0) { setCsvError('CSV must have a column named "phone", "mobile", or "number"'); return; }
       setCsvHeaders(headers);
       // Default mapping: first non-phone/name column → {{1}}, next → {{2}}, etc.
-      const extraCols = headers.map((h, i) => i).filter((i) => i !== phoneCol && i !== nameCol);
+      const extraCols = headers.map((h, i) => i).filter((i) => i !== phoneCol && i !== nameCol && i !== countryCol);
       const initMap: Record<string, string> = {};
       varNums.forEach((n, idx) => { if (extraCols[idx] !== undefined) initMap[n] = String(extraCols[idx]); });
       setCsvColMap(initMap);
       const parsed = rows.slice(1).filter((r) => r[phoneCol]?.trim()).map((r) => ({
-        phone: r[phoneCol].replace(/\D/g, ''),
+        // Keep a leading + — the server reads "+44 …" as already international
+        phone: r[phoneCol].trim(),
         name:  nameCol >= 0 ? r[nameCol] || '' : '',
+        country_code: countryCol >= 0 ? (r[countryCol] || '').replace(/\D/g, '') : '',
         vars:  Object.fromEntries(headers.map((_, i) => [String(i), r[i] || ''])),
       }));
       setCsvRows(parsed);
@@ -605,12 +611,13 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
     try {
       // Build contact_ids and per-row vars for CSV mode
       let contact_ids: number[] = [];
-      let csv_contacts: { phone: string; name: string; vars: Record<string, string> }[] | undefined;
+      let csv_contacts: { phone: string; name: string; country_code: string; vars: Record<string, string> }[] | undefined;
 
       if (isBroadcast && contactMode === 'csv') {
         csv_contacts = csvRows.map((row) => ({
           phone: row.phone,
           name:  row.name,
+          country_code: row.country_code || csvCountry,
           vars:  Object.fromEntries(varNums.map((n) => [n, row.vars[csvColMap[n] || ''] || templateVars[n] || ''])),
         }));
       } else if (!isApi) {
@@ -1031,6 +1038,13 @@ function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
                         onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCsvFile(f); }} />
                     </div>
                     {csvError && <p className="text-xs text-red-500">{csvError}</p>}
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
+                      <span>Numbers without a country code are from</span>
+                      <select value={csvCountry} onChange={(e) => setCsvCountry(e.target.value)} className="input w-auto py-1 text-xs">
+                        {PHONE_COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+                      </select>
+                      <span className="text-gray-400">(a <code className="bg-gray-100 px-1 rounded">country_code</code> column overrides it)</span>
+                    </div>
 
                     {/* Column → variable mapping */}
                     {csvRows.length > 0 && varNums.length > 0 && (
