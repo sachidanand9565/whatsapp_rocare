@@ -551,7 +551,7 @@ export async function POST(req: NextRequest) {
       const callerName = (contactRow[0].name as string) || call.profileName || phone;
       // Remember the ring so panels opened AFTER this moment (push-notification
       // tap) can still show the popup — served by GET /api/calling/ringing.
-      setRinging(workspaceId, {
+      await setRinging(workspaceId, {
         callId: call.call_id, contactId, callerName, callerPhone: phone, sdp: call.sdp,
       });
       emitSSE({
@@ -572,7 +572,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (call.event === 'terminate') {
-      clearRinging(workspaceId, call.call_id);
+      await clearRinging(workspaceId, call.call_id);
       const answered = call.status === 'COMPLETED' && (call.duration || 0) > 0;
       const callContent = JSON.stringify({
         __type:    'call',

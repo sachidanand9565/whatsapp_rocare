@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
     //  - reject ends the call for everyone; broadcast immediately instead of
     //    waiting for Meta's terminate webhook.
     if (action === 'pre_accept' || action === 'accept' || action === 'reject') {
-      clearRinging(payload.workspaceId, body.call_id);
+      await clearRinging(payload.workspaceId, body.call_id);
     }
     if (action === 'pre_accept' || action === 'accept') {
       const u = await query<RowDataPacket[]>(

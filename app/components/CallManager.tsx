@@ -245,6 +245,8 @@ export default function CallManager() {
 
   useEffect(() => { activeCallRef.current = activeCall; }, [activeCall]);
   useEffect(() => { incomingCallsRef.current = incomingCalls; }, [incomingCalls]);
+  const busyCallIdRef = useRef<string | null>(null);
+  useEffect(() => { busyCallIdRef.current = busyCallId; }, [busyCallId]);
 
   function addIncomingCall(call: IncomingCall) {
     setIncomingCalls(prev => prev.some((c) => c.callId === call.callId) ? prev : [...prev, call]);
@@ -443,34 +445,49 @@ export default function CallManager() {
       .catch(() => {});
   }
 
-  // A panel opened AFTER the ring started (push-notification tap, fresh tab)
-  // missed the SSE event — ask the server if a call is ringing right now.
+  // Ask the server which calls are ringing right now — every selected project in
+  // one request. Covers a panel opened AFTER the ring started (push-notification
+  // tap, fresh tab) and, polled every few seconds, a call whose live event went
+  // to another server instance (Vercel) — two calls at once must both pop up.
   async function checkRinging() {
     if (!localStorage.getItem('token')) return;
     const wsIds = readInboxWorkspaceIds();
-    for (const wsId of wsIds.length ? wsIds : [undefined]) {
-      try {
-        const r = await apiFetch('/api/calling/ringing', inWs(wsId));
-        // `calls` = every ringing call; older servers only send `ringing`
-        const rings = (r.data?.calls ?? (r.data?.ringing ? [r.data.ringing] : [])) as {
-          call_id: string; contact_id: number | null; caller_name: string;
-          caller_phone: string; sdp: string | null; started_at: number;
-        }[];
-        rings.forEach((ring) => addIncomingCall({
-          callId:    ring.call_id,
-          contactId: ring.contact_id ?? undefined,
-          name:      ring.caller_name || '',
-          phone:     ring.caller_phone || '',
-          startedAt: ring.started_at || Date.now(),
-          sdp:       ring.sdp || undefined,
-          workspaceId: wsId,
-          project:     wsId ? workspaceName(wsId) : undefined,
-        }));
-      } catch { /* transient */ }
-    }
+    try {
+      const r = await apiFetch('/api/calling/ringing' + (wsIds.length ? `?workspaces=${wsIds.join(',')}` : ''));
+      // `calls` = every ringing call; older servers only send `ringing`
+      const rings = (r.data?.calls ?? (r.data?.ringing ? [r.data.ringing] : [])) as {
+        call_id: string; workspace_id?: number; contact_id: number | null; caller_name: string;
+        caller_phone: string; sdp: string | null; started_at: number;
+      }[];
+      rings.forEach((ring) => addIncomingCall({
+        callId:    ring.call_id,
+        contactId: ring.contact_id ?? undefined,
+        name:      ring.caller_name || '',
+        phone:     ring.caller_phone || '',
+        startedAt: ring.started_at || Date.now(),
+        sdp:       ring.sdp || undefined,
+        workspaceId: wsIds.length ? ring.workspace_id : undefined,
+        project:     wsIds.length && ring.workspace_id ? workspaceName(ring.workspace_id) : undefined,
+      }));
+      // Shared list (same on every instance): a popup whose call is gone from it
+      // was answered elsewhere or ended — drop it even if that event never
+      // reached us. A few seconds' grace for a ring that just arrived.
+      if (r.data?.shared) {
+        const ringing = new Set(rings.map((ring) => ring.call_id));
+        incomingCallsRef.current
+          .filter((c) => !ringing.has(c.callId) && c.callId !== busyCallIdRef.current && Date.now() - c.startedAt > 5_000)
+          .forEach((c) => { removeIncomingCall(c.callId); closeCallNotification(c.callId); });
+      }
+    } catch { /* transient */ }
   }
   const checkRingingRef = useRef(checkRinging);
   checkRingingRef.current = checkRinging;
+
+  // Poll as a safety net for live events that never reach this panel
+  useEffect(() => {
+    const t = setInterval(() => checkRingingRef.current(), 4_000);
+    return () => clearInterval(t);
+  }, []);
 
   // Mobile browsers kill background SSE connections. The moment the tab is
   // visible again, reconnect immediately instead of waiting for the retry

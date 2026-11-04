@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   // Ringing state bhi yahan rakho — webhook dusre server pe set karta hai, aur
   // push-notification tap se khula panel GET /api/calling/ringing se popup dikhata hai.
   if (payload.type === 'incoming_call' && payload.callId) {
-    setRinging(payload.workspaceId, {
+    await setRinging(payload.workspaceId, {
       callId:      payload.callId,
       contactId:   payload.contactId,
       callerName:  payload.callerName || '',
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       sdp:         payload.sdp,
     });
   } else if (payload.type === 'call_ended' || payload.type === 'call_taken') {
-    clearRinging(payload.workspaceId, payload.callId);
+    await clearRinging(payload.workspaceId, payload.callId);
   }
 
   // Auto-assign (projects that turned it on) — before the emit, so the inbox
