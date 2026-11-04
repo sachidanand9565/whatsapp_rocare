@@ -81,7 +81,9 @@ export function clearAutoAssignCache(workspaceId: number) {
  * pool. Everyone else keeps the usual rules.
  */
 export async function poolView(workspaceId: number, role: string, userId: number): Promise<boolean> {
-  if (role !== 'agent' && role !== 'manager') return false;
+  // Stored roles may be 'Agent' / ' agent' (MySQL compares them case-insensitively)
+  const r = String(role || '').trim().toLowerCase();
+  if (r !== 'agent' && r !== 'manager') return false;
   if (!(await getAutoAssignSettings(workspaceId)).enabled) return false;
   return (await getAutoAssignMembers(workspaceId)).has(userId);
 }

@@ -209,7 +209,11 @@ export default function AgentsPage() {
       headers: { Authorization: `Bearer ${token}` },
     });
     const data = await res.json();
-    if (res.ok) setAgents(data.data || []);
+    // Some rows store the role as 'Agent' / ' agent' — MySQL matches those
+    // case-insensitively, so normalise before the UI compares exact strings
+    if (res.ok) setAgents((data.data || []).map((a: Agent) => ({
+      ...a, workspace_role: String(a.workspace_role || '').trim().toLowerCase() as Agent['workspace_role'],
+    })));
     setLoading(false);
   }, [token]);
 
