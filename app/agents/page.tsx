@@ -11,7 +11,7 @@ interface Agent {
   email: string;
   phone?: string;
   role: 'manager' | 'agent';
-  workspace_role: 'manager' | 'agent';
+  workspace_role: 'admin' | 'manager' | 'agent';
   is_active: number;
   created_at: string;
   plain_password?: string | null;
@@ -26,6 +26,7 @@ interface Campaign {
 }
 
 const ROLE_BADGE: Record<string, string> = {
+  admin:   'bg-purple-100 text-purple-700',
   manager: 'bg-blue-100 text-blue-700',
   agent:   'bg-green-100 text-green-700',
 };
@@ -307,6 +308,8 @@ export default function AgentsPage() {
   }
 
   async function changeRole(agent: Agent, role: 'manager' | 'agent') {
+    if (agent.workspace_role === 'admin'
+      && !confirm(`${agent.name} is an Admin of this project. Make them ${role === 'manager' ? 'a Manager' : 'an Agent'}? They will no longer see every chat or manage settings here.`)) return;
     const res = await fetch(`/api/agents/${agent.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -445,6 +448,9 @@ export default function AgentsPage() {
                         onChange={(e) => changeRole(agent, e.target.value as 'manager' | 'agent')}
                         className={`text-xs font-semibold px-2 py-1 rounded-full border-0 cursor-pointer ${ROLE_BADGE[agent.workspace_role]}`}
                       >
+                        {/* Other admins of this project are listed too — show them as Admin
+                            (picking Agent/Manager demotes them; only those get auto-assigned chats) */}
+                        {agent.workspace_role === 'admin' && <option value="admin" disabled>Admin</option>}
                         <option value="agent">Agent</option>
                         <option value="manager">Manager</option>
                       </select>
@@ -466,7 +472,7 @@ export default function AgentsPage() {
                           </button>
                         </div>
                       ) : (
-                        <span className="text-xs text-gray-400">—</span>
+                        <span className="text-xs text-gray-400" title="Admins see every chat and don't get chats automatically. Change the role to Agent or Manager to auto-assign.">Admin — sees all</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-center font-semibold text-gray-800">{chatStats[agent.id]?.assigned ?? 0}</td>
