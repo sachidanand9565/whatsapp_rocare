@@ -1,8 +1,9 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, ToggleLeft, ToggleRight, Search, UserCog, SlidersHorizontal, X, Check, Eye, EyeOff, KeyRound } from 'lucide-react';
+import { Plus, Trash2, ToggleLeft, ToggleRight, Search, UserCog, SlidersHorizontal, X, Check, Eye, EyeOff, KeyRound, Layers } from 'lucide-react';
 import toast from 'react-hot-toast';
 import AutoAssignCard from '../components/AutoAssignCard';
+import AgentProjectsModal from '../components/AgentProjectsModal';
 
 interface Agent {
   id: number;
@@ -247,6 +248,9 @@ export default function AgentsPage() {
     return () => { cancelled = true; clearInterval(t); };
   }, [statsPeriod, token]);
 
+  // Auto Assign across all of an agent's projects, from one popup
+  const [projectsFor, setProjectsFor] = useState<Agent | null>(null);
+
   async function toggleAutoAssign(agent: Agent) {
     const next = !autoAssign[agent.id];
     const res = await fetch('/api/auto-assign', {
@@ -352,6 +356,10 @@ export default function AgentsPage() {
       </div>
 
       <AutoAssignCard />
+      {projectsFor && (
+        <AgentProjectsModal agent={projectsFor}
+          onClose={(changed) => { setProjectsFor(null); if (changed) fetchAutoAssign(); }} />
+      )}
 
       {/* Search + period for the chat counts */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -443,14 +451,20 @@ export default function AgentsPage() {
                     </td>
                     <td className="px-4 py-3">
                       {agent.workspace_role === 'manager' || agent.workspace_role === 'agent' ? (
-                        <button onClick={() => toggleAutoAssign(agent)}
-                          title={autoAssign[agent.id] ? 'Gets chats automatically' : 'Does not get chats automatically'}>
-                          {autoAssign[agent.id] ? (
-                            <ToggleRight size={22} className="text-green-500" />
-                          ) : (
-                            <ToggleLeft size={22} className="text-gray-400" />
-                          )}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => toggleAutoAssign(agent)}
+                            title={autoAssign[agent.id] ? 'Gets chats automatically (this project)' : 'Does not get chats automatically (this project)'}>
+                            {autoAssign[agent.id] ? (
+                              <ToggleRight size={22} className="text-green-500" />
+                            ) : (
+                              <ToggleLeft size={22} className="text-gray-400" />
+                            )}
+                          </button>
+                          <button onClick={() => setProjectsFor(agent)} title="Auto Assign in all their projects"
+                            className="flex items-center gap-1 text-[11px] font-semibold text-whatsapp-green hover:underline">
+                            <Layers size={13} /> All projects
+                          </button>
+                        </div>
                       ) : (
                         <span className="text-xs text-gray-400">—</span>
                       )}
