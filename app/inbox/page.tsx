@@ -2147,12 +2147,6 @@ export default function InboxPage() {
                             ? <span className="text-orange-600">{intervenedLabel}</span>
                             : `+${c.phone}`}
                       </p>
-                      {seesAssignees && c.assigned_agent_id && !isIntervened && (
-                        <span title={`Assigned to ${transferredToAgent || 'agent'}`}
-                          className={`${combined ? '' : 'ml-auto '}flex-shrink min-w-0 max-w-[35%] truncate text-[10px] font-semibold bg-sky-50 text-sky-700 px-1.5 py-0.5 rounded-full leading-none`}>
-                          👤 {transferredToAgent || 'Agent'}
-                        </span>
-                      )}
                       {combined && (
                         <span title={wsName(c.workspace_id)}
                           className="ml-auto flex-shrink min-w-0 max-w-[45%] truncate text-[10px] font-semibold bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full leading-none">
@@ -2165,6 +2159,12 @@ export default function InboxPage() {
                         </span>
                       )}
                     </div>
+                    {/* Own line — sharing the phone line squeezed both the agent and project names */}
+                    {seesAssignees && c.assigned_agent_id && !isIntervened && (
+                      <p className="mt-0.5 text-[11px] font-medium text-sky-700 truncate" title={`Assigned to ${transferredToAgent || 'agent'}`}>
+                        👤 {transferredToAgent || 'Agent'}
+                      </p>
+                    )}
                   </div>
                 </button>
               </div>
