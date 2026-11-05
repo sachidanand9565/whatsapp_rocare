@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
         `SELECT assigned_agent_id AS user_id,
            SUM(chat_status = 'intervened') AS intervened,
            SUM((chat_status IS NULL OR chat_status NOT IN ('intervened','resolved'))
-               AND last_inbound_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS new_chats
+               AND last_inbound_at > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)) AS new_chats
          FROM contacts
          WHERE workspace_id = ? AND assigned_agent_id IS NOT NULL
          GROUP BY assigned_agent_id`,

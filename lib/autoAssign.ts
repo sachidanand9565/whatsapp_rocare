@@ -29,6 +29,8 @@ import { RowDataPacket } from 'mysql2';
 export const ONLINE_WINDOW_MIN = 5;
 // Sweep backup for a missed relay: unassigned chats this fresh still get assigned.
 const MISSED_RELAY_MIN = 3;
+// NOTE: contacts.last_inbound_at is UTC but the DB server's NOW() is not
+// (it runs ~7h behind), so every time window here uses UTC_TIMESTAMP().
 
 export interface AutoAssignSettings { enabled: boolean; maxChats: number; }
 
@@ -106,7 +108,7 @@ async function loadCandidates(workspaceId: number): Promise<Candidate[]> {
   const loads = await query<RowDataPacket[]>(
     `SELECT assigned_agent_id, COUNT(*) AS n FROM contacts
      WHERE workspace_id = ? AND assigned_agent_id IN (${ids.map(() => '?').join(',')})
-       AND last_inbound_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+       AND last_inbound_at > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)
        AND (chat_status IS NULL OR chat_status != 'resolved')
      GROUP BY assigned_agent_id`,
     [workspaceId, ...ids]
@@ -203,11 +205,11 @@ export async function sweepWorkspace(workspaceId: number, force = false): Promis
      LEFT JOIN auto_assign_agents m ON m.workspace_id = c.workspace_id AND m.user_id = c.assigned_agent_id
      LEFT JOIN agent_availability aa ON aa.user_id = c.assigned_agent_id
      WHERE c.workspace_id = ?
-       AND c.last_inbound_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+       AND c.last_inbound_at > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)
        AND (c.last_message_at IS NULL OR c.last_inbound_at >= c.last_message_at)
        AND (c.chat_status IS NULL OR c.chat_status != 'resolved')
        AND (
-         (c.assigned_agent_id IS NULL AND c.last_inbound_at > DATE_SUB(NOW(), INTERVAL ${MISSED_RELAY_MIN} MINUTE))
+         (c.assigned_agent_id IS NULL AND c.last_inbound_at > DATE_SUB(UTC_TIMESTAMP(), INTERVAL ${MISSED_RELAY_MIN} MINUTE))
          OR (
            m.user_id IS NOT NULL
            AND (aa.user_id IS NULL OR aa.status != 'active'

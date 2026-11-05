@@ -33,7 +33,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
          COALESCE(s.enabled, 0) AS project_enabled,
          (SELECT COUNT(*) FROM contacts c
           WHERE c.workspace_id = wm.workspace_id AND c.assigned_agent_id = wm.user_id
-            AND c.last_inbound_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+            AND c.last_inbound_at > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)
             AND (c.chat_status IS NULL OR c.chat_status != 'resolved')) AS open_chats
        FROM workspace_members wm
        JOIN workspaces w ON w.id = wm.workspace_id
