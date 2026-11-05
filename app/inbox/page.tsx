@@ -852,6 +852,18 @@ export default function InboxPage() {
 
   // Intervened filter state
   const [intervenedFilter, setIntervenedFilter]         = useState<'me' | 'any' | 'other' | number>('me');
+  // Admin/manager: All / Requested tabs by who the chat is assigned to
+  const [assignedFilter, setAssignedFilter]             = useState<'all' | 'none' | number>('all');
+  const [showAssignedFilter, setShowAssignedFilter]     = useState(false);
+  const assignedFilterRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!showAssignedFilter) return;
+    const close = (e: MouseEvent) => {
+      if (assignedFilterRef.current && !assignedFilterRef.current.contains(e.target as Node)) setShowAssignedFilter(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [showAssignedFilter]);
   const [showIntervenedFilter, setShowIntervenedFilter] = useState(false);
   const [filterAgents, setFilterAgents]                 = useState<{ id: number; name: string; workspace_role: string }[]>([]);
   const [loadingFilterAgents, setLoadingFilterAgents]   = useState(false);
@@ -1573,11 +1585,28 @@ export default function InboxPage() {
   }
 
   const s = search.toLowerCase();
-  const filtered = searchResults !== null
+  const baseFiltered = searchResults !== null
     ? searchResults.filter((c) => c.chat_status !== 'intervened')
     : contacts.filter((c) =>
         (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s)
       );
+  const roleLc = currentUserRole.trim().toLowerCase();
+  const seesAssignees = roleLc === 'admin' || roleLc === 'manager';
+  const matchesAssigned = (c: Contact, fil: typeof assignedFilter) =>
+    fil === 'all' ? true : fil === 'none' ? !c.assigned_agent_id : c.assigned_agent_id === fil;
+  const filtered = seesAssignees ? baseFiltered.filter((c) => matchesAssigned(c, assignedFilter)) : baseFiltered;
+  // Dropdown options: everyone who has a chat in the loaded list (works across
+  // every project in the combined inbox), busiest first
+  const assigneeOptions = (() => {
+    const byId = new Map<number, { id: number; name: string; count: number }>();
+    for (const c of baseFiltered) {
+      if (!c.assigned_agent_id) continue;
+      const o = byId.get(c.assigned_agent_id) || { id: c.assigned_agent_id, name: c.assigned_agent_name || `User ${c.assigned_agent_id}`, count: 0 };
+      o.count++;
+      byId.set(o.id, o);
+    }
+    return Array.from(byId.values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  })();
 
   // When search is active, use server results for intervened contacts too
   const effectiveIntervenedContacts = searchResults !== null
@@ -1874,6 +1903,60 @@ export default function InboxPage() {
           })}
         </div>
 
+        {/* Assigned-to filter — admin/manager on All / Requested */}
+        {tab !== 'intervened' && seesAssignees && (
+          <div className="border-b border-gray-100 relative" ref={assignedFilterRef}>
+            {(() => {
+              const sel = typeof assignedFilter === 'number' ? assigneeOptions.find((o) => o.id === assignedFilter) : null;
+              const label = assignedFilter === 'all' ? 'Assigned: All chats'
+                : assignedFilter === 'none' ? 'Unassigned'
+                : `Assigned to ${sel?.name || 'agent'}`;
+              return (
+                <button onClick={() => setShowAssignedFilter((v) => !v)}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold transition-colors
+                    ${assignedFilter === 'all' ? 'text-gray-600 hover:bg-gray-50' : 'text-sky-700 bg-sky-50 hover:bg-sky-100'}`}>
+                  <span className="flex items-center gap-1.5 truncate">
+                    <UserCheck size={13} /> {label} <span className="font-bold">({filtered.length})</span>
+                  </span>
+                  {showAssignedFilter ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+              );
+            })()}
+            {showAssignedFilter && (
+              <div className="absolute left-0 right-0 top-full bg-white border border-gray-200 shadow-lg z-30 rounded-b-lg overflow-hidden">
+                <div className="max-h-72 overflow-y-auto">
+                  {([
+                    { key: 'all'  as const, label: 'All chats',  count: baseFiltered.length },
+                    { key: 'none' as const, label: 'Unassigned', count: baseFiltered.filter((c) => !c.assigned_agent_id).length },
+                  ]).map((opt) => (
+                    <button key={opt.key} onClick={() => { setAssignedFilter(opt.key); setShowAssignedFilter(false); }}
+                      className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 flex items-center justify-between gap-2
+                        ${assignedFilter === opt.key ? 'text-sky-700 font-semibold bg-sky-50' : 'text-gray-700'}`}>
+                      <span>{opt.label}</span>
+                      <span className="text-xs font-bold rounded-full px-1.5 py-0.5 leading-none bg-gray-100 text-gray-600">{opt.count}</span>
+                    </button>
+                  ))}
+                  <div className="border-t border-gray-100" />
+                  {assigneeOptions.length === 0 && (
+                    <p className="text-xs text-gray-400 text-center py-3">No chats assigned to anyone</p>
+                  )}
+                  {assigneeOptions.map((o) => (
+                    <button key={o.id} onClick={() => { setAssignedFilter(o.id); setShowAssignedFilter(false); }}
+                      className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 flex items-center gap-2
+                        ${assignedFilter === o.id ? 'text-sky-700 font-semibold bg-sky-50' : 'text-gray-700'}`}>
+                      <span className="w-5 h-5 rounded-full bg-sky-500 text-white flex items-center justify-center text-xs font-bold flex-shrink-0">
+                        {o.name.charAt(0).toUpperCase()}
+                      </span>
+                      <span className="truncate">{o.name}</span>
+                      <span className="ml-auto text-xs font-bold rounded-full px-1.5 py-0.5 leading-none bg-sky-100 text-sky-700 flex-shrink-0">{o.count}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Intervened filter dropdown — visible for admin/manager on intervened tab */}
         {tab === 'intervened' && (currentUserRole === 'admin' || currentUserRole === 'manager') && (
           <div className="border-b border-gray-100 relative" ref={intervenedFilterRef}>
@@ -2064,6 +2147,12 @@ export default function InboxPage() {
                             ? <span className="text-orange-600">{intervenedLabel}</span>
                             : `+${c.phone}`}
                       </p>
+                      {seesAssignees && c.assigned_agent_id && !isIntervened && (
+                        <span title={`Assigned to ${transferredToAgent || 'agent'}`}
+                          className={`${combined ? '' : 'ml-auto '}flex-shrink min-w-0 max-w-[35%] truncate text-[10px] font-semibold bg-sky-50 text-sky-700 px-1.5 py-0.5 rounded-full leading-none`}>
+                          👤 {transferredToAgent || 'Agent'}
+                        </span>
+                      )}
                       {combined && (
                         <span title={wsName(c.workspace_id)}
                           className="ml-auto flex-shrink min-w-0 max-w-[45%] truncate text-[10px] font-semibold bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full leading-none">
@@ -2100,6 +2189,13 @@ export default function InboxPage() {
               <p className="text-xs text-gray-400 truncate">
                 +{selected.phone}
                 {combined && <span className="text-indigo-600 font-medium"> · {wsName(selected.workspace_id)}</span>}
+                {seesAssignees && (
+                  <span className="text-sky-700 font-medium">
+                    {' · '}{selected.assigned_agent_id
+                      ? `Assigned to ${selected.assigned_agent_name || filterAgents.find((a) => a.id === selected.assigned_agent_id)?.name || 'agent'}`
+                      : 'Unassigned'}
+                  </span>
+                )}
               </p>
             </div>
             {/* WhatsApp voice call menu (Business Calling API) — needs calling

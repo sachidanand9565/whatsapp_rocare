@@ -89,10 +89,15 @@ export async function GET(req: NextRequest) {
     } else if (chatStatus === 'inbox') {
       // Only contacts with an INBOUND message within 24h appear in inbox (uses denormalized
       // last_inbound_at — indexed, no per-row subquery). Outbound-only contacts stay in History.
-      sql += ` AND c.last_inbound_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
-        AND (c.assigned_agent_id IS NULL OR c.assigned_agent_id = ${payload.userId})`;
-      countSql += ` AND last_inbound_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
-        AND (assigned_agent_id IS NULL OR assigned_agent_id = ${payload.userId})`;
+      // Unassigned or mine — except admins, who see every chat of their projects
+      // (including ones assigned to agents) so they can see who has what.
+      const adminWs = scopes
+        .filter((sc) => String(sc.role || '').trim().toLowerCase() === 'admin')
+        .map((sc) => Number(sc.workspaceId));
+      const mineOrAdmin = (p: string) => `(${p}assigned_agent_id IS NULL OR ${p}assigned_agent_id = ${payload.userId}`
+        + (adminWs.length ? ` OR ${p}workspace_id IN (${adminWs.join(',')})` : '') + ')';
+      sql += ` AND c.last_inbound_at > DATE_SUB(NOW(), INTERVAL 24 HOUR) AND ${mineOrAdmin('c.')}`;
+      countSql += ` AND last_inbound_at > DATE_SUB(NOW(), INTERVAL 24 HOUR) AND ${mineOrAdmin('')}`;
     } else if (chatStatus === 'intervened') {
       sql      += " AND c.chat_status = 'intervened'";
       countSql += " AND chat_status = 'intervened'";

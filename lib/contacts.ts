@@ -80,7 +80,9 @@ export async function getContactForAgent(
   const lastInboundAt = contact.last_inbound_at ? new Date(contact.last_inbound_at.replace(' ', 'T') + 'Z') : null;
   const within24h = !!lastInboundAt && Date.now() - lastInboundAt.getTime() < 24 * 60 * 60 * 1000;
 
-  const inInbox = within24h && (contact.assigned_agent_id == null || contact.assigned_agent_id === userId);
+  // Admins see chats assigned to agents too (mirrors chatStatus=inbox in app/api/contacts/route.ts)
+  const isAdmin = String(role || '').trim().toLowerCase() === 'admin';
+  const inInbox = within24h && (isAdmin || contact.assigned_agent_id == null || contact.assigned_agent_id === userId);
   const inIntervened = contact.chat_status === 'intervened' && ((role !== 'agent' && !pool) || contact.assigned_agent_id === userId);
 
   return { contact, inInbox, inIntervened };
