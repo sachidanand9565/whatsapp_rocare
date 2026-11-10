@@ -35,7 +35,10 @@ export default function AgentProjectsModal({ agent, onClose }: {
       await apiFetch(`/api/auto-assign/agent/${agent.id}`, {
         method: 'PUT', body: JSON.stringify({ workspace_id: p.id, [field]: value }),
       });
-      setProjects((prev) => prev && prev.map((x) => x.id === p.id ? { ...x, [field]: value } : x));
+      // Auto Assign on also switches the project's auto-assign on (server side)
+      const projectOn = field === 'auto_assign' && value;
+      setProjects((prev) => prev && prev.map((x) => x.id === p.id
+        ? { ...x, [field]: value, ...(projectOn ? { project_enabled: true } : {}) } : x));
       setChanged(true);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not update');

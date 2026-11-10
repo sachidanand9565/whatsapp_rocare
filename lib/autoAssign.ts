@@ -78,6 +78,21 @@ export async function getAutoAssignMembers(workspaceId: number): Promise<Set<num
   return ids;
 }
 
+/**
+ * Turning an agent's Auto Assign on only makes sense with the project's switch
+ * on too — switch it on if it was off. Returns true when it changed.
+ */
+export async function ensureAutoAssignOn(workspaceId: number): Promise<boolean> {
+  // affectedRows: 1 = new row, 2 = was off and is now on, 0 = already on
+  const changed = await execute(
+    `INSERT INTO auto_assign_settings (workspace_id, enabled) VALUES (?, 1)
+     ON DUPLICATE KEY UPDATE enabled = 1`,
+    [workspaceId]
+  );
+  clearAutoAssignCache(workspaceId);
+  return changed > 0;
+}
+
 export function clearAutoAssignCache(workspaceId: number) {
   settingsCache.delete(workspaceId);
   membersCache.delete(workspaceId);

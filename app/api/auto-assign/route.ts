@@ -4,13 +4,14 @@
  *   open-chat count.
  * PUT /api/auto-assign — admin:
  *   { enabled, max_chats }       project switch
- *   { user_id, auto_assign }     one agent's Auto Assign toggle
+ *   { user_id, auto_assign }     one agent's Auto Assign toggle (on → the
+ *                                project switch turns on too)
  */
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 import { query, execute } from '@/lib/db';
 import { apiSuccess, apiError } from '@/lib/utils';
-import { getAutoAssignSettings, clearAutoAssignCache, sweepWorkspace, ONLINE_WINDOW_MIN } from '@/lib/autoAssign';
+import { getAutoAssignSettings, clearAutoAssignCache, ensureAutoAssignOn, sweepWorkspace, ONLINE_WINDOW_MIN } from '@/lib/autoAssign';
 import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: NextRequest) {
@@ -76,7 +77,9 @@ export async function PUT(req: NextRequest) {
         await execute('DELETE FROM auto_assign_agents WHERE workspace_id = ? AND user_id = ?', [payload.workspaceId, userId]);
       }
       clearAutoAssignCache(payload.workspaceId);
-      return apiSuccess({ user_id: userId, auto_assign: !!body.auto_assign });
+      const projectTurnedOn = body.auto_assign ? await ensureAutoAssignOn(payload.workspaceId) : false;
+      if (projectTurnedOn) await sweepWorkspace(payload.workspaceId, true);
+      return apiSuccess({ user_id: userId, auto_assign: !!body.auto_assign, project_turned_on: projectTurnedOn });
     }
 
     const enabled  = body.enabled ? 1 : 0;

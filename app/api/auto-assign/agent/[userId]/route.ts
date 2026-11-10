@@ -8,13 +8,14 @@
  *   many chats the agent has open there (24h, not resolved).
  * PUT /api/auto-assign/agent/:userId
  *   { workspace_id, auto_assign }      the agent's toggle in that project
+ *                                      (on → that project's switch turns on too)
  *   { workspace_id, project_enabled }  that project's auto-assign switch
  */
 import { NextRequest } from 'next/server';
 import { requireAuth, getMemberRole } from '@/lib/auth';
 import { query, execute } from '@/lib/db';
 import { apiSuccess, apiError } from '@/lib/utils';
-import { clearAutoAssignCache, sweepWorkspace } from '@/lib/autoAssign';
+import { clearAutoAssignCache, ensureAutoAssignOn, sweepWorkspace } from '@/lib/autoAssign';
 import { RowDataPacket } from 'mysql2';
 
 type Ctx = { params: { userId: string } };
@@ -87,8 +88,9 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
       }
     }
     clearAutoAssignCache(wsId);
-    if (body.project_enabled) await sweepWorkspace(wsId, true);
-    return apiSuccess({ updated: true });
+    const projectTurnedOn = body.auto_assign ? await ensureAutoAssignOn(wsId) : false;
+    if (body.project_enabled || projectTurnedOn) await sweepWorkspace(wsId, true);
+    return apiSuccess({ updated: true, project_turned_on: projectTurnedOn });
   } catch (err) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return apiError('Unauthorized', 401);
     if (err instanceof Error && /auto_assign_(settings|agents)/.test(err.message)) {

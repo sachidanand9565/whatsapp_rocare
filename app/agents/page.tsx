@@ -251,6 +251,7 @@ export default function AgentsPage() {
 
   // Auto Assign across all of an agent's projects, from one popup
   const [projectsFor, setProjectsFor] = useState<Agent | null>(null);
+  const [cardKey, setCardKey]         = useState(0);   // remount = reload the Auto-assign card
 
   async function toggleAutoAssign(agent: Agent) {
     const next = !autoAssign[agent.id];
@@ -262,6 +263,7 @@ export default function AgentsPage() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { toast.error(data.error || 'Failed to update auto assign'); return; }
     setAutoAssign((p) => ({ ...p, [agent.id]: next }));
+    if (data.data?.project_turned_on) setCardKey((k) => k + 1);   // card shows the switch on
     toast.success(next ? `${agent.name} will get chats automatically` : `${agent.name} won't get chats automatically`);
   }
 
@@ -358,10 +360,10 @@ export default function AgentsPage() {
         </button>
       </div>
 
-      <AutoAssignCard />
+      <AutoAssignCard key={cardKey} />
       {projectsFor && (
         <AgentProjectsModal agent={projectsFor}
-          onClose={(changed) => { setProjectsFor(null); if (changed) fetchAutoAssign(); }} />
+          onClose={(changed) => { setProjectsFor(null); if (changed) { fetchAutoAssign(); setCardKey((k) => k + 1); } }} />
       )}
 
       {/* Search + period for the chat counts */}
