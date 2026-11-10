@@ -94,7 +94,7 @@ export default function AgentProjectsModal({ agent, onClose }: {
                         {!p.project_enabled && (
                           <>
                             {' · '}<span className="text-amber-600">project auto-assign off</span>{' '}
-                            <button onClick={() => update(p, 'project_enabled', true)} disabled={busy === `${p.id}:project_enabled`}
+                            <button onClick={() => update(p, 'project_enabled', true)} disabled={!!busy}
                               className="text-whatsapp-green font-semibold hover:underline disabled:opacity-50">Turn on</button>
                           </>
                         )}
@@ -102,11 +102,13 @@ export default function AgentProjectsModal({ agent, onClose }: {
                     </td>
                     <td className="px-3 py-2.5 text-center font-semibold text-gray-700">{p.open_chats}</td>
                     <td className="px-3 py-2.5 text-center">
-                      <button onClick={() => update(p, 'auto_assign', !p.auto_assign)} disabled={busy === `${p.id}:auto_assign`}
-                        className="disabled:opacity-50" title={p.auto_assign ? 'Gets chats automatically' : 'Does not get chats automatically'}>
-                        {p.auto_assign
-                          ? <ToggleRight size={24} className="text-green-500" />
-                          : <ToggleLeft size={24} className="text-gray-400" />}
+                      <button onClick={() => update(p, 'auto_assign', !p.auto_assign)} disabled={!!busy}
+                        className="disabled:cursor-wait" title={p.auto_assign ? 'Gets chats automatically' : 'Does not get chats automatically'}>
+                        {busy === `${p.id}:auto_assign`
+                          ? <Loader2 size={24} className="animate-spin text-gray-400" />
+                          : p.auto_assign
+                            ? <ToggleRight size={24} className={busy ? 'text-green-300' : 'text-green-500'} />
+                            : <ToggleLeft size={24} className={busy ? 'text-gray-300' : 'text-gray-400'} />}
                       </button>
                     </td>
                   </tr>

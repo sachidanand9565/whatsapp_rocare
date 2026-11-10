@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, ToggleLeft, ToggleRight, Search, UserCog, SlidersHorizontal, X, Check, Eye, EyeOff, KeyRound, Layers } from 'lucide-react';
+import { Plus, Trash2, ToggleLeft, ToggleRight, Search, UserCog, SlidersHorizontal, X, Check, Eye, EyeOff, KeyRound, Layers, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import AutoAssignCard from '../components/AutoAssignCard';
 import AgentProjectsModal from '../components/AgentProjectsModal';
@@ -253,18 +253,29 @@ export default function AgentsPage() {
   const [projectsFor, setProjectsFor] = useState<Agent | null>(null);
   const [cardKey, setCardKey]         = useState(0);   // remount = reload the Auto-assign card
 
+  // One request per agent at a time — the toggle is disabled with a spinner meanwhile
+  const [autoAssignBusy, setAutoAssignBusy] = useState<Record<number, boolean>>({});
+
   async function toggleAutoAssign(agent: Agent) {
+    if (autoAssignBusy[agent.id]) return;
     const next = !autoAssign[agent.id];
-    const res = await fetch('/api/auto-assign', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ user_id: agent.id, auto_assign: next }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { toast.error(data.error || 'Failed to update auto assign'); return; }
-    setAutoAssign((p) => ({ ...p, [agent.id]: next }));
-    if (data.data?.project_turned_on) setCardKey((k) => k + 1);   // card shows the switch on
-    toast.success(next ? `${agent.name} will get chats automatically` : `${agent.name} won't get chats automatically`);
+    setAutoAssignBusy((b) => ({ ...b, [agent.id]: true }));
+    try {
+      const res = await fetch('/api/auto-assign', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ user_id: agent.id, auto_assign: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(data.error || 'Failed to update auto assign'); return; }
+      setAutoAssign((p) => ({ ...p, [agent.id]: next }));
+      if (data.data?.project_turned_on) setCardKey((k) => k + 1);   // card shows the switch on
+      toast.success(next ? `${agent.name} will get chats automatically` : `${agent.name} won't get chats automatically`);
+    } catch {
+      toast.error('Failed to update auto assign');
+    } finally {
+      setAutoAssignBusy((b) => ({ ...b, [agent.id]: false }));
+    }
   }
 
   async function createAgent(e: React.FormEvent) {
@@ -460,9 +471,12 @@ export default function AgentsPage() {
                     <td className="px-4 py-3">
                       {agent.workspace_role === 'manager' || agent.workspace_role === 'agent' ? (
                         <div className="flex items-center gap-2">
-                          <button onClick={() => toggleAutoAssign(agent)}
+                          <button onClick={() => toggleAutoAssign(agent)} disabled={!!autoAssignBusy[agent.id]}
+                            className="disabled:cursor-wait"
                             title={autoAssign[agent.id] ? 'Gets chats automatically (this project)' : 'Does not get chats automatically (this project)'}>
-                            {autoAssign[agent.id] ? (
+                            {autoAssignBusy[agent.id] ? (
+                              <Loader2 size={22} className="animate-spin text-gray-400" />
+                            ) : autoAssign[agent.id] ? (
                               <ToggleRight size={22} className="text-green-500" />
                             ) : (
                               <ToggleLeft size={22} className="text-gray-400" />

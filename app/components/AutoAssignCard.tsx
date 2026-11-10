@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Shuffle } from 'lucide-react';
+import { Shuffle, Loader2 } from 'lucide-react';
 import { apiFetch } from '@/hooks/useApi';
 
 interface Member { id: number; name: string; role: string; auto_assign: boolean; status: string; open_chats: number; }
@@ -82,10 +82,12 @@ export default function AutoAssignCard() {
           </p>
         </div>
         <button onClick={() => save(!enabled, maxChats)} disabled={saving}
-          className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 disabled:opacity-60
+          className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 disabled:opacity-60 disabled:cursor-wait
             ${enabled ? 'bg-whatsapp-green' : 'bg-gray-300'}`}
           aria-label="Toggle auto-assign">
-          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${enabled ? 'left-[22px]' : 'left-0.5'}`} />
+          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all flex items-center justify-center ${enabled ? 'left-[22px]' : 'left-0.5'}`}>
+            {saving && <Loader2 size={12} className="animate-spin text-gray-500" />}
+          </span>
         </button>
       </div>
 
