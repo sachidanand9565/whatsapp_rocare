@@ -17,7 +17,11 @@ export async function GET(req: NextRequest) {
   try {
     const payload = await requireAuth(req);
     const settings = await getAutoAssignSettings(payload.workspaceId);
-    if (payload.role !== 'admin') return apiSuccess({ ...settings, members: [] });
+    // The switch is per project — the card names it so two screens on
+    // different projects don't look like they disagree
+    const ws = await query<RowDataPacket[]>('SELECT name FROM workspaces WHERE id = ? LIMIT 1', [payload.workspaceId]);
+    const project = (ws[0]?.name as string) || '';
+    if (payload.role !== 'admin') return apiSuccess({ ...settings, project, members: [] });
 
     const members = await query<RowDataPacket[]>(
       `SELECT u.id, u.name, wm.role,
@@ -38,6 +42,7 @@ export async function GET(req: NextRequest) {
     ).catch(() => [] as RowDataPacket[]);   // tables missing before the migrations
     return apiSuccess({
       ...settings,
+      project,
       members: members.map((m) => ({
         id: Number(m.id), name: m.name as string, role: m.role as string,
         auto_assign: !!Number(m.auto_assign),

@@ -48,8 +48,11 @@ export async function getAutoAssignSettings(workspaceId: number): Promise<AutoAs
       [workspaceId]
     );
     if (rows.length) s = { enabled: !!rows[0].enabled, maxChats: Number(rows[0].max_chats) || 0 };
-  } catch {
-    // Table not created yet (migration-auto-assign.sql) → treat as off
+  } catch (err) {
+    // Table not created yet (migration-auto-assign.sql) → off. Anything else (a
+    // dropped connection) must not be cached as "off" — that silently paused
+    // auto-assign and showed the switch off for 30s on that server.
+    if (!(err instanceof Error && /auto_assign_settings/.test(err.message))) throw err;
   }
   settingsCache.set(workspaceId, { s, at: Date.now() });
   return s;
@@ -66,8 +69,10 @@ export async function getAutoAssignMembers(workspaceId: number): Promise<Set<num
       [workspaceId]
     );
     ids = new Set(rows.map((r) => Number(r.user_id)));
-  } catch {
-    // Table not created yet (migration-auto-assign-agents.sql) → nobody
+  } catch (err) {
+    // Table not created yet (migration-auto-assign-agents.sql) → nobody; other
+    // errors aren't cached (see getAutoAssignSettings)
+    if (!(err instanceof Error && /auto_assign_agents/.test(err.message))) throw err;
   }
   membersCache.set(workspaceId, { ids, at: Date.now() });
   return ids;

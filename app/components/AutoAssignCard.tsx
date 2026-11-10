@@ -19,6 +19,8 @@ export default function AutoAssignCard() {
   const [maxChats, setMaxChats] = useState(0);
   const [members, setMembers]   = useState<Member[]>([]);
   const [loaded, setLoaded]     = useState(false);
+  const [project, setProject]   = useState('');
+  const [loadError, setLoadError] = useState('');
   const [saving, setSaving]     = useState(false);
 
   const load = useCallback(() => {
@@ -27,9 +29,12 @@ export default function AutoAssignCard() {
         setEnabled(!!r.data?.enabled);
         setMaxChats(Number(r.data?.maxChats) || 0);
         setMembers(r.data?.members || []);
+        setProject(r.data?.project || '');
+        setLoadError('');
         setLoaded(true);
       })
-      .catch(() => setLoaded(true));
+      // Keep the last good values; never fall back to a switch that looks "off"
+      .catch((err) => { setLoadError(err instanceof Error ? err.message : 'Could not load'); setLoaded(true); });
   }, []);
 
   useEffect(() => {
@@ -64,7 +69,11 @@ export default function AutoAssignCard() {
           <Shuffle size={18} />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="font-semibold text-gray-900">Auto-assign chats</p>
+          <p className="font-semibold text-gray-900">
+            Auto-assign chats
+            {project && <span className="ml-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 rounded-full px-2 py-0.5">{project}</span>}
+          </p>
+          {loadError && <p className="text-xs text-red-500 mt-0.5">Could not load the current setting: {loadError}. Retrying…</p>}
           <p className="text-xs text-gray-500 mt-0.5">
             New chats go to the Active member with the fewest open chats — only those with
             the Auto Assign toggle on (table below). They see their own chats plus unassigned
