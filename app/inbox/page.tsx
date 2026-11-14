@@ -851,7 +851,8 @@ export default function InboxPage() {
   const chatRef                             = useRef<HTMLDivElement>(null);
 
   // Intervened filter state
-  const [intervenedFilter, setIntervenedFilter]         = useState<'me' | 'any' | 'other' | number>('me');
+  // 'me' | 'any' | 'p:<name>' (one person — see intervenedPerson)
+  const [intervenedFilter, setIntervenedFilter]         = useState<string>('me');
   // Admin/manager: All / Requested tabs by who the chat is assigned to
   const [assignedFilter, setAssignedFilter]             = useState<'all' | 'none' | number>('all');
   const [showAssignedFilter, setShowAssignedFilter]     = useState(false);
@@ -866,7 +867,7 @@ export default function InboxPage() {
   }, [showAssignedFilter]);
   const [showIntervenedFilter, setShowIntervenedFilter] = useState(false);
   const [filterAgents, setFilterAgents]                 = useState<{ id: number; name: string; workspace_role: string }[]>([]);
-  const [loadingFilterAgents, setLoadingFilterAgents]   = useState(false);
+  const [, setLoadingFilterAgents]                      = useState(false);
   const intervenedFilterRef                             = useRef<HTMLDivElement>(null);
   const currentUserName = typeof window !== 'undefined' ? (localStorage.getItem('userName') || '') : '';
   const currentUserRole = typeof window !== 'undefined' ? (localStorage.getItem('userRole') || '') : '';
@@ -971,7 +972,7 @@ export default function InboxPage() {
 
   // Load intervened contacts — for admin/manager: all agents' chats; for agent: their own assigned
   const loadIntervenedContacts = useCallback(() => {
-    apiFetch(`/api/contacts?chatStatus=intervened&limit=500${wsParamRef.current}`).then((r) => {
+    apiFetch(`/api/contacts?chatStatus=intervened&limit=2000${wsParamRef.current}`).then((r) => {
       setIntervenedContacts(r.data?.data || []);
     });
   }, []);
@@ -1614,6 +1615,16 @@ export default function InboxPage() {
     : intervenedContacts;
 
   // Shared intervened sub-filter — used for badge count, dropdown count, and contact list
+  // Who holds an intervened chat: the assignee if transferred, else whoever
+  // intervened (most rows only carry the intervened_by name, no user id).
+  function intervenedPerson(c: Contact): string {
+    const name = c.assigned_agent_id
+      ? (c.assigned_agent_name || filterAgents.find((a) => a.id === c.assigned_agent_id)?.name || c.intervened_by)
+      : c.intervened_by;
+    return (name || '').trim() || 'Unknown';
+  }
+  const personKey = (name: string) => 'p:' + name.toLowerCase();
+
   function matchesIntervenedFilter(c: Contact, fil: typeof intervenedFilter): boolean {
     if (currentUserRole === 'agent') return true; // agents see only their own (API already filters)
     if (fil === 'any') return true;
@@ -1621,13 +1632,7 @@ export default function InboxPage() {
       (currentUserId != null && c.assigned_agent_id === currentUserId) ||
       (!c.assigned_agent_id && c.intervened_by === currentUserName)
     );
-    if (fil === 'other') return !(
-      (currentUserId != null && c.assigned_agent_id === currentUserId) ||
-      (!c.assigned_agent_id && c.intervened_by === currentUserName)
-    );
-    // Agent ID
-    const agentName = filterAgents.find((a) => a.id === fil)?.name;
-    return c.assigned_agent_id === fil || (!c.assigned_agent_id && c.intervened_by === agentName);
+    return personKey(intervenedPerson(c)) === fil;
   }
 
   const templateMsgCount = messages.filter((m) => m.type === 'template' && m.direction === 'outbound').length;
@@ -1961,15 +1966,13 @@ export default function InboxPage() {
         {tab === 'intervened' && (currentUserRole === 'admin' || currentUserRole === 'manager') && (
           <div className="border-b border-gray-100 relative" ref={intervenedFilterRef}>
             {(() => {
-              // For agent-specific filter, look up name by ID
-              const selectedAgent = typeof intervenedFilter === 'number'
-                ? filterAgents.find((a) => a.id === intervenedFilter)
+              const selectedPerson = intervenedFilter.startsWith('p:')
+                ? effectiveIntervenedContacts.map(intervenedPerson).find((n) => personKey(n) === intervenedFilter)
                 : null;
               const filterLabel =
-                intervenedFilter === 'me'    ? 'Intervened By Me' :
-                intervenedFilter === 'any'   ? 'Intervened By Any' :
-                intervenedFilter === 'other' ? 'Intervened By Other' :
-                selectedAgent ? `Intervened By ${selectedAgent.name}` : 'Intervened By Agent';
+                intervenedFilter === 'me'  ? 'Intervened By Me' :
+                intervenedFilter === 'any' ? 'Intervened By Any' :
+                `Intervened By ${selectedPerson || intervenedFilter.slice(2)}`;
 
               // Count from effectiveIntervenedContacts using the shared filter helper (respects campaign filter)
               const filterCount = effectiveIntervenedContacts
@@ -1993,9 +1996,8 @@ export default function InboxPage() {
               <div className="absolute left-0 right-0 top-full bg-white border border-gray-200 shadow-lg z-30 rounded-b-lg overflow-hidden">
                 <div className="max-h-64 overflow-y-auto">
                   {([
-                    { key: 'me'    as const, label: 'Intervened By Me' },
-                    { key: 'any'   as const, label: 'Intervened By Any' },
-                    { key: 'other' as const, label: 'Intervened By Other' },
+                    { key: 'me',  label: 'Intervened By Me' },
+                    { key: 'any', label: 'Intervened By Any' },
                   ]).map((opt) => {
                     const cnt = effectiveIntervenedContacts
                       .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
@@ -2014,38 +2016,43 @@ export default function InboxPage() {
                     );
                   })}
                   <div className="border-t border-gray-100 mt-1" />
-                  {loadingFilterAgents ? (
-                    <div className="flex items-center justify-center py-3">
-                      <Loader2 size={14} className="animate-spin text-gray-400" />
-                    </div>
-                  ) : filterAgents.map((a) => {
-                    const agentCount = effectiveIntervenedContacts
+                  {(() => {
+                    // Everyone holding intervened chats (from the chats themselves,
+                    // across all selected projects), most chats first
+                    const people = new Map<string, { name: string; count: number }>();
+                    effectiveIntervenedContacts
                       .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
-                      .filter((c) =>
-                        c.assigned_agent_id === a.id ||
-                        (!c.assigned_agent_id && c.intervened_by === a.name)
-                      ).length;
-                    return (
-                      <button key={a.id}
-                        onClick={() => { setIntervenedFilter(a.id); setShowIntervenedFilter(false); }}
-                        className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 transition-colors flex items-center gap-2 ${intervenedFilter === a.id ? 'text-orange-600 font-semibold bg-orange-50' : 'text-gray-700'}`}>
-                        <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0 ${a.workspace_role === 'manager' ? 'bg-purple-500' : 'bg-blue-500'}`}>
-                          {a.name.charAt(0).toUpperCase()}
-                        </span>
-                        <span className="truncate">Intervened By {a.name}</span>
-                        <span className="ml-auto flex items-center gap-1.5 flex-shrink-0">
-                          {a.workspace_role !== 'agent' && (
-                            <span className="text-xs text-gray-400 capitalize">{a.workspace_role}</span>
-                          )}
-                          {agentCount > 0 && (
-                            <span className={`text-xs font-bold rounded-full px-1.5 py-0.5 leading-none ${intervenedFilter === a.id ? 'bg-orange-500 text-white' : 'bg-orange-100 text-orange-600'}`}>
-                              {agentCount}
+                      .forEach((c) => {
+                        const name = intervenedPerson(c);
+                        const k = personKey(name);
+                        const o = people.get(k) || { name, count: 0 };
+                        o.count++;
+                        people.set(k, o);
+                      });
+                    const list = Array.from(people.entries()).sort((a, b) => b[1].count - a[1].count || a[1].name.localeCompare(b[1].name));
+                    if (list.length === 0) return <p className="px-4 py-3 text-xs text-gray-400">No intervened chats</p>;
+                    return list.map(([k, p]) => {
+                      const role = filterAgents.find((a) => a.name.trim().toLowerCase() === p.name.toLowerCase())?.workspace_role;
+                      return (
+                        <button key={k}
+                          onClick={() => { setIntervenedFilter(k); setShowIntervenedFilter(false); }}
+                          className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 transition-colors flex items-center gap-2 ${intervenedFilter === k ? 'text-orange-600 font-semibold bg-orange-50' : 'text-gray-700'}`}>
+                          <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0 ${role === 'manager' ? 'bg-purple-500' : 'bg-blue-500'}`}>
+                            {p.name.charAt(0).toUpperCase()}
+                          </span>
+                          <span className="truncate">Intervened By {p.name}</span>
+                          <span className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+                            {role && role !== 'agent' && (
+                              <span className="text-xs text-gray-400 capitalize">{role}</span>
+                            )}
+                            <span className={`text-xs font-bold rounded-full px-1.5 py-0.5 leading-none ${intervenedFilter === k ? 'bg-orange-500 text-white' : 'bg-orange-100 text-orange-600'}`}>
+                              {p.count}
                             </span>
-                          )}
-                        </span>
-                      </button>
-                    );
-                  })}
+                          </span>
+                        </button>
+                      );
+                    });
+                  })()}
                 </div>
               </div>
             )}

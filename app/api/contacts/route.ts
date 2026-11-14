@@ -13,7 +13,8 @@ export async function GET(req: NextRequest) {
   try {
     const payload = await requireAuth(req);
     const sp      = new URL(req.url).searchParams;
-    const { limit, offset, page } = getPagination(sp, 500);
+    // Intervened tab counts chats per person on the client — let it load them all
+    const { limit, offset, page } = getPagination(sp, sp.get('chatStatus') === 'intervened' ? 2000 : 500);
     const search     = sp.get('search') || '';
     const status     = sp.get('status') || '';
     const chatStatus = sp.get('chatStatus') || '';
