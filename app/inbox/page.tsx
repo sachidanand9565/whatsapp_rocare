@@ -2046,8 +2046,8 @@ export default function InboxPage() {
         </div>
 
         {/* Assigned-to filter — admin/manager on All / Requested */}
-        {tab !== 'intervened' && seesAssignees && (
-          <div className="border-b border-gray-100 relative" ref={assignedFilterRef}>
+        {tab !== 'intervened' && seesAssignees && !selectMode && (
+          <div className="border-b border-gray-100 relative flex items-stretch" ref={assignedFilterRef}>
             {(() => {
               const sel = typeof assignedFilter === 'number' ? assigneeOptions.find((o) => o.id === assignedFilter) : null;
               const label = assignedFilter === 'all' ? 'Assigned: All chats'
@@ -2055,7 +2055,7 @@ export default function InboxPage() {
                 : `Assigned to ${sel?.name || 'agent'}`;
               return (
                 <button onClick={() => setShowAssignedFilter((v) => !v)}
-                  className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold transition-colors
+                  className={`flex-1 min-w-0 flex items-center justify-between px-3 py-1.5 text-xs font-semibold transition-colors
                     ${assignedFilter === 'all' ? 'text-gray-600 hover:bg-gray-50' : 'text-sky-700 bg-sky-50 hover:bg-sky-100'}`}>
                   <span className="flex items-center gap-1.5 truncate">
                     <UserCheck size={13} /> {label} <span className="font-bold">({filtered.length})</span>
@@ -2064,6 +2064,12 @@ export default function InboxPage() {
                 </button>
               );
             })()}
+            {seesAssignees && (
+              <button onClick={() => setSelectMode(true)} title="Select chats to transfer"
+                className="flex-shrink-0 px-2.5 self-stretch flex items-center text-gray-400 hover:text-whatsapp-green hover:bg-gray-50 border-l border-gray-100 transition-colors">
+                <ListChecks size={15} />
+              </button>
+            )}
             {showAssignedFilter && (
               <div className="absolute left-0 right-0 top-full bg-white border border-gray-200 shadow-lg z-30 rounded-b-lg overflow-hidden">
                 <div className="max-h-72 overflow-y-auto">
@@ -2100,8 +2106,8 @@ export default function InboxPage() {
         )}
 
         {/* Intervened filter dropdown — visible for admin/manager on intervened tab */}
-        {tab === 'intervened' && (currentUserRole === 'admin' || currentUserRole === 'manager') && (
-          <div className="border-b border-gray-100 relative" ref={intervenedFilterRef}>
+        {tab === 'intervened' && (currentUserRole === 'admin' || currentUserRole === 'manager') && !selectMode && (
+          <div className="border-b border-gray-100 relative flex items-stretch" ref={intervenedFilterRef}>
             {(() => {
               const selectedPerson = intervenedFilter.startsWith('p:')
                 ? effectiveIntervenedContacts.map(intervenedPerson).find((n) => personKey(n) === intervenedFilter)
@@ -2120,7 +2126,7 @@ export default function InboxPage() {
               return (
                 <button
                   onClick={openIntervenedFilter}
-                  className="w-full flex items-center justify-between px-3 py-2.5 text-sm font-semibold text-orange-700 hover:bg-orange-50 transition-colors">
+                  className="flex-1 min-w-0 flex items-center justify-between px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-50 transition-colors">
                   <span className="truncate">
                     {filterLabel}{' '}
                     <span className="text-orange-500 font-bold">({filterCount})</span>
@@ -2129,6 +2135,12 @@ export default function InboxPage() {
                 </button>
               );
             })()}
+            {seesAssignees && (
+              <button onClick={() => setSelectMode(true)} title="Select chats to transfer"
+                className="flex-shrink-0 px-2.5 self-stretch flex items-center text-gray-400 hover:text-whatsapp-green hover:bg-gray-50 border-l border-gray-100 transition-colors">
+                <ListChecks size={15} />
+              </button>
+            )}
             {showIntervenedFilter && (
               <div className="absolute left-0 right-0 top-full bg-white border border-gray-200 shadow-lg z-30 rounded-b-lg overflow-hidden">
                 <div className="max-h-64 overflow-y-auto">
@@ -2185,35 +2197,16 @@ export default function InboxPage() {
         )}
 
         {/* Bulk transfer bar — admin/manager */}
-        {seesAssignees && (
+        {seesAssignees && selectMode && (
           <div className="border-b border-gray-100 relative" ref={bulkRef}>
-            {!selectMode ? (
-              <button onClick={() => setSelectMode(true)}
-                className="w-full flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-gray-500 hover:text-whatsapp-green hover:bg-gray-50 transition-colors">
-                <ListChecks size={13} /> Select chats to transfer
-              </button>
-            ) : (
-              <div className="flex items-center gap-2 px-3 py-2 text-xs bg-green-50/60">
-                <label className="flex items-center gap-1.5 cursor-pointer text-gray-700 font-medium">
-                  <input type="checkbox" className="accent-green-600" checked={allPicked}
-                    onChange={() => setPicked(allPicked ? new Set() : new Set(visibleList.map((c) => c.id)))} />
-                  All ({visibleList.length})
-                </label>
-                <span className="text-gray-500" title="Tip: Shift+click a chat to pick everything between it and the last one you clicked">{pickedChats.length} selected</span>
-                <button onClick={openBulkTransfer} disabled={pickedChats.length === 0 || bulkTransferring !== null}
-                  className="ml-auto flex items-center gap-1 font-semibold text-white bg-whatsapp-green hover:bg-emerald-700 disabled:opacity-50 rounded px-2 py-1 transition-colors">
-                  {bulkTransferring !== null ? <Loader2 size={12} className="animate-spin" /> : <ArrowRightLeft size={12} />} Transfer
-                </button>
-                <button onClick={exitSelectMode} title="Cancel" className="text-gray-400 hover:text-red-500"><X size={14} /></button>
-              </div>
-            )}
-            {selectMode && (
-              <div className="flex items-center gap-2 px-3 pb-2 text-xs bg-green-50/60">
-                <span className="text-gray-600 font-medium flex-shrink-0">Whose chats:</span>
+            <div className="flex items-center gap-2 px-3 py-1.5 text-xs bg-green-50/60">
+                <input type="checkbox" className="accent-green-600 flex-shrink-0 cursor-pointer" checked={allPicked}
+                  title={allPicked ? 'Unselect all' : `Select all ${visibleList.length} shown`}
+                  onChange={() => setPicked(allPicked ? new Set() : new Set(visibleList.map((c) => c.id)))} />
                 {tab === 'intervened' ? (
                   <select value={intervenedFilter}
                     onChange={(e) => { setIntervenedFilter(e.target.value); setPicked(new Set()); }}
-                    className="flex-1 min-w-0 border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-700">
+                    title="Whose chats" className="flex-1 min-w-0 border border-gray-200 rounded px-1.5 py-0.5 bg-white text-gray-700">
                     <option value="any">Everyone ({effectiveIntervenedContacts.length})</option>
                     <option value="me">Me</option>
                     {intervenedPeople.map(([k, p]) => (
@@ -2227,7 +2220,7 @@ export default function InboxPage() {
                       setAssignedFilter(v === 'all' || v === 'none' ? v : Number(v));
                       setPicked(new Set());
                     }}
-                    className="flex-1 min-w-0 border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-700">
+                    title="Whose chats" className="flex-1 min-w-0 border border-gray-200 rounded px-1.5 py-0.5 bg-white text-gray-700">
                     {(() => {
                       // Counts for the open tab (Requested = only chats waiting on a reply)
                       const base = tab === 'requested'
@@ -2246,9 +2239,14 @@ export default function InboxPage() {
                     })()}
                   </select>
                 )}
-              </div>
-            )}
-            {showBulkTransfer && selectMode && (
+                <button onClick={openBulkTransfer} disabled={pickedChats.length === 0 || bulkTransferring !== null}
+                  title={`Transfer ${pickedChats.length} selected chat${pickedChats.length === 1 ? '' : 's'} — Shift+click picks a range`}
+                  className="flex-shrink-0 flex items-center gap-1 font-semibold text-white bg-whatsapp-green hover:bg-emerald-700 disabled:opacity-50 rounded px-2 py-1 transition-colors">
+                  {bulkTransferring !== null ? <Loader2 size={12} className="animate-spin" /> : <ArrowRightLeft size={12} />} {pickedChats.length}
+                </button>
+                <button onClick={exitSelectMode} title="Cancel" className="flex-shrink-0 text-gray-400 hover:text-red-500"><X size={14} /></button>
+            </div>
+            {showBulkTransfer && (
               <div className="absolute left-0 right-0 top-full bg-white border border-gray-200 shadow-lg z-30 rounded-b-lg overflow-hidden">
                 <p className="px-4 py-2 text-[11px] font-semibold text-gray-500 border-b border-gray-100">
                   Transfer {pickedChats.length} chat{pickedChats.length === 1 ? '' : 's'} to…
