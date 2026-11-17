@@ -3,7 +3,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { apiFetch } from '@/hooks/useApi';
 import MediaLibrary, { type MediaItem as MLItem } from '@/app/components/MediaLibrary';
 import { validateMediaFile } from '@/lib/mediaLimits';
-import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter, BellOff, Bell, ArrowLeft, Info, Layers, PhoneCall, PhoneMissed, PhoneOutgoing, MousePointerClick, CheckCheck } from 'lucide-react';
+import { Send, Search, FileText, Image, FileVideo, File, ChevronDown, ChevronUp, Download, Music, MapPin, User, UserCheck, CheckCircle, Loader2, LayoutTemplate, X, Clock, ArrowRightLeft, Zap, Plus, Trash2, Tag, Eye, Paperclip, Maximize2, Filter, BellOff, Bell, ArrowLeft, Info, Layers, PhoneCall, PhoneMissed, PhoneOutgoing, MousePointerClick, CheckCheck, ListChecks } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Contact, Message } from '@/types';
 import { inWs, inboxWsKey as wsKeyFor, shownInboxWorkspaceIds, isCombined, INBOX_WS_EVENT } from '@/lib/inboxWorkspaces';
@@ -853,6 +853,14 @@ export default function InboxPage() {
   // Intervened filter state
   // 'me' | 'any' | 'p:<name>' (one person — see intervenedPerson)
   const [intervenedFilter, setIntervenedFilter]         = useState<string>('me');
+  // Bulk transfer (admin/manager): pick chats in the list, hand them to someone available
+  const [selectMode, setSelectMode]                     = useState(false);
+  const [picked, setPicked]                             = useState<Set<number>>(new Set());
+  const [showBulkTransfer, setShowBulkTransfer]         = useState(false);
+  const [bulkPeople, setBulkPeople]                     = useState<{ id: number; name: string; status: string; open_chats: number; workspaces: number[]; roles: string[] }[] | null>(null);
+  const [bulkPeopleError, setBulkPeopleError]           = useState('');
+  const [bulkTransferring, setBulkTransferring]         = useState<number | null>(null);
+  const bulkRef                                         = useRef<HTMLDivElement>(null);
   // Admin/manager: All / Requested tabs by who the chat is assigned to
   const [assignedFilter, setAssignedFilter]             = useState<'all' | 'none' | number>('all');
   const [showAssignedFilter, setShowAssignedFilter]     = useState(false);
@@ -1531,6 +1539,15 @@ export default function InboxPage() {
     return () => document.removeEventListener('mousedown', handleOutside);
   }, [showIntervenedFilter]);
 
+  useEffect(() => {
+    if (!showBulkTransfer) return;
+    function handleOutside(e: MouseEvent) {
+      if (bulkRef.current && !bulkRef.current.contains(e.target as Node)) setShowBulkTransfer(false);
+    }
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [showBulkTransfer]);
+
   async function openIntervenedFilter() {
     if (filterAgents.length === 0 && !showIntervenedFilter) {
       setLoadingFilterAgents(true);
@@ -1633,6 +1650,70 @@ export default function InboxPage() {
       (!c.assigned_agent_id && c.intervened_by === currentUserName)
     );
     return personKey(intervenedPerson(c)) === fil;
+  }
+
+  // Exactly the chats shown in the list (tab + filters + search)
+  const visibleList = (tab === 'intervened'
+    ? effectiveIntervenedContacts
+        .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
+        .filter((c) => searchResults !== null || (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s))
+    : filtered
+  ).filter((c) => {
+    if (tab === 'all') return true;
+    if (tab === 'requested') return c.chat_status === 'open' && Number(c.inbound_count) > 0;
+    if (c.chat_status !== 'intervened') return false;
+    return matchesIntervenedFilter(c, intervenedFilter);
+  });
+  // Only what is still on screen counts — switching tab/filter drops the rest
+  const pickedChats = selectMode ? visibleList.filter((c) => picked.has(c.id)) : [];
+  const allPicked   = visibleList.length > 0 && pickedChats.length === visibleList.length;
+
+  function togglePick(id: number) {
+    setPicked((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+  function exitSelectMode() {
+    setSelectMode(false); setPicked(new Set()); setShowBulkTransfer(false);
+  }
+  function openBulkTransfer() {
+    if (!showBulkTransfer) {
+      setBulkPeople(null); setBulkPeopleError('');
+      apiFetch(`/api/contacts/bulk-transfer${wsParamRef.current.replace(/^&/, '?')}`)
+        .then((r) => setBulkPeople(r.data || []))
+        .catch((err) => setBulkPeopleError(err instanceof Error ? err.message : 'Could not load people'));
+    }
+    setShowBulkTransfer((v) => !v);
+  }
+  async function bulkTransfer(p: { id: number; name: string; status: string; workspaces: number[] }) {
+    if (bulkTransferring) return;
+    const chats = pickedChats.filter((c) => p.workspaces.includes(Number(c.workspace_id)));
+    if (chats.length === 0) return;
+    const away = p.status === 'offline' || p.status === 'break';
+    if (!window.confirm(
+      `Transfer ${chats.length} chat${chats.length > 1 ? 's' : ''} to ${p.name}?` +
+      (chats.length < pickedChats.length ? `\n${pickedChats.length - chats.length} selected chat(s) are in projects ${p.name} is not in and will stay where they are.` : '') +
+      (away ? `\n\n${p.name} is ${p.status === 'break' ? 'on Break' : 'Offline'}. In auto-assign projects their waiting chats may move to an Active member again.` : '')
+    )) return;
+    setBulkTransferring(p.id);
+    try {
+      const r = await apiFetch('/api/contacts/bulk-transfer', {
+        method: 'POST',
+        body: JSON.stringify({
+          contact_ids: chats.map((c) => c.id),
+          to_user_id:  p.id,
+          workspaces:  wsParamRef.current.replace(/^&workspaces=/, '') || undefined,
+        }),
+      });
+      const n = Number(r.data?.transferred) || 0;
+      toast.success(`${n} chat${n === 1 ? '' : 's'} transferred to ${p.name}`);
+      exitSelectMode();
+      if (selected && chats.some((c) => c.id === selected.id)) {
+        setSelected((prev) => prev ? { ...prev, assigned_agent_id: p.id, assigned_agent_name: p.name } : prev);
+      }
+      loadContacts(campaignFilterRef.current, false);
+      loadIntervenedContacts();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Transfer failed');
+    } finally { setBulkTransferring(null); }
   }
 
   const templateMsgCount = messages.filter((m) => m.type === 'template' && m.direction === 'outbound').length;
@@ -2059,6 +2140,65 @@ export default function InboxPage() {
           </div>
         )}
 
+        {/* Bulk transfer bar — admin/manager */}
+        {seesAssignees && (
+          <div className="border-b border-gray-100 relative" ref={bulkRef}>
+            {!selectMode ? (
+              <button onClick={() => setSelectMode(true)}
+                className="w-full flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-gray-500 hover:text-whatsapp-green hover:bg-gray-50 transition-colors">
+                <ListChecks size={13} /> Select chats to transfer
+              </button>
+            ) : (
+              <div className="flex items-center gap-2 px-3 py-2 text-xs bg-green-50/60">
+                <label className="flex items-center gap-1.5 cursor-pointer text-gray-700 font-medium">
+                  <input type="checkbox" className="accent-green-600" checked={allPicked}
+                    onChange={() => setPicked(allPicked ? new Set() : new Set(visibleList.map((c) => c.id)))} />
+                  All ({visibleList.length})
+                </label>
+                <span className="text-gray-500">{pickedChats.length} selected</span>
+                <button onClick={openBulkTransfer} disabled={pickedChats.length === 0 || bulkTransferring !== null}
+                  className="ml-auto flex items-center gap-1 font-semibold text-white bg-whatsapp-green hover:bg-emerald-700 disabled:opacity-50 rounded px-2 py-1 transition-colors">
+                  {bulkTransferring !== null ? <Loader2 size={12} className="animate-spin" /> : <ArrowRightLeft size={12} />} Transfer
+                </button>
+                <button onClick={exitSelectMode} title="Cancel" className="text-gray-400 hover:text-red-500"><X size={14} /></button>
+              </div>
+            )}
+            {showBulkTransfer && selectMode && (
+              <div className="absolute left-0 right-0 top-full bg-white border border-gray-200 shadow-lg z-30 rounded-b-lg overflow-hidden">
+                <p className="px-4 py-2 text-[11px] font-semibold text-gray-500 border-b border-gray-100">
+                  Transfer {pickedChats.length} chat{pickedChats.length === 1 ? '' : 's'} to…
+                </p>
+                <div className="max-h-72 overflow-y-auto">
+                  {bulkPeopleError && <p className="px-4 py-3 text-xs text-red-500">{bulkPeopleError}</p>}
+                  {!bulkPeopleError && !bulkPeople && (
+                    <div className="flex items-center justify-center py-3"><Loader2 size={14} className="animate-spin text-gray-400" /></div>
+                  )}
+                  {bulkPeople && bulkPeople.length === 0 && <p className="px-4 py-3 text-xs text-gray-400">Nobody to transfer to</p>}
+                  {bulkPeople && bulkPeople.map((p) => {
+                    const canTake = pickedChats.filter((c) => p.workspaces.includes(Number(c.workspace_id))).length;
+                    const dot = p.status === 'active' ? 'bg-green-500' : p.status === 'break' ? 'bg-yellow-400' : p.status === 'offline' ? 'bg-gray-300' : 'bg-gray-200';
+                    const statusText = p.status === 'active' ? 'Active' : p.status === 'break' ? 'Break' : p.status === 'offline' ? 'Offline' : '';
+                    return (
+                      <button key={p.id} onClick={() => bulkTransfer(p)} disabled={canTake === 0 || bulkTransferring !== null}
+                        title={canTake === 0 ? `${p.name} is not in the projects of the selected chats` : `Open chats now: ${p.open_chats}`}
+                        className="w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2 text-gray-700">
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot}`} />
+                        <span className="truncate">{p.name}</span>
+                        {statusText && <span className="text-[11px] text-gray-400">{statusText}</span>}
+                        <span className="ml-auto flex items-center gap-1.5 flex-shrink-0 text-[11px]">
+                          {canTake > 0 && canTake < pickedChats.length && <span className="text-amber-600">{canTake} of {pickedChats.length}</span>}
+                          <span className="text-gray-400" title="Open chats now (24h)">{p.open_chats} open</span>
+                          {bulkTransferring === p.id && <Loader2 size={12} className="animate-spin text-gray-400" />}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Contact items */}
         <div className="flex-1 overflow-y-auto">
           {/* Skeleton while loading */}
@@ -2086,21 +2226,7 @@ export default function InboxPage() {
             }
             return null;
           })()}
-          {!contactsLoading && (() => {
-            const source = (tab === 'intervened')
-              ? effectiveIntervenedContacts
-                  .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
-                  .filter((c) => searchResults !== null || (c.name || '').toLowerCase().includes(s) || (c.phone || '').toLowerCase().includes(s))
-              : filtered;
-            return source;
-          })()
-            .filter((c) => {
-              if (tab === 'all') return true;
-              if (tab === 'requested') return c.chat_status === 'open' && Number(c.inbound_count) > 0;
-              if (c.chat_status !== 'intervened') return false;
-              return matchesIntervenedFilter(c, intervenedFilter);
-            })
-            .map((c) => {
+          {!contactsLoading && visibleList.map((c) => {
             // Local state is primary (SSE-driven); DB subquery is fallback for page-refresh
             const unread = unreadCounts[c.id] !== undefined ? unreadCounts[c.id] : (Number(c.unread_count) || 0);
             const isResolved = c.chat_status === 'resolved';
@@ -2124,7 +2250,11 @@ export default function InboxPage() {
                   ${selected?.id === c.id ? 'bg-green-50 border-l-2 border-l-whatsapp-green' : ''}
                   ${isResolved ? 'opacity-60' : ''}`}>
                 {/* Main clickable area */}
-                <button onClick={() => selectContact(c)} className="flex items-center gap-3 flex-1 min-w-0 text-left px-3 py-3">
+                <button onClick={() => (selectMode ? togglePick(c.id) : selectContact(c))} className="flex items-center gap-3 flex-1 min-w-0 text-left px-3 py-3">
+                  {selectMode && (
+                    <input type="checkbox" readOnly tabIndex={-1} checked={picked.has(c.id)}
+                      className="accent-green-600 flex-shrink-0 pointer-events-none" />
+                  )}
                   <div className={`w-10 h-10 rounded-full ${color} text-white flex items-center justify-center font-bold text-sm flex-shrink-0`}>
                     {initial}
                   </div>
