@@ -1668,8 +1668,21 @@ export default function InboxPage() {
   const pickedChats = selectMode ? visibleList.filter((c) => picked.has(c.id)) : [];
   const allPicked   = visibleList.length > 0 && pickedChats.length === visibleList.length;
 
-  function togglePick(id: number) {
-    setPicked((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const lastPickRef = useRef<number | null>(null);
+  // Shift+click picks the whole range from the last clicked chat
+  function togglePick(id: number, range = false) {
+    const from = lastPickRef.current;
+    lastPickRef.current = id;
+    setPicked((prev) => {
+      const n = new Set(prev);
+      const a = from == null ? -1 : visibleList.findIndex((c) => c.id === from);
+      const b = visibleList.findIndex((c) => c.id === id);
+      if (range && a >= 0 && b >= 0) {
+        const on = !prev.has(id);
+        visibleList.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((c) => (on ? n.add(c.id) : n.delete(c.id)));
+      } else if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
   }
   function exitSelectMode() {
     setSelectMode(false); setPicked(new Set()); setShowBulkTransfer(false);
@@ -1683,6 +1696,32 @@ export default function InboxPage() {
     }
     setShowBulkTransfer((v) => !v);
   }
+  async function spreadToActive() {
+    if (bulkTransferring || pickedChats.length === 0) return;
+    const active = (bulkPeople || []).filter((p) => p.status === 'active');
+    if (!window.confirm(`Spread ${pickedChats.length} chat${pickedChats.length > 1 ? 's' : ''} over the Active members (${active.map((p) => p.name).join(', ')})? Each chat goes to the least busy Active member of its project.`)) return;
+    setBulkTransferring(-1);
+    try {
+      const r = await apiFetch('/api/contacts/bulk-transfer', {
+        method: 'POST',
+        body: JSON.stringify({
+          contact_ids: pickedChats.map((c) => c.id),
+          to:          'active',
+          workspaces:  wsParamRef.current.replace(/^&workspaces=/, '') || undefined,
+        }),
+      });
+      const n = Number(r.data?.transferred) || 0;
+      const who = ((r.data?.to || []) as { name: string; count: number }[]).map((x) => `${x.name} ${x.count}`).join(', ');
+      const skipped = Number(r.data?.skipped) || 0;
+      toast.success(`${n} chat${n === 1 ? '' : 's'} transferred${who ? ` — ${who}` : ''}${skipped ? ` · ${skipped} skipped (no Active member in their project)` : ''}`, { duration: 6000 });
+      setPicked(new Set()); setShowBulkTransfer(false);
+      loadContacts(campaignFilterRef.current, false);
+      loadIntervenedContacts();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Transfer failed');
+    } finally { setBulkTransferring(null); }
+  }
+
   async function bulkTransfer(p: { id: number; name: string; status: string; workspaces: number[] }) {
     if (bulkTransferring) return;
     const chats = pickedChats.filter((c) => p.workspaces.includes(Number(c.workspace_id)));
@@ -1705,7 +1744,8 @@ export default function InboxPage() {
       });
       const n = Number(r.data?.transferred) || 0;
       toast.success(`${n} chat${n === 1 ? '' : 's'} transferred to ${p.name}`);
-      exitSelectMode();
+      // Stay in select mode — pick the next batch for someone else
+      setPicked(new Set()); setShowBulkTransfer(false);
       if (selected && chats.some((c) => c.id === selected.id)) {
         setSelected((prev) => prev ? { ...prev, assigned_agent_id: p.id, assigned_agent_name: p.name } : prev);
       }
@@ -2155,7 +2195,7 @@ export default function InboxPage() {
                     onChange={() => setPicked(allPicked ? new Set() : new Set(visibleList.map((c) => c.id)))} />
                   All ({visibleList.length})
                 </label>
-                <span className="text-gray-500">{pickedChats.length} selected</span>
+                <span className="text-gray-500" title="Tip: Shift+click a chat to pick everything between it and the last one you clicked">{pickedChats.length} selected</span>
                 <button onClick={openBulkTransfer} disabled={pickedChats.length === 0 || bulkTransferring !== null}
                   className="ml-auto flex items-center gap-1 font-semibold text-white bg-whatsapp-green hover:bg-emerald-700 disabled:opacity-50 rounded px-2 py-1 transition-colors">
                   {bulkTransferring !== null ? <Loader2 size={12} className="animate-spin" /> : <ArrowRightLeft size={12} />} Transfer
@@ -2174,6 +2214,21 @@ export default function InboxPage() {
                     <div className="flex items-center justify-center py-3"><Loader2 size={14} className="animate-spin text-gray-400" /></div>
                   )}
                   {bulkPeople && bulkPeople.length === 0 && <p className="px-4 py-3 text-xs text-gray-400">Nobody to transfer to</p>}
+                  {bulkPeople && bulkPeople.length > 0 && (() => {
+                    const active = bulkPeople.filter((p) => p.status === 'active');
+                    return (
+                      <button onClick={spreadToActive} disabled={active.length === 0 || bulkTransferring !== null}
+                        title={active.length === 0 ? 'Nobody is Active right now' : active.map((p) => p.name).join(', ')}
+                        className="w-full text-left px-4 py-2.5 text-sm hover:bg-green-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2 text-whatsapp-green font-semibold border-b border-gray-100">
+                        <ArrowRightLeft size={13} className="flex-shrink-0" />
+                        <span className="truncate">Spread among Active</span>
+                        <span className="ml-auto flex items-center gap-1.5 flex-shrink-0 text-[11px] font-normal text-gray-400">
+                          {active.length} active
+                          {bulkTransferring === -1 && <Loader2 size={12} className="animate-spin text-gray-400" />}
+                        </span>
+                      </button>
+                    );
+                  })()}
                   {bulkPeople && bulkPeople.map((p) => {
                     const canTake = pickedChats.filter((c) => p.workspaces.includes(Number(c.workspace_id))).length;
                     const dot = p.status === 'active' ? 'bg-green-500' : p.status === 'break' ? 'bg-yellow-400' : p.status === 'offline' ? 'bg-gray-300' : 'bg-gray-200';
@@ -2250,7 +2305,7 @@ export default function InboxPage() {
                   ${selected?.id === c.id ? 'bg-green-50 border-l-2 border-l-whatsapp-green' : ''}
                   ${isResolved ? 'opacity-60' : ''}`}>
                 {/* Main clickable area */}
-                <button onClick={() => (selectMode ? togglePick(c.id) : selectContact(c))} className="flex items-center gap-3 flex-1 min-w-0 text-left px-3 py-3">
+                <button onClick={(e) => (selectMode ? togglePick(c.id, e.shiftKey) : selectContact(c))} className="flex items-center gap-3 flex-1 min-w-0 text-left px-3 py-3">
                   {selectMode && (
                     <input type="checkbox" readOnly tabIndex={-1} checked={picked.has(c.id)}
                       className="accent-green-600 flex-shrink-0 pointer-events-none" />
