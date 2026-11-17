@@ -1652,6 +1652,22 @@ export default function InboxPage() {
     return personKey(intervenedPerson(c)) === fil;
   }
 
+  // Everyone holding intervened chats (from the chats themselves, across all
+  // selected projects), most chats first — filter dropdown + bulk transfer
+  const intervenedPeople = (() => {
+    const people = new Map<string, { name: string; count: number }>();
+    effectiveIntervenedContacts
+      .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
+      .forEach((c) => {
+        const name = intervenedPerson(c);
+        const k = personKey(name);
+        const o = people.get(k) || { name, count: 0 };
+        o.count++;
+        people.set(k, o);
+      });
+    return Array.from(people.entries()).sort((a, b) => b[1].count - a[1].count || a[1].name.localeCompare(b[1].name));
+  })();
+
   // Exactly the chats shown in the list (tab + filters + search)
   const visibleList = (tab === 'intervened'
     ? effectiveIntervenedContacts
@@ -2138,19 +2154,7 @@ export default function InboxPage() {
                   })}
                   <div className="border-t border-gray-100 mt-1" />
                   {(() => {
-                    // Everyone holding intervened chats (from the chats themselves,
-                    // across all selected projects), most chats first
-                    const people = new Map<string, { name: string; count: number }>();
-                    effectiveIntervenedContacts
-                      .filter((c) => !campaignContactIds || campaignContactIds.has(Number(c.id)))
-                      .forEach((c) => {
-                        const name = intervenedPerson(c);
-                        const k = personKey(name);
-                        const o = people.get(k) || { name, count: 0 };
-                        o.count++;
-                        people.set(k, o);
-                      });
-                    const list = Array.from(people.entries()).sort((a, b) => b[1].count - a[1].count || a[1].name.localeCompare(b[1].name));
+                    const list = intervenedPeople;
                     if (list.length === 0) return <p className="px-4 py-3 text-xs text-gray-400">No intervened chats</p>;
                     return list.map(([k, p]) => {
                       const role = filterAgents.find((a) => a.name.trim().toLowerCase() === p.name.toLowerCase())?.workspace_role;
@@ -2201,6 +2205,47 @@ export default function InboxPage() {
                   {bulkTransferring !== null ? <Loader2 size={12} className="animate-spin" /> : <ArrowRightLeft size={12} />} Transfer
                 </button>
                 <button onClick={exitSelectMode} title="Cancel" className="text-gray-400 hover:text-red-500"><X size={14} /></button>
+              </div>
+            )}
+            {selectMode && (
+              <div className="flex items-center gap-2 px-3 pb-2 text-xs bg-green-50/60">
+                <span className="text-gray-600 font-medium flex-shrink-0">Whose chats:</span>
+                {tab === 'intervened' ? (
+                  <select value={intervenedFilter}
+                    onChange={(e) => { setIntervenedFilter(e.target.value); setPicked(new Set()); }}
+                    className="flex-1 min-w-0 border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-700">
+                    <option value="any">Everyone ({effectiveIntervenedContacts.length})</option>
+                    <option value="me">Me</option>
+                    {intervenedPeople.map(([k, p]) => (
+                      <option key={k} value={k}>{p.name} ({p.count})</option>
+                    ))}
+                  </select>
+                ) : (
+                  <select value={String(assignedFilter)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setAssignedFilter(v === 'all' || v === 'none' ? v : Number(v));
+                      setPicked(new Set());
+                    }}
+                    className="flex-1 min-w-0 border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-700">
+                    {(() => {
+                      // Counts for the open tab (Requested = only chats waiting on a reply)
+                      const base = tab === 'requested'
+                        ? baseFiltered.filter((c) => c.chat_status === 'open' && Number(c.inbound_count) > 0)
+                        : baseFiltered;
+                      const n = (id: number) => base.filter((c) => c.assigned_agent_id === id).length;
+                      return (
+                        <>
+                          <option value="all">Everyone ({base.length})</option>
+                          <option value="none">Unassigned ({base.filter((c) => !c.assigned_agent_id).length})</option>
+                          {assigneeOptions.map((o) => (
+                            <option key={o.id} value={o.id}>{o.name} ({n(o.id)})</option>
+                          ))}
+                        </>
+                      );
+                    })()}
+                  </select>
+                )}
               </div>
             )}
             {showBulkTransfer && selectMode && (
