@@ -1,8 +1,9 @@
 /**
- * GET /api/dashboard/chat-stats?period=today|yesterday|7d|30d&workspace=all|<id>
+ * GET /api/dashboard/chat-stats?period=today|yesterday|7d|30d&workspaces=1,2,3
  *
- * Chat numbers for the dashboard, over every project where the caller is
- * admin or manager (or just one of them):
+ * Chat numbers for the dashboard, over the given projects (the same selection
+ * as the combined inbox) — only those where the caller is admin or manager;
+ * the rest come back in `skipped`. No `workspaces` = every project they manage.
  *   projects[]  per project — period: chats, new, replied, resolved, intervened,
  *               messages in/out, templates; right now: open (24h), waiting for a
  *               reply, unassigned waiting, intervened
@@ -51,7 +52,7 @@ export async function GET(req: NextRequest) {
     const payload = await requireAuth(req);
     const sp = req.nextUrl.searchParams;
     const period = ['today', 'yesterday', '7d', '30d'].includes(sp.get('period') || '') ? sp.get('period')! : 'today';
-    const wsParam = sp.get('workspace') || 'all';
+    const wanted = Array.from(new Set((sp.get('workspaces') || '').split(',').map(Number).filter((x) => Number.isInteger(x) && x > 0)));
 
     // Projects this person manages
     const managed = await query<RowDataPacket[]>(
@@ -61,15 +62,18 @@ export async function GET(req: NextRequest) {
     );
     if (managed.length === 0) return apiError('Admin or manager only', 403);
     const allProjects = managed.map((r) => ({ id: Number(r.id), name: String(r.name) }));
-    const projects = wsParam === 'all' ? allProjects : allProjects.filter((p) => p.id === Number(wsParam));
-    if (projects.length === 0) return apiError('Not your project', 403);
+    const managedIds = new Set(allProjects.map((p) => p.id));
+    const projects = wanted.length === 0 ? allProjects : allProjects.filter((p) => wanted.includes(p.id));
+    const skipped  = wanted.filter((id) => !managedIds.has(id));   // selected, but not admin/manager there
 
-    const key = `${payload.userId}:${period}:${wsParam}`;
+    const key = `${payload.userId}:${period}:${projects.map((p) => p.id).join(',')}`;
     const hit = cache.get(key);
     if (hit && Date.now() - hit.at < CACHE_MS && sp.get('fresh') !== '1') return apiSuccess(hit.data);
 
     const wsIds = projects.map((p) => p.id);
-    const inWs = wsIds.map(() => '?').join(',');
+    // IN () is invalid SQL — use an id that never exists when nothing is selected
+    const inWs = wsIds.length ? wsIds.map(() => '?').join(',') : '?';
+    if (!wsIds.length) wsIds.push(0);
     const { start, end, byHour } = periodRange(period);
 
     const periodChats = `
@@ -249,7 +253,7 @@ export async function GET(req: NextRequest) {
 
     const data = {
       period, start, end, byHour,
-      allProjects, totals, projects: projectList, agents: agentList, series,
+      allProjects, skipped, totals, projects: projectList, agents: agentList, series,
       eventsAvailable: events !== null,
       generatedAt: new Date().toISOString(),
     };

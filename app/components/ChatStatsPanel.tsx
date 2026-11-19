@@ -1,13 +1,23 @@
 'use client';
 /**
- * Dashboard (admin/manager): chat numbers across the projects you run —
+ * Dashboard (admin/manager): chat numbers for the selected projects —
  * totals, chats by hour/day, and tables per project and per person.
+ * The project selection is the combined inbox's (same localStorage key), so
+ * changing it here changes the inbox and vice versa.
  * Data: GET /api/dashboard/chat-stats
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { MessagesSquare, RefreshCw, Loader2, ArrowDown, ArrowUp } from 'lucide-react';
+import { MessagesSquare, RefreshCw, Loader2, ArrowDown, ArrowUp, Layers, ChevronDown, X } from 'lucide-react';
 import { apiFetch } from '@/hooks/useApi';
+import { inboxWsKey, INBOX_WS_EVENT } from '@/lib/inboxWorkspaces';
+
+function readLs<T>(key: string, fallback: T): T {
+  try { return JSON.parse(localStorage.getItem(key) || '') as T; } catch { return fallback; }
+}
+function currentUserId(): number | null {
+  try { return JSON.parse(atob((localStorage.getItem('token') || '').split('.')[1])).userId ?? null; } catch { return null; }
+}
 
 type Period = 'today' | 'yesterday' | '7d' | '30d';
 interface Nums {
@@ -24,6 +34,7 @@ interface AgentRow {
 interface Stats {
   period: Period; byHour: boolean;
   allProjects: { id: number; name: string }[];
+  skipped: number[];
   totals: Nums; projects: ProjectRow[]; agents: AgentRow[];
   series: { label: string; chats: number }[];
   eventsAvailable: boolean; generatedAt: string;
@@ -172,7 +183,15 @@ function AgentTable({ rows, word, events }: { rows: AgentRow[]; word: string; ev
 
 export default function ChatStatsPanel() {
   const [period, setPeriod]   = useState<Period>('today');
-  const [project, setProject] = useState<string>('all');
+  // Inbox selection (shared); empty = just the current project
+  const [wsKey]                 = useState(() => inboxWsKey(currentUserId()));
+  const [currentWs]             = useState(() => Number(typeof window !== 'undefined' ? localStorage.getItem('workspaceId') : 0) || 0);
+  const [selected, setSelected] = useState<number[]>(() => readLs<number[]>(inboxWsKey(currentUserId()), []));
+  const [focus, setFocus]       = useState<number | null>(null);   // clicked a project row
+  const [showWs, setShowWs]     = useState(false);
+  const [showAllChips, setShowAllChips] = useState(false);
+  const wsRef                   = useRef<HTMLDivElement>(null);
+  const effective = selected.length > 0 ? selected : (currentWs ? [currentWs] : []);
   const [view, setView]       = useState<'projects' | 'agents'>('projects');
   const [stats, setStats]     = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -181,20 +200,47 @@ export default function ChatStatsPanel() {
 
   const load = useCallback((fresh = false) => {
     setLoading(true);
-    apiFetch(`/api/dashboard/chat-stats?period=${period}&workspace=${project}${fresh ? '&fresh=1' : ''}`)
+    const ids = focus ? [focus] : effective;
+    apiFetch(`/api/dashboard/chat-stats?period=${period}${ids.length ? `&workspaces=${ids.join(',')}` : ''}${fresh ? '&fresh=1' : ''}`)
       .then((r) => { setStats(r.data); setError(''); })
       .catch((err) => {
         const msg = err instanceof Error ? err.message : 'Could not load';
         if (/admin or manager/i.test(msg)) setHidden(true); else setError(msg);
       })
       .finally(() => setLoading(false));
-  }, [period, project]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, focus, effective.join(',')]);
 
   useEffect(() => {
     load();
     const t = setInterval(() => load(), 120_000);
     return () => clearInterval(t);
   }, [load]);
+
+  // Inbox (another tab or page) changed the selection → follow it
+  useEffect(() => {
+    const sync = () => setSelected(readLs<number[]>(wsKey, []));
+    const onStorage = (e: StorageEvent) => { if (e.key === wsKey) sync(); };
+    window.addEventListener(INBOX_WS_EVENT, sync);
+    window.addEventListener('storage', onStorage);
+    return () => { window.removeEventListener(INBOX_WS_EVENT, sync); window.removeEventListener('storage', onStorage); };
+  }, [wsKey]);
+
+  useEffect(() => {
+    if (!showWs) return;
+    const close = (e: MouseEvent) => { if (wsRef.current && !wsRef.current.contains(e.target as Node)) setShowWs(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [showWs]);
+
+  function saveSelection(next: number[]) {
+    setSelected(next);
+    setFocus(null);
+    try { localStorage.setItem(wsKey, JSON.stringify(next)); } catch { /* private mode */ }
+    window.dispatchEvent(new CustomEvent(INBOX_WS_EVENT));   // inbox + calls follow
+  }
+  const toggleWs = (id: number) =>
+    saveSelection(effective.includes(id) ? effective.filter((x) => x !== id) : [...effective, id]);
 
   if (hidden) return null;
   const word = PERIODS.find((p) => p.key === period)!.word;
@@ -215,16 +261,83 @@ export default function ChatStatsPanel() {
             </button>
           ))}
         </div>
-        <select value={project} onChange={(e) => setProject(e.target.value)}
-          className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-700 max-w-[200px]">
-          <option value="all">All projects{stats ? ` (${stats.allProjects.length})` : ''}</option>
-          {stats?.allProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        <div className="relative" ref={wsRef}>
+          <button onClick={() => setShowWs((v) => !v)}
+            className="flex items-center gap-1.5 text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-700 hover:bg-gray-50">
+            <Layers size={13} className="text-whatsapp-green" />
+            Projects <span className="font-semibold">{stats ? stats.projects.length : effective.length}</span>
+            <ChevronDown size={12} className={`transition-transform ${showWs ? 'rotate-180' : ''}`} />
+          </button>
+          {showWs && stats && (() => {
+            const list = stats.allProjects;
+            const allOn = list.length > 0 && list.every((p) => effective.includes(p.id));
+            return (
+              <div className="absolute right-0 top-full mt-1 w-64 bg-white border border-gray-200 rounded-xl shadow-lg z-30 overflow-hidden">
+                <p className="px-3 py-2 text-[11px] font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-100">
+                  Show numbers for <span className="normal-case font-normal">(same as inbox)</span>
+                </p>
+                <label className="px-3 py-2 text-sm flex items-center gap-2 cursor-pointer font-semibold text-gray-800 hover:bg-gray-50 border-b border-gray-100">
+                  <input type="checkbox" className="accent-green-600" checked={allOn}
+                    onChange={() => saveSelection(allOn ? [] : list.map((p) => p.id))} />
+                  <span className="flex-1">Select all</span>
+                  <span className="text-[10px] font-normal text-gray-400">{list.length}</span>
+                </label>
+                <div className="max-h-64 overflow-y-auto">
+                  {list.map((p) => (
+                    <label key={p.id} className="px-3 py-2 text-sm flex items-center gap-2 cursor-pointer text-gray-700 hover:bg-gray-50">
+                      <input type="checkbox" className="accent-green-600" checked={effective.includes(p.id)} onChange={() => toggleWs(p.id)} />
+                      <span className="truncate flex-1">{p.name}</span>
+                      {p.id === currentWs && <span className="text-[10px] text-gray-400">current</span>}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
         <button onClick={() => load(true)} disabled={loading} title="Refresh"
           className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-50">
           {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
         </button>
       </div>
+
+      {/* Which projects these numbers are for */}
+      {stats && (() => {
+        const names = stats.projects.map((p) => ({ id: p.id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name));
+        const shown = showAllChips ? names : names.slice(0, 8);
+        return (
+          <div className="flex flex-wrap items-center gap-1.5 -mt-1">
+            {focus ? (
+              <span className="flex items-center gap-1 text-[11px] font-semibold bg-indigo-600 text-white rounded-full pl-2 pr-1 py-0.5">
+                Only: {names[0]?.name || 'project'}
+                <button onClick={() => setFocus(null)} title="Back to all selected projects" className="hover:bg-white/20 rounded-full p-0.5"><X size={10} /></button>
+              </span>
+            ) : (
+              <>
+                {names.length === 0 && <span className="text-[11px] text-amber-600">No project selected that you manage — pick one under Projects.</span>}
+                {shown.map((p) => (
+                  <span key={p.id} className="flex items-center gap-0.5 text-[11px] font-medium bg-indigo-50 text-indigo-700 rounded-full pl-2 pr-1 py-0.5">
+                    {p.name}
+                    {names.length > 1 && (
+                      <button onClick={() => toggleWs(p.id)} title={`Remove ${p.name}`} className="hover:bg-indigo-100 rounded-full p-0.5"><X size={10} /></button>
+                    )}
+                  </span>
+                ))}
+                {names.length > 8 && (
+                  <button onClick={() => setShowAllChips((v) => !v)} className="text-[11px] text-whatsapp-green font-medium hover:underline">
+                    {showAllChips ? 'Show less' : `+${names.length - 8} more`}
+                  </button>
+                )}
+              </>
+            )}
+            {stats.skipped.length > 0 && !focus && (
+              <span className="text-[11px] text-gray-400" title="You are not admin or manager in these, so their numbers are not shown">
+                · {stats.skipped.length} selected project{stats.skipped.length > 1 ? 's' : ''} hidden (not admin/manager)
+              </span>
+            )}
+          </div>
+        );
+      })()}
 
       {error && <p className="text-sm text-red-500">{error}</p>}
       {!stats && loading && (
@@ -277,13 +390,13 @@ export default function ChatStatsPanel() {
                   {label}
                 </button>
               ))}
-              {project !== 'all' && (
-                <button onClick={() => setProject('all')} className="ml-auto text-xs text-whatsapp-green hover:underline">Show all projects</button>
+              {focus && (
+                <button onClick={() => setFocus(null)} className="ml-auto text-xs text-whatsapp-green hover:underline">Show all selected projects</button>
               )}
             </div>
             <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
               {view === 'projects'
-                ? <ProjectTable rows={stats.projects} word={word} onPick={(id) => setProject(String(id))} />
+                ? <ProjectTable rows={stats.projects} word={word} onPick={(id) => setFocus(id)} />
                 : <AgentTable rows={stats.agents} word={word} events={stats.eventsAvailable} />}
             </div>
             {view === 'agents' && !stats.eventsAvailable && (
