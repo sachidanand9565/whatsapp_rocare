@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { apiFetch } from '@/hooks/useApi';
 import { ConnectWhatsAppButton } from '@/app/components/MetaConnect';
+import ChatStatsPanel from '@/app/components/ChatStatsPanel';
 import {
   MessageSquare, Users, Megaphone, CheckCircle, BookOpen,
   TrendingUp, Settings, RefreshCw,
@@ -136,6 +137,10 @@ export default function DashboardPage() {
           <Settings size={13} /> Settings
         </Link>
       </div>
+
+      {/* ── Chat numbers: per project / per person (admin & manager) ── */}
+      {/* Shows itself only to people who are admin/manager of some project */}
+      <ChatStatsPanel />
 
       {/* ── Main grid ───────────────────────────────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
