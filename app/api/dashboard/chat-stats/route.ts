@@ -1,5 +1,5 @@
 /**
- * GET /api/dashboard/chat-stats?period=today|yesterday|7d|30d&workspaces=1,2,3
+ * GET /api/dashboard/chat-stats?period=today|yesterday|7d|30d|custom&from=YYYY-MM-DD&to=YYYY-MM-DD&workspaces=1,2,3
  *
  * Chat numbers for the dashboard, over the given projects (the same selection
  * as the combined inbox) — only those where the caller is admin or manager;
@@ -8,8 +8,11 @@
  *               messages in/out, templates; right now: open (24h), waiting for a
  *               reply, unassigned waiting, intervened
  *   agents[]    per person — right now: open, waiting, intervened; period: chats
- *               they currently hold; plus assigned/intervened/resolved from
- *               agent_chat_events when that table exists
+ *               they currently hold, resolved / took over / transferred to them
+ *               (read from the "Closed by X" / "Intervened by X" / "Transferred
+ *               to X by Y" lines both panels write into each chat), assigned
+ *               from agent_chat_events instead when that table exists (it also
+ *               sees auto-assign)
  *   series[]    chats by hour (today/yesterday) or by day (7d/30d), India time
  *
  * "Chats" = contacts that sent at least one message in the period. "New" = their
@@ -33,16 +36,30 @@ const cache = new Map<string, { at: number; data: unknown }>();
 
 const sqlTime = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
 
-/** [start, end) in UTC; days start at midnight India time. */
-function periodRange(period: string): { start: string; end: string; byHour: boolean } {
+const MAX_DAYS = 92;
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** [start, end) in UTC; days start at midnight India time. `days` = calendar days covered. */
+function periodRange(period: string, from?: string | null, to?: string | null):
+  { start: string; end: string; byHour: boolean; days: number } | null {
   const now = Date.now();
   const ist = new Date(now + IST_MS);
   const todayStart = Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()) - IST_MS;
   const end = sqlTime(now + 60_000);
-  if (period === 'yesterday') return { start: sqlTime(todayStart - 86_400_000), end: sqlTime(todayStart), byHour: true };
-  if (period === '7d')  return { start: sqlTime(todayStart - 6 * 86_400_000),  end, byHour: false };
-  if (period === '30d') return { start: sqlTime(todayStart - 29 * 86_400_000), end, byHour: false };
-  return { start: sqlTime(todayStart), end, byHour: true };
+  if (period === 'custom') {
+    if (!from || !to || !DAY_RE.test(from) || !DAY_RE.test(to)) return null;
+    let a = Date.parse(from + 'T00:00:00Z') - IST_MS;
+    let b = Date.parse(to + 'T00:00:00Z') - IST_MS;
+    if (Number.isNaN(a) || Number.isNaN(b)) return null;
+    if (a > b) [a, b] = [b, a];
+    const days = Math.round((b - a) / 86_400_000) + 1;
+    if (days > MAX_DAYS) return null;
+    return { start: sqlTime(a), end: sqlTime(Math.min(b + 86_400_000, now + 60_000)), byHour: days === 1, days };
+  }
+  if (period === 'yesterday') return { start: sqlTime(todayStart - 86_400_000), end: sqlTime(todayStart), byHour: true, days: 1 };
+  if (period === '7d')  return { start: sqlTime(todayStart - 6 * 86_400_000),  end, byHour: false, days: 7 };
+  if (period === '30d') return { start: sqlTime(todayStart - 29 * 86_400_000), end, byHour: false, days: 30 };
+  return { start: sqlTime(todayStart), end, byHour: true, days: 1 };
 }
 
 const n = (v: unknown) => Number(v) || 0;
@@ -51,7 +68,9 @@ export async function GET(req: NextRequest) {
   try {
     const payload = await requireAuth(req);
     const sp = req.nextUrl.searchParams;
-    const period = ['today', 'yesterday', '7d', '30d'].includes(sp.get('period') || '') ? sp.get('period')! : 'today';
+    const period = ['today', 'yesterday', '7d', '30d', 'custom'].includes(sp.get('period') || '') ? sp.get('period')! : 'today';
+    const range = periodRange(period, sp.get('from'), sp.get('to'));
+    if (!range) return apiError(`Pick a valid From and To date (at most ${MAX_DAYS} days)`);
     const wanted = Array.from(new Set((sp.get('workspaces') || '').split(',').map(Number).filter((x) => Number.isInteger(x) && x > 0)));
 
     // Projects this person manages
@@ -66,7 +85,7 @@ export async function GET(req: NextRequest) {
     const projects = wanted.length === 0 ? allProjects : allProjects.filter((p) => wanted.includes(p.id));
     const skipped  = wanted.filter((id) => !managedIds.has(id));   // selected, but not admin/manager there
 
-    const key = `${payload.userId}:${period}:${projects.map((p) => p.id).join(',')}`;
+    const key = `${payload.userId}:${period}:${range.start}:${range.days}:${projects.map((p) => p.id).join(',')}`;
     const hit = cache.get(key);
     if (hit && Date.now() - hit.at < CACHE_MS && sp.get('fresh') !== '1') return apiSuccess(hit.data);
 
@@ -74,7 +93,7 @@ export async function GET(req: NextRequest) {
     // IN () is invalid SQL — use an id that never exists when nothing is selected
     const inWs = wsIds.length ? wsIds.map(() => '?').join(',') : '?';
     if (!wsIds.length) wsIds.push(0);
-    const { start, end, byHour } = periodRange(period);
+    const { start, end, byHour } = range;
 
     const periodChats = `
       SELECT workspace_id, contact_id FROM messages
@@ -82,7 +101,7 @@ export async function GET(req: NextRequest) {
         AND created_at >= ? AND created_at < ?
       GROUP BY workspace_id, contact_id`;
 
-    const [chatRows, msgRows, nowRows, intervenedRows, seriesRows, members, events] = await Promise.all([
+    const [chatRows, msgRows, nowRows, intervenedRows, seriesRows, members, events, sysRows] = await Promise.all([
       // Period chats per project × current owner
       query<RowDataPacket[]>(
         `SELECT x.workspace_id AS ws, c.assigned_agent_id AS aid, COUNT(*) AS chats,
@@ -152,6 +171,17 @@ export async function GET(req: NextRequest) {
          GROUP BY user_id, event`,
         [...wsIds, start, end]
       ).catch(() => null),
+      // Who closed / took over / got transferred chats — the system lines in each chat
+      query<RowDataPacket[]>(
+        `SELECT workspace_id AS ws, SUBSTRING_INDEX(content, ' by ', 1) AS kind,
+           TRIM(SUBSTRING_INDEX(content, ' by ', -1)) AS who, COUNT(DISTINCT contact_id) AS n
+         FROM messages
+         WHERE workspace_id IN (${inWs}) AND direction = 'outbound' AND type = ''
+           AND created_at >= ? AND created_at < ?
+           AND (content LIKE 'Closed by %' OR content LIKE 'Intervened by %' OR content LIKE 'Transferred to % by %')
+         GROUP BY workspace_id, kind, who`,
+        [...wsIds, start, end]
+      ),
     ]);
 
     // ── per project ──
@@ -179,12 +209,19 @@ export async function GET(req: NextRequest) {
     for (const r of intervenedRows) {
       const p = byWs.get(n(r.ws)); if (p) p.intervened_now += n(r.n);
     }
+    // Resolved / taken over in the period, from the "Closed by" / "Intervened by" lines
+    for (const p of Array.from(byWs.values())) { p.resolved = 0; p.intervened_period = 0; }
+    for (const r of sysRows) {
+      const p = byWs.get(n(r.ws)); if (!p) continue;
+      if (r.kind === 'Closed') p.resolved += n(r.n);
+      else if (r.kind === 'Intervened') p.intervened_period += n(r.n);
+    }
 
     // ── per person ──
     type Person = {
       id: number | null; name: string; role: string; status: string; projects: string[];
       open24: number; waiting: number; intervened_now: number; period_chats: number; period_resolved: number;
-      assigned: number | null; intervened: number | null; resolved: number | null;
+      assigned: number; intervened: number; resolved: number;
     };
     const wsName = new Map(projects.map((p) => [p.id, p.name]));
     const people = new Map<string, Person>();
@@ -196,7 +233,7 @@ export async function GET(req: NextRequest) {
         id: n(m.id), name: String(m.name || `User ${m.id}`), role: String(m.role),
         status: m.status == null ? 'unknown' : n(m.fresh) ? String(m.status) : 'offline',
         projects: [], open24: 0, waiting: 0, intervened_now: 0, period_chats: 0, period_resolved: 0,
-        assigned: events ? 0 : null, intervened: events ? 0 : null, resolved: events ? 0 : null,
+        assigned: 0, intervened: 0, resolved: 0,
       };
       // "manager" beats "agent" etc. when roles differ across projects
       if ((rank[m.role] ?? 3) < (rank[p.role] ?? 3)) p.role = String(m.role);
@@ -214,7 +251,7 @@ export async function GET(req: NextRequest) {
       const ek = `n:${nm.toLowerCase()}`;
       if (!people.has(ek)) {
         people.set(ek, { id: null, name: nm, role: '', status: 'unknown', projects: [], open24: 0, waiting: 0,
-          intervened_now: 0, period_chats: 0, period_resolved: 0, assigned: null, intervened: null, resolved: null });
+          intervened_now: 0, period_chats: 0, period_resolved: 0, assigned: 0, intervened: 0, resolved: 0 });
         byName.set(nm.toLowerCase(), ek);
       }
       return people.get(ek)!;
@@ -222,9 +259,20 @@ export async function GET(req: NextRequest) {
     for (const r of chatRows) { const p = r.aid != null ? personFor(r.aid) : null; if (p) { p.period_chats += n(r.chats); p.period_resolved += n(r.resolved); } }
     for (const r of nowRows) { const p = r.aid != null ? personFor(r.aid) : null; if (p) { p.open24 += n(r.open24); p.waiting += n(r.waiting); } }
     for (const r of intervenedRows) { const p = personFor(r.aid, r.by_name); if (p) p.intervened_now += n(r.n); }
+    for (const r of sysRows) {
+      const kind = String(r.kind);
+      if (kind === 'Closed' || kind === 'Intervened') {
+        const p = personFor(null, String(r.who));
+        if (p) p[kind === 'Closed' ? 'resolved' : 'intervened'] += n(r.n);
+      } else if (kind.startsWith('Transferred to ') && !events) {
+        const p = personFor(null, kind.slice('Transferred to '.length));
+        if (p) p.assigned += n(r.n);
+      }
+    }
+    // Assigned from the log when it exists — it also sees auto-assign
     for (const e of events || []) {
       const p = people.get(`u${n(e.id)}`);
-      if (p && (e.event === 'assigned' || e.event === 'intervened' || e.event === 'resolved')) p[e.event as 'assigned'] = n(e.n);
+      if (p && e.event === 'assigned') p.assigned = n(e.n);
     }
 
     const projectList = Array.from(byWs.values()).sort((a, b) => b.chats - a.chats || b.open24 - a.open24 || a.name.localeCompare(b.name));
@@ -243,7 +291,7 @@ export async function GET(req: NextRequest) {
     if (byHour) {
       for (let h = 0; h < 24; h++) { const b = String(h).padStart(2, '0'); series.push({ label: `${b}:00`, chats: counts.get(b) || 0 }); }
     } else {
-      const days = period === '7d' ? 7 : 30;
+      const days = range.days;
       const startMs = Date.parse(start.replace(' ', 'T') + 'Z') + IST_MS;
       for (let d = 0; d < days; d++) {
         const day = new Date(startMs + d * 86_400_000).toISOString().slice(0, 10);

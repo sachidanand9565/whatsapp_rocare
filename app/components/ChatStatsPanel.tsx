@@ -19,7 +19,7 @@ function currentUserId(): number | null {
   try { return JSON.parse(atob((localStorage.getItem('token') || '').split('.')[1])).userId ?? null; } catch { return null; }
 }
 
-type Period = 'today' | 'yesterday' | '7d' | '30d';
+type Period = 'today' | 'yesterday' | '7d' | '30d' | 'custom';
 interface Nums {
   chats: number; new_chats: number; replied: number; resolved: number; intervened_period: number;
   msgs_in: number; msgs_out: number; templates: number;
@@ -29,7 +29,7 @@ interface ProjectRow extends Nums { id: number; name: string }
 interface AgentRow {
   id: number | null; name: string; role: string; status: string; projects: string[];
   open24: number; waiting: number; intervened_now: number; period_chats: number; period_resolved: number;
-  assigned: number | null; intervened: number | null; resolved: number | null;
+  assigned: number; intervened: number; resolved: number;
 }
 interface Stats {
   period: Period; byHour: boolean;
@@ -45,7 +45,10 @@ const PERIODS: { key: Period; label: string; word: string }[] = [
   { key: 'yesterday', label: 'Yesterday', word: 'yesterday' },
   { key: '7d', label: '7 days', word: 'in 7 days' },
   { key: '30d', label: '30 days', word: 'in 30 days' },
+  { key: 'custom', label: 'Custom', word: 'in these dates' },
 ];
+// India-time calendar day, YYYY-MM-DD
+const istDay = (offsetDays = 0) => new Date(Date.now() + 5.5 * 3_600_000 + offsetDays * 86_400_000).toISOString().slice(0, 10);
 const STATUS: Record<string, { dot: string; label: string }> = {
   active: { dot: 'bg-green-500', label: 'Active' },
   break: { dot: 'bg-yellow-400', label: 'Break' },
@@ -101,7 +104,7 @@ function ProjectTable({ rows, word, onPick }: { rows: ProjectRow[]; word: string
           {head('chats', 'Chats', `Contacts who messaged ${word}`)}
           {head('new_chats', 'New', `First message ever was ${word}`)}
           {head('replied', 'Replied', `Got a reply ${word} (bot replies count too)`)}
-          {head('resolved', 'Resolved', `Of ${word}'s chats, now resolved`)}
+          {head('resolved', 'Resolved', `Chats closed ${word}`)}
           {head('open24', 'Open now', 'Messaged in the last 24h, not resolved')}
           {head('waiting', 'Waiting', 'Open now and the last message is from the customer')}
           {head('unassigned_waiting', 'Unassigned', 'Waiting and nobody assigned')}
@@ -135,7 +138,6 @@ function ProjectTable({ rows, word, onPick }: { rows: ProjectRow[]; word: string
 
 function AgentTable({ rows, word, events }: { rows: AgentRow[]; word: string; events: boolean }) {
   const { sorted, head } = useSort(rows, 'open24');
-  const cell = (v: number | null) => (v == null ? <span className="text-gray-300">—</span> : fmt(v));
   return (
     <table className="w-full text-sm">
       <thead className="bg-gray-50 text-xs text-gray-500">
@@ -146,7 +148,7 @@ function AgentTable({ rows, word, events }: { rows: AgentRow[]; word: string; ev
           {head('waiting', 'Waiting', 'Their open chats where the customer sent the last message')}
           {head('intervened_now', 'Intervened', 'Intervened by them (or transferred to them) right now')}
           {head('period_chats', 'Chats', `Chats that messaged ${word} and are assigned to them now`)}
-          {head('assigned', 'Assigned', `Chats given to them ${word} (auto-assign or transfer)`)}
+          {head('assigned', 'Assigned', events ? `Chats given to them ${word} (auto-assign or transfer)` : `Chats transferred to them ${word}`)}
           {head('intervened', 'Took over', `Chats they intervened ${word}`)}
           {head('resolved', 'Resolved', `Chats they resolved ${word}`)}
         </tr>
@@ -170,9 +172,9 @@ function AgentTable({ rows, word, events }: { rows: AgentRow[]; word: string; ev
               <td className={`px-3 py-2 text-right ${a.waiting > 0 ? 'text-amber-600 font-semibold' : 'text-gray-700'}`}>{fmt(a.waiting)}</td>
               <td className="px-3 py-2 text-right text-gray-700">{fmt(a.intervened_now)}</td>
               <td className="px-3 py-2 text-right text-gray-700">{fmt(a.period_chats)}</td>
-              <td className="px-3 py-2 text-right text-gray-700">{events ? cell(a.assigned) : <span className="text-gray-300">—</span>}</td>
-              <td className="px-3 py-2 text-right text-gray-700">{events ? cell(a.intervened) : <span className="text-gray-300">—</span>}</td>
-              <td className="px-3 py-2 text-right text-gray-700">{events ? cell(a.resolved) : <span className="text-gray-300">—</span>}</td>
+              <td className="px-3 py-2 text-right text-gray-700">{fmt(a.assigned)}</td>
+              <td className="px-3 py-2 text-right text-gray-700">{fmt(a.intervened)}</td>
+              <td className={`px-3 py-2 text-right ${a.resolved > 0 ? 'text-green-700 font-semibold' : 'text-gray-700'}`}>{fmt(a.resolved)}</td>
             </tr>
           );
         })}
@@ -183,6 +185,8 @@ function AgentTable({ rows, word, events }: { rows: AgentRow[]; word: string; ev
 
 export default function ChatStatsPanel() {
   const [period, setPeriod]   = useState<Period>('today');
+  const [from, setFrom]       = useState(() => istDay(-6));
+  const [to, setTo]           = useState(() => istDay(0));
   // Inbox selection (shared); empty = just the current project
   const [wsKey]                 = useState(() => inboxWsKey(currentUserId()));
   const [currentWs]             = useState(() => Number(typeof window !== 'undefined' ? localStorage.getItem('workspaceId') : 0) || 0);
@@ -201,7 +205,8 @@ export default function ChatStatsPanel() {
   const load = useCallback((fresh = false) => {
     setLoading(true);
     const ids = focus ? [focus] : effective;
-    apiFetch(`/api/dashboard/chat-stats?period=${period}${ids.length ? `&workspaces=${ids.join(',')}` : ''}${fresh ? '&fresh=1' : ''}`)
+    const dates = period === 'custom' ? `&from=${from}&to=${to}` : '';
+    apiFetch(`/api/dashboard/chat-stats?period=${period}${dates}${ids.length ? `&workspaces=${ids.join(',')}` : ''}${fresh ? '&fresh=1' : ''}`)
       .then((r) => { setStats(r.data); setError(''); })
       .catch((err) => {
         const msg = err instanceof Error ? err.message : 'Could not load';
@@ -209,7 +214,7 @@ export default function ChatStatsPanel() {
       })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, focus, effective.join(',')]);
+  }, [period, from, to, focus, effective.join(',')]);
 
   useEffect(() => {
     load();
@@ -243,7 +248,10 @@ export default function ChatStatsPanel() {
     saveSelection(effective.includes(id) ? effective.filter((x) => x !== id) : [...effective, id]);
 
   if (hidden) return null;
-  const word = PERIODS.find((p) => p.key === period)!.word;
+  const fmtDay = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+  const word = period === 'custom'
+    ? (from === to ? `on ${fmtDay(from)}` : `${fmtDay(from < to ? from : to)}–${fmtDay(from < to ? to : from)}`)
+    : PERIODS.find((p) => p.key === period)!.word;
   const t = stats?.totals;
 
   return (
@@ -261,6 +269,15 @@ export default function ChatStatsPanel() {
             </button>
           ))}
         </div>
+        {period === 'custom' && (
+          <div className="flex items-center gap-1 text-xs">
+            <input type="date" value={from} max={istDay(0)} onChange={(e) => e.target.value && setFrom(e.target.value)}
+              className="border border-gray-200 rounded-lg px-1.5 py-1 text-gray-700" aria-label="From" />
+            <span className="text-gray-400">to</span>
+            <input type="date" value={to} max={istDay(0)} onChange={(e) => e.target.value && setTo(e.target.value)}
+              className="border border-gray-200 rounded-lg px-1.5 py-1 text-gray-700" aria-label="To" />
+          </div>
+        )}
         <div className="relative" ref={wsRef}>
           <button onClick={() => setShowWs((v) => !v)}
             className="flex items-center gap-1.5 text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-700 hover:bg-gray-50">
@@ -353,7 +370,7 @@ export default function ChatStatsPanel() {
             <Tile label="Chats" value={t.chats} hint={`Contacts who messaged ${word}`} sub={`${fmt(t.msgs_in)} messages in`} />
             <Tile label="New chats" value={t.new_chats} hint={`First message ever was ${word}`} sub={pct(t.new_chats, t.chats) + ' of chats'} />
             <Tile label="Replied" value={t.replied} hint={`Got a reply ${word} (bot replies count too)`} sub={pct(t.replied, t.chats) + ' of chats'} />
-            <Tile label="Resolved" value={t.resolved} hint={`Of ${word}'s chats, now resolved`} sub={pct(t.resolved, t.chats) + ' of chats'} />
+            <Tile label="Resolved" value={t.resolved} hint={`Chats closed ${word}`} sub={`closed ${word}`} />
             <Tile label="Open now" value={t.open24} tone="now" hint="Messaged in the last 24h, not resolved" />
             <Tile label="Waiting for reply" value={t.waiting} tone="warn" hint="Open now and the customer sent the last message" />
             <Tile label="Unassigned waiting" value={t.unassigned_waiting} tone="warn" hint="Waiting for a reply and nobody is assigned" />
@@ -399,9 +416,10 @@ export default function ChatStatsPanel() {
                 ? <ProjectTable rows={stats.projects} word={word} onPick={(id) => setFocus(id)} />
                 : <AgentTable rows={stats.agents} word={word} events={stats.eventsAvailable} />}
             </div>
-            {view === 'agents' && !stats.eventsAvailable && (
-              <p className="text-[11px] text-amber-600 mt-2">
-                Assigned / Took over / Resolved per person start counting once migration-agent-chat-events.sql is run on the database.
+            {view === 'agents' && (
+              <p className="text-[11px] text-gray-400 mt-2">
+                Resolved / Took over / Assigned come from the &quot;Closed by&quot;, &quot;Intervened by&quot; and &quot;Transferred to&quot; lines in each chat.
+                {!stats.eventsAvailable && ' Chats given by auto-assign are added to Assigned once migration-agent-chat-events.sql is run.'}
               </p>
             )}
           </div>

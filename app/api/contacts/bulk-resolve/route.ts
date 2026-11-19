@@ -11,7 +11,7 @@
 import { NextRequest } from 'next/server';
 import { requireAuth, resolveWorkspaceScopes, WorkspaceScope } from '@/lib/auth';
 import { query, execute } from '@/lib/db';
-import { apiSuccess, apiError } from '@/lib/utils';
+import { apiSuccess, apiError, utcNow } from '@/lib/utils';
 import { RowDataPacket } from 'mysql2';
 import { poolView } from '@/lib/autoAssign';
 import { logAgentEventBulk } from '@/lib/agentEvents';
@@ -27,8 +27,10 @@ export async function POST(req: NextRequest) {
 
     // Combined inbox: every shown project, each with this user's role there
     const scopes = await resolveWorkspaceScopes(payload, body.workspaces || null);
+    const me = await query<RowDataPacket[]>('SELECT name FROM users WHERE id = ? LIMIT 1', [payload.userId]).catch(() => []);
+    const actorName = String((me as RowDataPacket[])[0]?.name || payload.email);
     let resolved = 0;
-    for (const scope of scopes) resolved += await resolveIn(scope, payload.userId, buttonReply, campaignId);
+    for (const scope of scopes) resolved += await resolveIn(scope, payload.userId, buttonReply, campaignId, actorName);
 
     // Audit trail in server logs — bulk actions should be traceable
     const u = await query<RowDataPacket[]>('SELECT email FROM users WHERE id = ? LIMIT 1', [payload.userId]).catch(() => []);
@@ -42,7 +44,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function resolveIn({ workspaceId, role }: WorkspaceScope, userId: number, buttonReply: string, campaignId: number) {
+async function resolveIn({ workspaceId, role }: WorkspaceScope, userId: number, buttonReply: string, campaignId: number, actorName: string) {
   // Same "latest tap wins" rule as the inbox filter, so what you see is what
   // gets resolved. Only currently-unresolved chats count toward the total.
   let where = `
@@ -88,5 +90,12 @@ async function resolveIn({ workspaceId, role }: WorkspaceScope, userId: number, 
 
   // Log first — after the UPDATE these chats no longer match "unresolved"
   await logAgentEventBulk(workspaceId, userId, 'resolved', `FROM contacts c ${where}`, params);
+  // Same "Closed by X" line a single resolve writes (chat history + dashboard counts)
+  const t = utcNow();
+  await execute(
+    `INSERT INTO messages (workspace_id, contact_id, direction, type, content, status, sent_at, created_at)
+     SELECT c.workspace_id, c.id, 'outbound', 'system', ?, 'delivered', ?, ? FROM contacts c ${where}`,
+    [`Closed by ${actorName}`, t, t, ...params]
+  ).catch((err) => console.error('[bulk-resolve] system lines', err));
   return execute(`UPDATE contacts c SET c.chat_status = 'resolved' ${where}`, params);   // returns affectedRows
 }
